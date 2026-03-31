@@ -51,19 +51,19 @@ class GRPOTest(unittest.TestCase):
   def setUp(self):
     super().setUp()
     self.cfg = pyconfig.initialize(
-        [None, os.path.join(MAXTEXT_PKG_DIR, "experimental", "rl", "grpo_trainer_test.yml")],
+        [None, os.path.join(MAXTEXT_PKG_DIR, "experimental", "rl", "grpo_trainer_test.yaml")],
         model="llama3.1-8b",
         run_name="generate_grpo_test_data",
         load_parameters_path="gs://maxtext-model-checkpoints/llama3.1-8b/2025-01-23-19-04/scanned/0/items",
         enable_checkpointing=True,
     )
     self.cfg_no_ckpt_loading = pyconfig.initialize(
-        [None, os.path.join(MAXTEXT_PKG_DIR, "experimental", "rl", "grpo_trainer_test.yml")],
+        [None, os.path.join(MAXTEXT_PKG_DIR, "experimental", "rl", "grpo_trainer_test.yaml")],
         run_name="generate_grpo_test_data_no_ckpt_loading",
         enable_checkpointing=False,
     )
     self.cfg_no_ckpt_loading_inference = pyconfig.initialize(
-        [None, os.path.join(MAXTEXT_PKG_DIR, "experimental", "rl", "grpo_trainer_test.yml")],
+        [None, os.path.join(MAXTEXT_PKG_DIR, "experimental", "rl", "grpo_trainer_test.yaml")],
         run_name="generate_grpo_test_data_no_ckpt_loading_inference",
         enable_checkpointing=False,
         ici_tensor_parallelism=4,

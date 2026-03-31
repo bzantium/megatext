@@ -68,7 +68,7 @@ def init_pyconfig(**kwargs):
       "enable_single_controller": True,  # for pathways
   } | kwargs
   _config = pyconfig.initialize(
-      [sys.argv[0], os.path.join(MAXTEXT_PKG_DIR, "experimental", "rl", "grpo_inference.yml")],
+      [sys.argv[0], os.path.join(MAXTEXT_PKG_DIR, "experimental", "rl", "grpo_inference.yaml")],
       **init_kwargs,
   )
   return _config

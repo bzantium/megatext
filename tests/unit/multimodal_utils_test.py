@@ -198,7 +198,7 @@ class TestLlama4PostProcessing(unittest.TestCase):
         pixel_values=dummy_pixel_values,
         aspect_ratios=dummy_aspect_ratios,
     )
-    base_config_path = os.path.join(MAXTEXT_REPO_ROOT, "src", "maxtext", "configs", "base.yml")
+    base_config_path = os.path.join(MAXTEXT_REPO_ROOT, "src", "maxtext", "configs", "base.yaml")
     config = pyconfig.initialize(
         ["", base_config_path],
         model="llama4-17b-16e",

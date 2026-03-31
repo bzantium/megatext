@@ -43,7 +43,7 @@ class Train(unittest.TestCase):
     train_main(
         [
             None,
-            get_test_config_path("gpu/gpu_smoke_test.yml"),
+            get_test_config_path("gpu/gpu_smoke_test.yaml"),
             # pylint: disable=f-string-without-interpolation
             f"base_output_directory={self.base_output_directory}",
             "run_name=runner_test",

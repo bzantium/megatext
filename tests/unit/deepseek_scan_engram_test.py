@@ -94,7 +94,7 @@ class TestDeepSeekScanEngram(unittest.TestCase):
 
     mock_from_pretrained.return_value = MockTokenizer()
 
-    config_path = os.path.join(MAXTEXT_PKG_DIR, "configs", "base.yml")
+    config_path = os.path.join(MAXTEXT_PKG_DIR, "configs", "base.yaml")
     config = pyconfig.initialize([None, config_path] + self._COMMON_CONFIG + [f"engram_layers=[{engram_layers_str}]"])
 
     devices_array = megatext_utils.create_device_mesh(config)

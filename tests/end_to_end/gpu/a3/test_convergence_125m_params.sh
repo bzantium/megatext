@@ -5,9 +5,9 @@ echo "Running test_convergence_125m_params.sh"
 # Run this on NVIDIA A3 to achieve a loss value of ~3.9 after 2500 steps (NVIDIA A3)
 #
 # Command Flags:
-# OUTPUT_PATH (Required, unless base_output_directory is already set in base.yml)
-# DATASET_PATH (Required, unless dataset_path is already set in base.yml)
-# RUN_NAME (Required, unless run_name is already set in base.yml or running with XPK/GKE)
+# OUTPUT_PATH (Required, unless base_output_directory is already set in base.yaml)
+# DATASET_PATH (Required, unless dataset_path is already set in base.yaml)
+# RUN_NAME (Required, unless run_name is already set in base.yaml or running with XPK/GKE)
 # LOSS_THRESHOLD (Optional, default is 100.0 )
 # QUANTIZATION (Optional, default is '')
 #
@@ -47,7 +47,7 @@ then
     CMD_DATA=" hf_path=parquet hf_data_files=gs://maxtext-dataset/hf/c4/c4-train-*.parquet dataset_type=hf tokenizer_path=${MAXTEXT_ASSETS_ROOT:-${MAXTEXT_PKG_DIR:-${MAXTEXT_REPO_ROOT:-$PWD}/src/maxtext/assets/tokenizers}}/llama2-tokenizer"
 fi
 
-TRAIN_CMD="python3 -m maxtext.trainers.pre_train.train ${MAXTEXT_CONFIGS_DIR:-${MAXTEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}/base.yml run_name=$RUN_NAME hardware=gpu \
+TRAIN_CMD="python3 -m maxtext.trainers.pre_train.train ${MAXTEXT_CONFIGS_DIR:-${MAXTEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}/base.yaml run_name=$RUN_NAME hardware=gpu \
         steps=$STEPS dcn_data_parallelism=1 learning_rate=3e-4 \
         base_emb_dim=1024 base_num_query_heads=8 base_num_kv_heads=8 base_mlp_dim=3584 base_num_decoder_layers=8 \
         ici_fsdp_parallelism=8 metrics_file=metrics.txt per_device_batch_size=4 \

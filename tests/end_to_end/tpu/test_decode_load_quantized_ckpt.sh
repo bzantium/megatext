@@ -44,7 +44,7 @@ mkdir -p $OUTDIR
 echo
 # Run script
 ${cmd} python3 -m MaxText.${script_name} \
-  "${MAXTEXT_CONFIGS_DIR:-${MAXTEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}"/base.yml \
+  "${MAXTEXT_CONFIGS_DIR:-${MAXTEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}"/base.yaml \
   tokenizer_path=${TOKENIZER_PATH} \
   load_parameters_path=${LOAD_PARAMETERS_PATH} \
   checkpoint_is_quantized=True \
