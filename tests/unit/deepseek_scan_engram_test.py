@@ -23,11 +23,11 @@ import jax
 import jax.numpy as jnp
 from jax.sharding import Mesh
 
-from maxtext.configs import pyconfig
-from maxtext.utils.globals import MAXTEXT_PKG_DIR
-from maxtext.common.common_types import MODEL_MODE_TRAIN
-from maxtext.layers.decoders import Decoder
-from maxtext.utils import maxtext_utils
+from megatext.configs import pyconfig
+from megatext.utils.constants import MAXTEXT_PKG_DIR
+from megatext.common.common_types import MODEL_MODE_TRAIN
+from megatext.layers.decoders import Decoder
+from megatext.utils import megatext_utils
 import pytest
 
 
@@ -46,7 +46,7 @@ class TestDeepSeekScanEngram(unittest.TestCase):
 
   _COMMON_CONFIG = [
       "run_name=test_deepseek_scan_engram",
-      "model_name=deepseek-custom",
+      "model=deepseek-custom",
       "override_model_config=True",
       "decoder_block=deepseek",
       "scan_layers=True",
@@ -94,10 +94,10 @@ class TestDeepSeekScanEngram(unittest.TestCase):
 
     mock_from_pretrained.return_value = MockTokenizer()
 
-    config_path = os.path.join(MAXTEXT_PKG_DIR, "configs", "base.yml")
+    config_path = os.path.join(MAXTEXT_PKG_DIR, "configs", "base.yaml")
     config = pyconfig.initialize([None, config_path] + self._COMMON_CONFIG + [f"engram_layers=[{engram_layers_str}]"])
 
-    devices_array = maxtext_utils.create_device_mesh(config)
+    devices_array = megatext_utils.create_device_mesh(config)
     mesh = Mesh(devices_array, config.mesh_axes)
 
     decoder = Decoder(

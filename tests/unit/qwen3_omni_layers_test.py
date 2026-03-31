@@ -25,19 +25,19 @@ from flax import nnx
 import jax
 import jax.numpy as jnp
 from jax.sharding import Mesh
-from maxtext.configs import pyconfig
-from maxtext.common import common_types
-from maxtext.utils.globals import MAXTEXT_REPO_ROOT
-from maxtext.inference.maxengine import maxengine
-from maxtext.layers.attentions import Attention
-from maxtext.layers.embeddings import (
+from megatext.configs import pyconfig
+from megatext.common import common_types
+from megatext.utils.constants import MAXTEXT_REPO_ROOT
+from megatext.inference.maxengine import maxengine
+from megatext.layers.attentions import Attention
+from megatext.layers.embeddings import (
     PositionalEmbedding,
     Qwen3OmniMoeVisionPosEmbedInterpolate as JaxQwen3OmniMoeVisionPosEmbedInterpolate,
     Qwen3OmniMoeVisionRotaryEmbedding as JaxQwen3OmniMoeVisionRotaryEmbedding,
 )
-from maxtext.layers.decoders import deepstack_process
-from maxtext.layers.encoders import AudioEncoder
-from maxtext.models.qwen3 import (
+from megatext.layers.decoders import deepstack_process
+from megatext.layers.encoders import AudioEncoder
+from megatext.models.qwen3 import (
     Qwen3OmniAudioEncoder,
     Qwen3OmniAudioEncoderLayer,
     Qwen3OmniMoeVisionAttention as JaxQwen3OmniMoeVisionAttention,
@@ -47,7 +47,7 @@ from maxtext.models.qwen3 import (
     Qwen3OmniMoeVisionPatchMerger as JaxQwen3OmniMoeVisionPatchMerger,
     Qwen3OmniMoeVisionProjector as JaxQwen3OmniMoeVisionProjector,
 )
-from maxtext.multimodal import processor as mm_processor
+from megatext.multimodal import processor as mm_processor
 from tests.utils.multimodal_test_utils import (
     assert_all_close_jax_torch,
     copy_attention_weights_to_maxtext,
@@ -83,10 +83,10 @@ from transformers.models.qwen3_omni_moe.modeling_qwen3_omni_moe import (
 )
 
 # Initialize config once for all tests
-base_config_path = os.path.join(MAXTEXT_REPO_ROOT, "src", "maxtext", "configs", "base.yml")
+base_config_path = os.path.join(MAXTEXT_REPO_ROOT, "src", "maxtext", "configs", "base.yaml")
 jax_config = pyconfig.initialize(
     ["", base_config_path],
-    model_name="qwen3-omni-30b-a3b",
+    model="qwen3-omni-30b-a3b",
     attention="dot_product",
     attention_type="full",
     matmul_precision="highest",
@@ -664,13 +664,13 @@ class TestQwen3OmniPreprocessing(unittest.TestCase):
   """Test MaxText Qwen3 Omni preprocessor against HuggingFace reference."""
 
   def setUp(self):
-    self.base_config_path = os.path.join(MAXTEXT_REPO_ROOT, "src", "maxtext", "configs", "base.yml")
+    self.base_config_path = os.path.join(MAXTEXT_REPO_ROOT, "src", "maxtext", "configs", "base.yaml")
     self.image_path = os.path.join(MAXTEXT_REPO_ROOT, "tests", "assets", "test_image.jpg")
     self.video_path = os.path.join(MAXTEXT_REPO_ROOT, "tests", "assets", "test_video.mp4")
     self.prompt = "What can you see and hear? Answer in one short sentence."
     self.maxtext_config = pyconfig.initialize(
         ["", self.base_config_path],
-        model_name="qwen3-omni-30b-a3b",
+        model="qwen3-omni-30b-a3b",
         tokenizer_type="huggingface",
         tokenizer_path="Qwen/Qwen3-Omni-30B-A3B-Instruct",
         use_multimodal=True,
@@ -687,7 +687,7 @@ class TestQwen3OmniPreprocessing(unittest.TestCase):
         prompt=self.prompt,
         image_placeholder=self.maxtext_config.image_placeholder,
         video_placeholder=self.maxtext_config.video_placeholder,
-        model_name=self.maxtext_config.model_name,
+        model=self.maxtext_config.model,
         num_images=mt_processor_outputs.num_images,
         num_videos=mt_processor_outputs.num_videos,
     )

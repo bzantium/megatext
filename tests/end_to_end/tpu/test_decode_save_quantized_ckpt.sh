@@ -31,7 +31,7 @@ if [ "$model" = "llama2-70b" ]; then
 fi
 
 export MODEL_NAME=${model}
-export TOKENIZER_PATH="${MAXTEXT_ASSETS_ROOT:-${MAXTEXT_PKG_DIR:-${MAXTEXT_REPO_ROOT:-$PWD}/src/maxtext/assets/tokenizers}}"/tokenizer.llama2
+export TOKENIZER_PATH="${MEGATEXT_ASSETS_ROOT:-${MEGATEXT_PKG_DIR:-${MEGATEXT_REPO_ROOT:-$PWD}/src/maxtext/assets/tokenizers}}"/tokenizer.llama2
 export LOAD_PARAMETERS_PATH=gs://inference-benchmarks/models/${MODEL_NAME}-chat/${checkpoint_ts}/param-only-decode-ckpt-maxtext/checkpoints/0/items
 export MAX_PREFILL_PREDICT_LENGTH=128
 export MAX_TARGET_LENGTH=256
@@ -50,8 +50,8 @@ export OUTFILE="${OUTDIR}/decode.txt"
 mkdir -p $OUTDIR
 echo
 # Run command
-${cmd} python3 -m maxtext.inference.decode \
-  "${MAXTEXT_CONFIGS_DIR:-${MAXTEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}"/base.yml \
+${cmd} python3 -m megatext.inference.decode \
+  "${MEGATEXT_CONFIGS_DIR:-${MEGATEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}"/base.yaml \
   tokenizer_path=${TOKENIZER_PATH} \
   load_parameters_path=${LOAD_PARAMETERS_PATH} \
   max_prefill_predict_length=${MAX_PREFILL_PREDICT_LENGTH} \

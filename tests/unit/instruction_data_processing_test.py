@@ -16,13 +16,13 @@
 
 import unittest
 
-from maxtext.input_pipeline import instruction_data_processing
+from megatext.data import instruction_data_processing
 
 
 class InstructionDataProcessingTest(unittest.TestCase):
 
   def test_load_template_from_file(self):
-    template_config = instruction_data_processing.load_template_from_file("maxtext/examples/chat_templates/gsm8k_rl.json")
+    template_config = instruction_data_processing.load_template_from_file("megatext/examples/chat_templates/gsm8k_rl.json")
     self.assertEqual(
         template_config,
         {

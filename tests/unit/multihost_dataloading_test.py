@@ -27,8 +27,8 @@ from jax.sharding import PartitionSpec
 
 import tensorflow as tf
 
-from maxtext.configs import pyconfig
-from maxtext.input_pipeline import multihost_dataloading
+from megatext.configs import pyconfig
+from megatext.data import multihost_dataloading
 from tests.utils.test_helpers import get_test_config_path, get_test_dataset_path, get_test_base_output_directory
 
 
@@ -36,9 +36,9 @@ class MultihostDataloadingTest(unittest.TestCase):
 
   def setUp(self):
     super().setUp()
-    # Note: this test uses gs://max-experiments/ (not gs://runner-maxtext-logs) in cloud mode
+    # Note: this test uses gs://max-experiments/ (not gs://runner-megatext-logs) in cloud mode
     base_output_directory = get_test_base_output_directory(cloud_path="gs://max-experiments/")
-    dataset_path = get_test_dataset_path(cloud_path="gs://maxtext-dataset/")
+    dataset_path = get_test_dataset_path(cloud_path="gs://megatext-dataset/")
     batch_size = 4
     config = pyconfig.initialize(
         [sys.argv[0], get_test_config_path()],

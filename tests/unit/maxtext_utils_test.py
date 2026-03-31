@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the common MaxText utilities"""
+"""Tests for the common Megatext utilities"""
 
 from collections.abc import Callable
 from typing import Any
@@ -27,15 +27,15 @@ import jax
 from jax import random, vmap
 import jax.numpy as jnp
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
-from maxtext.configs import pyconfig
-from maxtext.common.common_types import MODEL_MODE_TRAIN
-from maxtext.inference import inference_utils
-from maxtext.layers import quantizations
-from maxtext.models import models
-from maxtext.utils import max_utils
-from maxtext.utils import maxtext_utils
-from maxtext.utils import sharding
-from maxtext.utils.sharding import assert_params_sufficiently_sharded, get_formatted_sharding_annotations
+from megatext.configs import pyconfig
+from megatext.common.common_types import MODEL_MODE_TRAIN
+from megatext.inference import inference_utils
+from megatext.layers import quantizations
+from megatext.models import models
+from megatext.utils import max_utils
+from megatext.utils import megatext_utils
+from megatext.utils import sharding
+from megatext.utils.sharding import assert_params_sufficiently_sharded, get_formatted_sharding_annotations
 from tests.utils.test_helpers import get_test_config_path, get_decoupled_parallelism_overrides
 import numpy as np
 import optax
@@ -51,7 +51,7 @@ class TestGradientClipping(unittest.TestCase):
         "params": jnp.array([3.0, -4.0]),
         "wi_0": jnp.array([5.0, -6.0]),
     }
-    clipped_grads = maxtext_utils.apply_gradient_clipping(raw_grads, None, 1.0)
+    clipped_grads = megatext_utils.apply_gradient_clipping(raw_grads, None, 1.0)
     for param_name, param_val in raw_grads.items():
       # The grads should all be clipped and not equal to what they were before
       self.assertFalse(jnp.array_equal(param_val, clipped_grads[param_name]))
@@ -64,13 +64,13 @@ class TestGradientClipping(unittest.TestCase):
         }
     }
     # Create the reference for how the params would be clipped if no fp8 stats were present
-    expected_clipped_grads = maxtext_utils.apply_gradient_clipping(raw_grads, None, 1.0)
+    expected_clipped_grads = megatext_utils.apply_gradient_clipping(raw_grads, None, 1.0)
 
-    raw_grads[maxtext_utils.OVERWRITE_WITH_GRADIENT] = {
+    raw_grads[megatext_utils.OVERWRITE_WITH_GRADIENT] = {
         "amax_history_wi_0": jnp.array([3.0, -4.0]),
         "scale_wi_0": jnp.array([13.2, -4.4]),
     }
-    clipped_grads = maxtext_utils.apply_gradient_clipping(raw_grads, None, 1.0)
+    clipped_grads = megatext_utils.apply_gradient_clipping(raw_grads, None, 1.0)
 
     # Check all non-fp8 parameters have been clipped in a manner as if the fp8 stats were not present at all
     for param_name in raw_grads["params"]:
@@ -82,11 +82,11 @@ class TestGradientClipping(unittest.TestCase):
       )
 
     # Then check all fp8 parameters were not clipped at all
-    for param_name, raw_value in raw_grads[maxtext_utils.OVERWRITE_WITH_GRADIENT].items():
+    for param_name, raw_value in raw_grads[megatext_utils.OVERWRITE_WITH_GRADIENT].items():
       self.assertTrue(
           jnp.array_equal(
               raw_value,
-              clipped_grads[maxtext_utils.OVERWRITE_WITH_GRADIENT][param_name],
+              clipped_grads[megatext_utils.OVERWRITE_WITH_GRADIENT][param_name],
           )
       )
 
@@ -112,7 +112,7 @@ class TestIntermediateValueRetrieval(unittest.TestCase):
 
     self.mock_decoder.layers["self_attention"]["out_projection_activations"] = mock_sowed_variable
 
-    result = maxtext_utils.get_intermediate_value(self.mock_model, "out_projection_activations")
+    result = megatext_utils.get_intermediate_value(self.mock_model, "out_projection_activations")
 
     self.assertEqual(result, expected_sowed_data)
 
@@ -122,13 +122,13 @@ class TestIntermediateValueRetrieval(unittest.TestCase):
     was NOT sowed (or the layer was skipped).
     """
 
-    result = maxtext_utils.get_intermediate_value(self.mock_model, "out_projection_activations", default="MyDefault")
+    result = megatext_utils.get_intermediate_value(self.mock_model, "out_projection_activations", default="MyDefault")
 
     self.assertEqual(result, "MyDefault")
 
   def test_unknown_key_raises_value_error(self):
     with self.assertRaises(ValueError) as cm:
-      maxtext_utils.get_intermediate_value(self.mock_model, "some_random_layer_name")
+      megatext_utils.get_intermediate_value(self.mock_model, "some_random_layer_name")
 
     self.assertEqual(str(cm.exception), "Incorrect nested_key: some_random_layer_name")
 
@@ -149,19 +149,19 @@ class TestNestedValueRetrieval(unittest.TestCase):
   def test_valid_nested_key(self):
     nested_key = ("level1", "level2", "key")
     expected_value = 0.1
-    result = maxtext_utils.get_nested_value(self.test_dict, nested_key, 0.0)
+    result = megatext_utils.get_nested_value(self.test_dict, nested_key, 0.0)
     self.assertEqual(result, expected_value)
 
   def test_invalid_nested_key(self):
     nested_key = ("level1", "nonexistent", "key")
     expected_value = 0.0
-    result = maxtext_utils.get_nested_value(self.test_dict, nested_key, 0.0)
+    result = megatext_utils.get_nested_value(self.test_dict, nested_key, 0.0)
     self.assertEqual(result, expected_value)
 
   def test_empty_level(self):
     nested_key = ("empty_level", "key")
     expected_value = None
-    result = maxtext_utils.get_nested_value(self.test_dict, nested_key)
+    result = megatext_utils.get_nested_value(self.test_dict, nested_key)
     self.assertEqual(result, expected_value)
 
 
@@ -187,7 +187,7 @@ class UpdateStateParamTest(unittest.TestCase):
   def test_update_mode_add(self):
     target_path = ("decoder", "gate", "bias")
     update_value = jnp.array([0.1, 0.2])
-    new_state = maxtext_utils.update_state_param(self.state, target_path, update_value)
+    new_state = megatext_utils.update_state_param(self.state, target_path, update_value)
 
     expected = jnp.array([0.6, 0.7])
     actual = new_state.params["decoder"]["gate"]["bias"]
@@ -206,13 +206,13 @@ class UpdateStateParamTest(unittest.TestCase):
     # Note: tree_map only iterates over EXISTING leaves. If path is wrong,
     # the if condition inside never triggers.
     target_path = ("decoder", "non_existent", "bias")
-    new_state = maxtext_utils.update_state_param(self.state, target_path, jnp.array([1.0]))
+    new_state = megatext_utils.update_state_param(self.state, target_path, jnp.array([1.0]))
 
     self.assertTrue(jax.tree_util.tree_all(jax.tree_util.tree_map(jnp.array_equal, new_state.params, self.state.params)))
 
 
 class MaxUtilsInitState(unittest.TestCase):
-  """Tests initialization of training and decode states in maxtext_utils.py"""
+  """Tests initialization of training and decode states in megatext_utils.py"""
 
   def setUp(self):
     self.model = nn.Dense(features=5)
@@ -236,7 +236,7 @@ class MaxUtilsInitState(unittest.TestCase):
     )
 
   def test_init_decode_state(self):
-    decode_state = maxtext_utils.init_decode_state(self.model.apply, self.params)
+    decode_state = megatext_utils.init_decode_state(self.model.apply, self.params)
     self.assertEqual(decode_state.apply_fn, self.model.apply)
     apply_fn: Callable = decode_state.apply_fn
     # pylint: disable=not-callable
@@ -251,7 +251,7 @@ class MaxUtilsInitState(unittest.TestCase):
     )
 
   def test_init_training_state(self):
-    state = maxtext_utils.init_training_state(self.model.apply, self.params, self.tx)
+    state = megatext_utils.init_training_state(self.model.apply, self.params, self.tx)
     self.assertEqual(state.apply_fn, self.model.apply)
     self.assertEqual(state.tx, self.tx)
     self.assertNotEqual(state.opt_state, {})
@@ -348,21 +348,21 @@ class MaxUtilsInitTransformerState(unittest.TestCase):
     # Conditionally set ici_fsdp_parallelism to match device count in decoupled mode
     extra_args = get_decoupled_parallelism_overrides()
     self.config = pyconfig.initialize([None, get_test_config_path()], enable_checkpointing=False, **extra_args)
-    devices_array = maxtext_utils.create_device_mesh(self.config)
+    devices_array = megatext_utils.create_device_mesh(self.config)
     self.mesh = Mesh(devices_array, self.config.mesh_axes)
     quant = quantizations.configure_quantization(self.config)
     self.model = Transformer(self.config, mesh=self.mesh, quant=quant, model_mode=MODEL_MODE_TRAIN)
 
   def test_setup_decode_state(self):
     rng = random.PRNGKey(0)
-    state, _ = maxtext_utils.setup_decode_state(self.model, self.config, rng, self.mesh, None)
+    state, _ = megatext_utils.setup_decode_state(self.model, self.config, rng, self.mesh, None)
     self.assertEqual(state.tx, None)
     self.assertEqual(state.opt_state, {})
 
   def test_setup_initial_state(self):
     rng = random.PRNGKey(0)
     tx = optax.adam(learning_rate=0.001)
-    state, _, _, _ = maxtext_utils.setup_initial_state(self.model, None, tx, self.config, rng, self.mesh, None)
+    state, _, _, _ = megatext_utils.setup_initial_state(self.model, None, tx, self.config, rng, self.mesh, None)
     self.assertEqual(state.tx, tx)
     self.assertNotEqual(state.opt_state, {})
 
@@ -794,10 +794,8 @@ class TestLearningRateSchedules(unittest.TestCase):
     learning_rate = 1e-3
     learning_rate_schedule_steps = 1000
     steps = 1200
-    warmup_steps_fraction = 0.1
+    warmup_steps = 100
     learning_rate_final_fraction = 0.1
-
-    warmup_steps = int(learning_rate_schedule_steps * warmup_steps_fraction)
 
     config = pyconfig.initialize(
         [None, get_test_config_path()],
@@ -805,12 +803,12 @@ class TestLearningRateSchedules(unittest.TestCase):
         learning_rate=learning_rate,
         learning_rate_schedule_steps=learning_rate_schedule_steps,
         steps=steps,
-        warmup_steps_fraction=warmup_steps_fraction,
+        warmup_steps=warmup_steps,
         lr_schedule_type="cosine",
         learning_rate_final_fraction=learning_rate_final_fraction,
     )
 
-    schedule_fn = maxtext_utils.create_learning_rate_schedule(config)
+    schedule_fn = megatext_utils.create_learning_rate_schedule(config)
 
     # Warmup phase: 0 -> peak
     self.assertAlmostEqual(float(schedule_fn(0)), 0.0, places=6)
@@ -835,12 +833,10 @@ class TestLearningRateSchedules(unittest.TestCase):
     learning_rate = 1e-3
     learning_rate_schedule_steps = 1000
     steps = 1200
-    warmup_steps_fraction = 0.1
+    warmup_steps = 100
     learning_rate_final_fraction = 0.1
-    wsd_decay_steps_fraction = 0.1
+    decay_steps = 100
 
-    warmup_steps = int(learning_rate_schedule_steps * warmup_steps_fraction)
-    decay_steps = int(learning_rate_schedule_steps * wsd_decay_steps_fraction)
     stable_steps = learning_rate_schedule_steps - warmup_steps - decay_steps
     decay_start = warmup_steps + stable_steps
 
@@ -852,13 +848,13 @@ class TestLearningRateSchedules(unittest.TestCase):
           learning_rate=learning_rate,
           learning_rate_schedule_steps=learning_rate_schedule_steps,
           steps=steps,
-          warmup_steps_fraction=warmup_steps_fraction,
+          warmup_steps=warmup_steps,
           lr_schedule_type="wsd",
           learning_rate_final_fraction=learning_rate_final_fraction,
-          wsd_decay_steps_fraction=wsd_decay_steps_fraction,
+          wsd_decay_steps=decay_steps,
           wsd_decay_style=decay_style,
       )
-      schedule_fn = maxtext_utils.create_learning_rate_schedule(config)
+      schedule_fn = megatext_utils.create_learning_rate_schedule(config)
 
       # Warmup phase: 0 -> peak
       self.assertAlmostEqual(float(schedule_fn(0)), 0.0, places=6)
@@ -891,7 +887,7 @@ class TestLearningRateSchedules(unittest.TestCase):
       # Zero phase
       self.assertAlmostEqual(float(schedule_fn(steps - 1)), 0.0, places=6)
 
-    # Test invalid fractions - should raise during config initialization
+    # Test invalid step counts - should raise during config initialization
     with self.assertRaises(ValueError) as cm:
       pyconfig.initialize(
           [None, get_test_config_path()],
@@ -899,13 +895,13 @@ class TestLearningRateSchedules(unittest.TestCase):
           learning_rate=learning_rate,
           learning_rate_schedule_steps=learning_rate_schedule_steps,
           steps=steps,
-          warmup_steps_fraction=0.6,
+          warmup_steps=600,
           lr_schedule_type="wsd",
           learning_rate_final_fraction=learning_rate_final_fraction,
-          wsd_decay_steps_fraction=0.5,  # Sum > 1.0
+          wsd_decay_steps=500,  # Sum > learning_rate_schedule_steps
       )
-    self.assertIn("warmup_steps_fraction", str(cm.exception))
-    self.assertIn("wsd_decay_steps_fraction", str(cm.exception))
+    self.assertIn("warmup_steps", str(cm.exception))
+    self.assertIn("wsd_decay_steps", str(cm.exception))
 
 
 class TestGetAbstractState(unittest.TestCase):
@@ -917,11 +913,11 @@ class TestGetAbstractState(unittest.TestCase):
         [None, get_test_config_path()],
         **extra_args,
         enable_checkpointing=False,
-        model_name="llama3.1-8b",
+        model="llama3.1-8b",
         per_device_batch_size=1,
         max_target_length=16,
     )
-    devices_array = maxtext_utils.create_device_mesh(self.config)
+    devices_array = megatext_utils.create_device_mesh(self.config)
     self.mesh = Mesh(devices_array, self.config.mesh_axes)
     quant = quantizations.configure_quantization(self.config)
     self.model = Transformer(self.config, mesh=self.mesh, quant=quant, model_mode=MODEL_MODE_TRAIN)
@@ -931,7 +927,7 @@ class TestGetAbstractState(unittest.TestCase):
   def test_get_abstract_state(self):
     """Tests that get_abstract_state returns abstract arrays."""
     # get_abstract_state returns a tuple, the first element is the abstract state.
-    abstract_state, _, _ = maxtext_utils.get_abstract_state(self.model, self.tx, self.config, self.rng, self.mesh, None)
+    abstract_state, _, _ = megatext_utils.get_abstract_state(self.model, self.tx, self.config, self.rng, self.mesh, None)
 
     # Check that params are abstract
     param_leaves = jax.tree_util.tree_leaves(abstract_state.params)

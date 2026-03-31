@@ -21,7 +21,7 @@ by a subsequent training run using a different input pipeline (e.g., 'tfds').
 The tests confirm restoration by checking the starting step of the resumed runs.
 
 Note: Make sure to run
-  `bash tools/setup/setup_gcsfuse.sh DATASET_GCS_BUCKET=gs://maxtext-dataset MOUNT_PATH=/tmp/gcsfuse/`
+  `bash tools/setup/setup_gcsfuse.sh DATASET_GCS_BUCKET=gs://megatext-dataset MOUNT_PATH=/tmp/gcsfuse/`
 before running tests locally.
 """
 
@@ -29,8 +29,8 @@ from datetime import datetime
 import json
 import os
 import pytest
-from maxtext.trainers.pre_train.train import main as train_main
-from maxtext.utils.globals import MAXTEXT_REPO_ROOT
+from megatext.trainers.pretrain import main as train_main
+from megatext.utils.constants import MEGATEXT_REPO_ROOT
 from tests.integration.checkpointing_test import get_checkpointing_command
 
 
@@ -56,7 +56,7 @@ def run_checkpoint_compatibility(hardware, attention_type):
           run_date,
           hardware=hardware,
           steps=1,
-          metrics_file=os.path.join(MAXTEXT_REPO_ROOT, "run_1_metrics.txt"),
+          metrics_file=os.path.join(MEGATEXT_REPO_ROOT, "run_1_metrics.txt"),
           attention_type=attention_type,
           dataset_type="grain",
           dataset_path="/tmp/gcsfuse",
@@ -70,14 +70,14 @@ def run_checkpoint_compatibility(hardware, attention_type):
           run_date,
           hardware=hardware,
           steps=2,
-          metrics_file=os.path.join(MAXTEXT_REPO_ROOT, "run_2_metrics.txt"),
+          metrics_file=os.path.join(MEGATEXT_REPO_ROOT, "run_2_metrics.txt"),
           attention_type=attention_type,
           dataset_type="tfds",
           dataset_path="/tmp/gcsfuse",
       )
   )
 
-  check_start_step(os.path.join(MAXTEXT_REPO_ROOT, "run_2_metrics.txt"), 1.0)
+  check_start_step(os.path.join(MEGATEXT_REPO_ROOT, "run_2_metrics.txt"), 1.0)
 
 
 @pytest.mark.integration_test

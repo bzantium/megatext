@@ -20,10 +20,15 @@ require external integrations or specific hardware (for example `tpu_only`)
 are not marked.
 """
 
-import pytest
-from maxtext.common.gcloud_stub import is_decoupled
-import jax
 import importlib.util
+import struct
+from pathlib import Path
+
+import numpy as np
+import pytest
+import jax
+
+from megatext.common.gcloud_stub import is_decoupled
 
 # Configure JAX to use unsafe_rbg PRNG implementation to match main scripts.
 if is_decoupled():
@@ -137,3 +142,157 @@ def pytest_configure(config):
       "decoupled: marked on tests that are not skipped due to GCP deps, when DECOUPLE_GCLOUD=TRUE",
   ]:
     config.addinivalue_line("markers", m)
+
+
+# ---------------------------------------------------------------------------
+# Fixtures for mmap / arecord dataset tests
+# ---------------------------------------------------------------------------
+
+def _create_mmap_dataset(prefix: str, docs: list, dtype=np.uint16):
+    """Helper to create a single mmap dataset (prefix.idx + prefix.bin)."""
+    from megatext.data.indexed_dataset import _NUMPY_TO_DTYPE_CODE
+
+    dtype_code = _NUMPY_TO_DTYPE_CODE[dtype]
+
+    bin_path = Path(f"{prefix}.bin")
+    idx_path = Path(f"{prefix}.idx")
+
+    sequence_lengths = []
+    sequence_pointers = []
+    pointer = 0
+
+    with open(bin_path, "wb") as f:
+        for tokens in docs:
+            data = tokens.astype(dtype).tobytes()
+            sequence_pointers.append(pointer)
+            sequence_lengths.append(len(tokens))
+            f.write(data)
+            pointer += len(data)
+
+    # Write .idx file
+    IDX_MAGIC = b"MMIDIDX\x00\x00"
+    seq_count = len(docs)
+    with open(idx_path, "wb") as f:
+        f.write(IDX_MAGIC)
+        f.write(struct.pack("<Q", 1))  # version
+        f.write(struct.pack("<B", dtype_code))  # dtype
+        f.write(struct.pack("<Q", seq_count))  # seq_count
+        f.write(struct.pack("<Q", seq_count + 1))  # doc_count entries
+
+        np.array(sequence_lengths, dtype=np.int32).tofile(f)
+        np.array(sequence_pointers, dtype=np.int64).tofile(f)
+        np.arange(seq_count + 1, dtype=np.int64).tofile(f)
+
+
+@pytest.fixture
+def sample_mmap_dataset(tmp_path):
+    """Create a small mmap dataset for testing.
+
+    Creates 10 documents with varying lengths (10-100 tokens each).
+    Returns the path prefix (without .bin/.idx extension).
+    """
+    prefix = str(tmp_path / "test_data")
+    num_docs = 10
+    rng = np.random.RandomState(42)
+
+    # Generate documents with random token IDs
+    docs = []
+    for _ in range(num_docs):
+        doc_len = rng.randint(10, 101)
+        tokens = rng.randint(0, 1000, size=doc_len).astype(np.uint16)
+        docs.append(tokens)
+
+    _create_mmap_dataset(prefix, docs)
+    return prefix, docs
+
+
+@pytest.fixture
+def sample_mmap_directory(tmp_path):
+    """Create a directory with 3 mmap datasets for testing MultiFileIndexedDataset.
+
+    Returns (dir_path, concatenated_docs).
+    """
+    data_dir = tmp_path / "mmap_multi"
+    data_dir.mkdir()
+
+    rng = np.random.RandomState(123)
+    all_docs = []
+
+    for i in range(3):
+        prefix = str(data_dir / f"split_{i:02d}")
+        docs = []
+        for _ in range(5):
+            doc_len = rng.randint(10, 51)
+            tokens = rng.randint(0, 1000, size=doc_len).astype(np.uint16)
+            docs.append(tokens)
+        _create_mmap_dataset(prefix, docs)
+        all_docs.extend(docs)
+
+    return str(data_dir), all_docs
+
+
+@pytest.fixture
+def sample_arecord_dataset(tmp_path):
+    """Create a small arecord dataset for testing (prefix-based).
+
+    Returns (prefix_path, list_of_doc_token_arrays).
+    """
+    pytest.importorskip("array_record")
+    from array_record.python.array_record_module import ArrayRecordWriter
+    from megatext.data.indexed_dataset import write_index
+
+    prefix = str(tmp_path / "arecord_data")
+
+    rng = np.random.RandomState(42)
+    num_docs = 10
+    docs = []
+    doc_lengths = []
+
+    writer = ArrayRecordWriter(f"{prefix}.arecord", "group_size:1")
+    for _ in range(num_docs):
+        doc_len = rng.randint(10, 101)
+        tokens = rng.randint(0, 1000, size=doc_len).astype(np.uint16)
+        docs.append(tokens)
+        doc_lengths.append(doc_len)
+        writer.write(tokens.tobytes())
+    writer.close()
+
+    write_index(f"{prefix}.idx", np.array(doc_lengths, dtype=np.int32))
+
+    return prefix, docs
+
+
+@pytest.fixture
+def sample_arecord_directory(tmp_path):
+    """Create a directory with 3 arecord prefix datasets for testing MultiFileIndexedDataset.
+
+    Returns (dir_path, concatenated_docs).
+    """
+    pytest.importorskip("array_record")
+    from array_record.python.array_record_module import ArrayRecordWriter
+    from megatext.data.indexed_dataset import write_index
+
+    data_dir = tmp_path / "arecord_multi"
+    data_dir.mkdir()
+
+    rng = np.random.RandomState(456)
+    all_docs = []
+
+    for i in range(3):
+        prefix = str(data_dir / f"split_{i:02d}")
+        docs = []
+        doc_lengths = []
+
+        writer = ArrayRecordWriter(f"{prefix}.arecord", "group_size:1")
+        for _ in range(5):
+            doc_len = rng.randint(10, 51)
+            tokens = rng.randint(0, 1000, size=doc_len).astype(np.uint16)
+            docs.append(tokens)
+            doc_lengths.append(doc_len)
+            writer.write(tokens.tobytes())
+        writer.close()
+
+        write_index(f"{prefix}.idx", np.array(doc_lengths, dtype=np.int32))
+        all_docs.extend(docs)
+
+    return str(data_dir), all_docs

@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests to verify the deterministic nature of MaxText training runs.
+"""Tests to verify the deterministic nature of Megatext training runs.
 
-This module ensures that when the MaxText training is executed multiple times 
+This module ensures that when the Megatext training is executed multiple times 
 with identical configurations, the loss metrics across runs are exactly 
 the same.
 """
@@ -25,7 +25,7 @@ import unittest
 
 import pytest
 
-from maxtext.trainers.pre_train.train import main as train_main
+from megatext.trainers.pretrain import main as train_main
 from tests.utils.test_helpers import get_test_config_path
 
 pytestmark = pytest.mark.integration_test
@@ -42,7 +42,7 @@ def compare_target_metrics(metrics_files, target):
 
 
 class DeterminismTests(unittest.TestCase):
-  """Tests determinism by running MaxText training multiple times and comparing loss."""
+  """Tests determinism by running Megatext training multiple times and comparing loss."""
 
   @pytest.mark.tpu_only
   @pytest.mark.scheduled_only
@@ -56,8 +56,8 @@ class DeterminismTests(unittest.TestCase):
         "enable_checkpointing=False",
         "enable_data_shuffling=True",
         "enable_dropout=False",
-        "base_output_directory=gs://runner-maxtext-logs",
-        "dataset_path=gs://maxtext-dataset",
+        "base_output_directory=gs://runner-megatext-logs",
+        "dataset_path=gs://megatext-dataset",
         "skip_jax_distributed_system=True",
     ]
     train_1_config = common_config + [

@@ -22,10 +22,10 @@ import pytest
 from absl.testing import parameterized
 from optax.contrib import MuonDimensionNumbers as mdn
 
-from maxtext.configs import pyconfig
-from maxtext.optimizers import optimizers
-from maxtext.utils import maxtext_utils
-from maxtext.utils.muon_utils import get_model_mdn
+from megatext.configs import pyconfig
+from megatext.optimizers import optimizers
+from megatext.utils import megatext_utils
+from megatext.utils.muon_utils import get_model_mdn
 from tests.utils.test_helpers import get_test_config_path
 from typing import NamedTuple
 
@@ -236,12 +236,12 @@ class MuonDimensionTest(parameterized.TestCase):
       ("qwen3-0.6b", "qwen3-0.6b", QWEN3_DIMENSION_NUMBER),
   )
   @pytest.mark.tpu_only
-  def test_model_integration(self, model_name, expected_output):
+  def test_model_integration(self, model, expected_output):
     """
-    Initializes the specified MaxText model and asserts that the generated
+    Initializes the specified MegaText model and asserts that the generated
     Muon dimension numbers match the hardcoded reference.
     """
-    actual_output = get_model_mdn(model_name, scan_layers=True)
+    actual_output = get_model_mdn(model, scan_layers=True)
     self.assertEqual(actual_output, expected_output)
 
 
@@ -299,8 +299,8 @@ class AdamWMaskTest(parameterized.TestCase):
     self.assertFalse(mask.bias)
 
   @parameterized.named_parameters(
-      ("adamw", "adamw", "maxtext.optimizers.optimizers.optax.adamw"),
-      ("adam_pax", "adam_pax", "maxtext.optimizers.optimizers.adam_pax"),
+      ("adamw", "adamw", "megatext.optimizers.optimizers.optax.adamw"),
+      ("adam_pax", "adam_pax", "megatext.optimizers.optimizers.adam_pax"),
   )
   def test_optimizer_with_mask(self, opt_type, mock_path):
     """Test that optimizer receives the mask function from config and it works as expected"""
@@ -313,7 +313,7 @@ class AdamWMaskTest(parameterized.TestCase):
         f"opt_type={opt_type}",
     ]
     config = pyconfig.initialize(argv)
-    learning_rate_schedule = maxtext_utils.create_learning_rate_schedule(config)
+    learning_rate_schedule = megatext_utils.create_learning_rate_schedule(config)
 
     with patch(mock_path) as mock_opt:
       # Call get_optimizer
@@ -343,14 +343,14 @@ class AdamWMaskTest(parameterized.TestCase):
       self.assertTrue(mask["layer3"][1])
 
   @parameterized.named_parameters(
-      ("adamw", "adamw", "maxtext.optimizers.optimizers.optax.adamw"),
-      ("adam_pax", "adam_pax", "maxtext.optimizers.optimizers.adam_pax"),
+      ("adamw", "adamw", "megatext.optimizers.optimizers.optax.adamw"),
+      ("adam_pax", "adam_pax", "megatext.optimizers.optimizers.adam_pax"),
   )
   def test_optimizer_without_mask(self, opt_type, mock_path):
     """Test that optimizer receives None for mask when config is empty"""
     argv = ["", get_test_config_path(), "run_name=test", f"opt_type={opt_type}"]
     config = pyconfig.initialize(argv)
-    learning_rate_schedule = maxtext_utils.create_learning_rate_schedule(config)
+    learning_rate_schedule = megatext_utils.create_learning_rate_schedule(config)
 
     with patch(mock_path) as mock_opt:
       # Call get_optimizer

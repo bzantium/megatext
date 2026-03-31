@@ -21,7 +21,7 @@ import tempfile
 import pytest
 
 # Module to be tested
-from maxtext.utils import gcs_utils
+from megatext.utils import storage as gcs_utils
 
 
 @pytest.mark.cpu_only
@@ -80,7 +80,7 @@ class GcsUtilsTest(unittest.TestCase):
     with self.assertRaises((PermissionError, OSError)):
       gcs_utils.mkdir_and_check_permissions(new_dir_path)
 
-  @mock.patch("maxtext.utils.gcs_utils.storage.Client")
+  @mock.patch("megatext.utils.gcs_utils.storage.Client")
   def test_mkdir_gcs_no_such_bucket(self, mock_storage_client):
     """Tests that an exception is raised for a non-existent GCS bucket."""
     mock_client_instance = mock_storage_client.return_value
@@ -91,7 +91,7 @@ class GcsUtilsTest(unittest.TestCase):
       gcs_utils.mkdir_and_check_permissions(gcs_path)
     mock_client_instance.get_bucket.assert_called_with("no_such_bucket")
 
-  @mock.patch("maxtext.utils.gcs_utils.storage.Client")
+  @mock.patch("megatext.utils.gcs_utils.storage.Client")
   def test_mkdir_gcs_no_such_bucket_with_path(self, mock_storage_client):
     """Tests an exception for a non-existent bucket with a subdirectory."""
     mock_client_instance = mock_storage_client.return_value
@@ -102,8 +102,8 @@ class GcsUtilsTest(unittest.TestCase):
       gcs_utils.mkdir_and_check_permissions(gcs_path)
     mock_client_instance.get_bucket.assert_called_with("no_such_bucket")
 
-  @mock.patch("maxtext.utils.gcs_utils.epath.Path")
-  @mock.patch("maxtext.utils.gcs_utils.storage.Client")
+  @mock.patch("megatext.utils.gcs_utils.epath.Path")
+  @mock.patch("megatext.utils.gcs_utils.storage.Client")
   def test_mkdir_gcs_valid_bucket(self, mock_storage_client, mock_epath):
     """Tests that a valid GCS path is handled correctly without errors."""
     # Arrange: Mock the GCS client to simulate a valid bucket

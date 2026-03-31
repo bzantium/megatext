@@ -18,7 +18,7 @@ import unittest
 
 import jax
 import jax.numpy as jnp
-from maxtext.kernels.attention.ragged_attention import ragged_gqa, ragged_mha, ragged_mqa, reference_gqa, reference_mha, reference_mqa
+from megatext.kernels.attention.ragged_attention import ragged_gqa, ragged_mha, ragged_mqa, reference_gqa, reference_mha, reference_mqa
 import numpy as np
 import pytest
 

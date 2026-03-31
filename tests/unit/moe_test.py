@@ -21,14 +21,14 @@ from flax.linen import partitioning as nn_partitioning
 import jax
 import jax.numpy as jnp
 from jax.sharding import Mesh
-from maxtext.configs import pyconfig
-from maxtext.common.common_types import Config, DType
-from maxtext.layers import linears
-from maxtext.layers import moe
-from maxtext.layers import nnx_wrappers
-from maxtext.layers.initializers import NdInitializer, nd_dense_init, variable_to_logically_partitioned
-from maxtext.layers.quantizations import Fp8Quantization
-from maxtext.utils import maxtext_utils
+from megatext.configs import pyconfig
+from megatext.common.common_types import Config, DType
+from megatext.layers import linears
+from megatext.layers import moe
+from megatext.layers import nnx_wrappers
+from megatext.layers.initializers import NdInitializer, nd_dense_init, variable_to_logically_partitioned
+from megatext.layers.quantizations import Fp8Quantization
+from megatext.utils import megatext_utils
 from tests.utils.test_helpers import get_test_config_path, get_decoupled_parallelism_overrides
 import pytest
 
@@ -42,7 +42,7 @@ class TokenDroppingTest(unittest.TestCase):
         [None, get_test_config_path()],
         run_name="token_dropping_test",
         enable_checkpointing=False,
-        model_name="mixtral-8x7b",
+        model="mixtral-8x7b",
         dtype="bfloat16",
         megablox=False,
         sparse_matmul=False,
@@ -52,7 +52,7 @@ class TokenDroppingTest(unittest.TestCase):
         **extra_args,
     )
     self.rngs = nnx.Rngs(params=0)
-    devices_array = maxtext_utils.create_device_mesh(self.cfg)
+    devices_array = megatext_utils.create_device_mesh(self.cfg)
     self.model = moe.RoutedMoE(
         config=self.cfg,
         num_experts=self.cfg.num_experts,
@@ -167,7 +167,7 @@ class MlpBlockTest(unittest.TestCase):
         [None, get_test_config_path()],
         run_name="mlp_block_init_test",
         enable_checkpointing=False,
-        model_name="mixtral-8x7b",
+        model="mixtral-8x7b",
         dtype="bfloat16",
         megablox=False,
         sparse_matmul=False,
@@ -177,7 +177,7 @@ class MlpBlockTest(unittest.TestCase):
     )
     self.rng = jax.random.PRNGKey(42)
     quant = Fp8Quantization()
-    devices_array = maxtext_utils.create_device_mesh(self.config)
+    devices_array = megatext_utils.create_device_mesh(self.config)
     self.model = linears.mlp_block(
         mesh=Mesh(devices_array, self.config.mesh_axes),
         config=self.config,
@@ -221,7 +221,7 @@ class DeepSeekRoutingTest(unittest.TestCase):
         **extra_args,
     )
     self.rngs = nnx.Rngs(params=0)
-    devices_array = maxtext_utils.create_device_mesh(self.cfg)
+    devices_array = megatext_utils.create_device_mesh(self.cfg)
     self.model = moe.RoutedMoE(
         config=self.cfg,
         num_experts=self.cfg.num_experts,
@@ -315,7 +315,7 @@ class MoeLoopBlock(nnx.Module):
         in_features_shape=self.inputs_shape[-1],
         out_features_shape=self.num_experts,
         mesh=self.mesh,
-        model_name=self.config.model_name,
+        model=self.config.model,
         dtype=self.dtype,
         kernel_init=self.kernel_init,
         kernel_axes=self.kernel_axes,
@@ -457,7 +457,7 @@ class RoutedMoeTest(unittest.TestCase):
         [None, get_test_config_path()],
         run_name="moe_block_megablox_test",
         enable_checkpointing=False,
-        model_name="mixtral-8x7b",
+        model="mixtral-8x7b",
         dtype="bfloat16",
         megablox=True,
         sparse_matmul=True,
@@ -474,7 +474,7 @@ class RoutedMoeTest(unittest.TestCase):
         dtype=cfg.dtype,
     )
 
-    devices_array = maxtext_utils.create_device_mesh(cfg)
+    devices_array = megatext_utils.create_device_mesh(cfg)
     mesh = Mesh(devices_array, cfg.mesh_axes)
     variables, expected_output = self.get_expected_output(rng_model, hidden_states, cfg, mesh)
     actual_output, _, _ = self.get_moe_output(variables, hidden_states, cfg, mesh)
@@ -486,7 +486,7 @@ class RoutedMoeTest(unittest.TestCase):
         [None, get_test_config_path()],
         run_name="moe_block_ragged_dot_test",
         enable_checkpointing=False,
-        model_name="mixtral-8x7b",
+        model="mixtral-8x7b",
         dtype="bfloat16",
         megablox=False,
         sparse_matmul=True,
@@ -503,7 +503,7 @@ class RoutedMoeTest(unittest.TestCase):
         dtype=cfg.dtype,
     )
 
-    devices_array = maxtext_utils.create_device_mesh(cfg)
+    devices_array = megatext_utils.create_device_mesh(cfg)
     mesh = Mesh(devices_array, cfg.mesh_axes)
     variables, expected_output = self.get_expected_output(rng_model, hidden_states, cfg, mesh)
     actual_output, _, _ = self.get_moe_output(variables, hidden_states, cfg, mesh)
@@ -515,7 +515,7 @@ class RoutedMoeTest(unittest.TestCase):
         [None, get_test_config_path()],
         run_name="moe_block_dense_test",
         enable_checkpointing=False,
-        model_name="mixtral-8x7b",
+        model="mixtral-8x7b",
         dtype="float32",
         megablox=False,
         sparse_matmul=False,
@@ -532,7 +532,7 @@ class RoutedMoeTest(unittest.TestCase):
         dtype=cfg.dtype,
     )
 
-    devices_array = maxtext_utils.create_device_mesh(cfg)
+    devices_array = megatext_utils.create_device_mesh(cfg)
     mesh = Mesh(devices_array, cfg.mesh_axes)
     variables, expected_output = self.get_expected_output(rng_model, hidden_states, cfg, mesh)
     actual_output, _, _ = self.get_moe_output(variables, hidden_states, cfg, mesh)
@@ -544,7 +544,7 @@ class RoutedMoeTest(unittest.TestCase):
         [None, get_test_config_path()],
         run_name="moe_block_megablox_ep_test",
         enable_checkpointing=False,
-        model_name="mixtral-8x7b",
+        model="mixtral-8x7b",
         dtype="bfloat16",
         megablox=True,
         sparse_matmul=True,
@@ -562,7 +562,7 @@ class RoutedMoeTest(unittest.TestCase):
         dtype=cfg.dtype,
     )
 
-    devices_array = maxtext_utils.create_device_mesh(cfg)
+    devices_array = megatext_utils.create_device_mesh(cfg)
     mesh = Mesh(devices_array, cfg.mesh_axes)
     with nn_partitioning.axis_rules(cfg.logical_axis_rules):
       variables, expected_output = self.get_expected_output(rng_model, hidden_states, cfg, mesh)
@@ -575,7 +575,7 @@ class RoutedMoeTest(unittest.TestCase):
         [None, get_test_config_path()],
         run_name="moe_block_ring_ep_tp_test",
         enable_checkpointing=False,
-        model_name="mixtral-8x7b",
+        model="mixtral-8x7b",
         dtype="bfloat16",
         megablox=True,
         sparse_matmul=True,
@@ -595,7 +595,7 @@ class RoutedMoeTest(unittest.TestCase):
         dtype=cfg.dtype,
     )
 
-    devices_array = maxtext_utils.create_device_mesh(cfg)
+    devices_array = megatext_utils.create_device_mesh(cfg)
     mesh = Mesh(devices_array, cfg.mesh_axes)
     with nn_partitioning.axis_rules(cfg.logical_axis_rules):
       variables, expected_output = self.get_expected_output(rng_model, hidden_states, cfg, mesh)
@@ -608,7 +608,7 @@ class RoutedMoeTest(unittest.TestCase):
         [None, get_test_config_path()],
         run_name="moe_block_megablox_ep_test",
         enable_checkpointing=False,
-        model_name="mixtral-8x7b",
+        model="mixtral-8x7b",
         dtype="bfloat16",
         megablox=True,
         sparse_matmul=True,
@@ -628,7 +628,7 @@ class RoutedMoeTest(unittest.TestCase):
         dtype=cfg.dtype,
     )
 
-    devices_array = maxtext_utils.create_device_mesh(cfg)
+    devices_array = megatext_utils.create_device_mesh(cfg)
     mesh = Mesh(devices_array, cfg.mesh_axes)
     with nn_partitioning.axis_rules(cfg.logical_axis_rules):
       variables, expected_output = self.get_expected_output(rng_model, hidden_states, cfg, mesh)
@@ -641,7 +641,7 @@ class RoutedMoeTest(unittest.TestCase):
         [None, get_test_config_path()],
         run_name="moe_block_megablox_tp_transpose_test",
         enable_checkpointing=False,
-        model_name="mixtral-8x7b",
+        model="mixtral-8x7b",
         dtype="bfloat16",
         megablox=True,
         sparse_matmul=True,
@@ -654,7 +654,7 @@ class RoutedMoeTest(unittest.TestCase):
         [None, get_test_config_path()],
         run_name="moe_block_megablox_tp_test",
         enable_checkpointing=False,
-        model_name="mixtral-8x7b",
+        model="mixtral-8x7b",
         dtype="bfloat16",
         megablox=True,
         sparse_matmul=True,
@@ -672,7 +672,7 @@ class RoutedMoeTest(unittest.TestCase):
         dtype=cfg.dtype,
     )
 
-    devices_array = maxtext_utils.create_device_mesh(cfg)
+    devices_array = megatext_utils.create_device_mesh(cfg)
     mesh = Mesh(devices_array, cfg.mesh_axes)
     with nn_partitioning.axis_rules(cfg.logical_axis_rules):
       variables, _ = self.get_expected_output(rng_model, hidden_states, cfg, mesh)
@@ -686,7 +686,7 @@ class RoutedMoeTest(unittest.TestCase):
         [None, get_test_config_path()],
         run_name="moe_block_megablox_cp_test",
         enable_checkpointing=False,
-        model_name="mixtral-8x7b",
+        model="mixtral-8x7b",
         dtype="bfloat16",
         megablox=True,
         sparse_matmul=True,
@@ -704,7 +704,7 @@ class RoutedMoeTest(unittest.TestCase):
         dtype=cfg.dtype,
     )
 
-    devices_array = maxtext_utils.create_device_mesh(cfg)
+    devices_array = megatext_utils.create_device_mesh(cfg)
     mesh = Mesh(devices_array, cfg.mesh_axes)
     with nn_partitioning.axis_rules(cfg.logical_axis_rules):
       variables, expected_output = self.get_expected_output(rng_model, hidden_states, cfg, mesh)
@@ -717,7 +717,7 @@ class RoutedMoeTest(unittest.TestCase):
         [None, get_test_config_path()],
         run_name="moe_block_megablox_ep_cp_test",
         enable_checkpointing=False,
-        model_name="mixtral-8x7b",
+        model="mixtral-8x7b",
         dtype="bfloat16",
         megablox=True,
         sparse_matmul=True,
@@ -737,7 +737,7 @@ class RoutedMoeTest(unittest.TestCase):
         dtype=cfg.dtype,
     )
 
-    devices_array = maxtext_utils.create_device_mesh(cfg)
+    devices_array = megatext_utils.create_device_mesh(cfg)
     mesh = Mesh(devices_array, cfg.mesh_axes)
     with nn_partitioning.axis_rules(cfg.logical_axis_rules):
       variables, expected_output = self.get_expected_output(rng_model, hidden_states, cfg, mesh)
@@ -750,7 +750,7 @@ class RoutedMoeTest(unittest.TestCase):
         [None, get_test_config_path()],
         run_name="moe_block_megablox_ep_tp_test",
         enable_checkpointing=False,
-        model_name="mixtral-8x7b",
+        model="mixtral-8x7b",
         dtype="bfloat16",
         megablox=True,
         sparse_matmul=True,
@@ -769,7 +769,7 @@ class RoutedMoeTest(unittest.TestCase):
         dtype=cfg.dtype,
     )
 
-    devices_array = maxtext_utils.create_device_mesh(cfg)
+    devices_array = megatext_utils.create_device_mesh(cfg)
     mesh = Mesh(devices_array, cfg.mesh_axes)
     with nn_partitioning.axis_rules(cfg.logical_axis_rules):
       variables, expected_output = self.get_expected_output(rng_model, hidden_states, cfg, mesh)

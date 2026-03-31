@@ -17,8 +17,8 @@ import unittest
 import pytest
 from tools.gcs_benchmarks.standalone_checkpointer import main as sckpt_main
 from tools.gcs_benchmarks.standalone_dataloader import main as sdl_main
-from maxtext.utils.globals import MAXTEXT_ASSETS_ROOT
-from maxtext.common.gcloud_stub import is_decoupled
+from megatext.utils.constants import MEGATEXT_ASSETS_ROOT
+from megatext.common.gcloud_stub import is_decoupled
 
 from datetime import datetime
 import random
@@ -62,7 +62,7 @@ class Standalone_DL_CKPT(unittest.TestCase):
             "steps=100",
             "enable_checkpointing=false",
             "enable_goodput_recording=False",
-            rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+            rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
         )
     )  # need to pass relative path to tokenizer
 

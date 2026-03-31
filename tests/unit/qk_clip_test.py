@@ -24,12 +24,12 @@ import numpy as np
 from flax import nnx
 from jax.sharding import Mesh
 
-from maxtext.common.gcloud_stub import is_decoupled
-from maxtext.layers import attention_mla
-from maxtext.utils import maxtext_utils
-from maxtext.utils.qk_clip_utils import apply_qk_clip, calculate_max_logit_metric
+from megatext.common.gcloud_stub import is_decoupled
+from megatext.layers import attention_mla
+from megatext.utils import megatext_utils
+from megatext.utils.qk_clip_utils import apply_qk_clip, calculate_max_logit_metric
 
-from maxtext.configs import pyconfig
+from megatext.configs import pyconfig
 from tests.utils.test_helpers import get_test_config_path, get_decoupled_parallelism_overrides
 
 
@@ -223,7 +223,7 @@ class QKClipMLATest(unittest.TestCase):
   # Config for MLA with QK-Clip enabled
   config_arguments = {
       "run_name": "test_qk_clip",
-      "model_name": "default",
+      "model": "default",
       "metrics_file": "",
       "base_output_directory": "",
       # MLA Architecture Overrides
@@ -280,7 +280,7 @@ class QKClipMLATest(unittest.TestCase):
     extra_args = get_decoupled_parallelism_overrides()
     config = pyconfig.initialize(args, **run_config_args, **extra_args)
 
-    devices_array = maxtext_utils.create_device_mesh(config)
+    devices_array = megatext_utils.create_device_mesh(config)
     mesh = Mesh(devices_array, config.mesh_axes)
 
     batch_size = jax.device_count()
@@ -383,7 +383,7 @@ class QKClipMLATest(unittest.TestCase):
     extra_args = get_decoupled_parallelism_overrides()
     config = pyconfig.initialize(args, **run_config_args, **extra_args)
 
-    devices_array = maxtext_utils.create_device_mesh(config)
+    devices_array = megatext_utils.create_device_mesh(config)
     mesh = Mesh(devices_array, config.mesh_axes)
 
     # Initialize

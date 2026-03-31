@@ -19,8 +19,8 @@ import unittest
 
 import grain.python as grain
 import numpy as np
-from maxtext.input_pipeline import grain_tokenizer
-from maxtext.input_pipeline import input_pipeline_utils
+from megatext.data import grain_tokenizer
+from megatext.data import input_pipeline_utils
 from numpy.testing import assert_array_equal
 
 

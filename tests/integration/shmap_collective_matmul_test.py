@@ -12,19 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Integration test for maxtext/examples/shmap_collective_matmul.py"""
+"""Integration test for megatext/examples/shmap_collective_matmul.py"""
 
 import os.path
 import sys
 
 import pytest
 
-from maxtext.utils.globals import MAXTEXT_REPO_ROOT
+from megatext.utils.constants import MEGATEXT_REPO_ROOT
 
-sys.path.append(os.path.join(MAXTEXT_REPO_ROOT, "pedagogical_examples"))
+sys.path.append(os.path.join(MEGATEXT_REPO_ROOT, "pedagogical_examples"))
 
 # Uncomment the import when b/415022795 is fixed
-# from maxtext.examples.shmap_collective_matmul import main
+# from megatext.examples.shmap_collective_matmul import main
 
 
 @pytest.mark.skip(reason="Enable when b/415022795 is fixed")

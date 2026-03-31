@@ -31,22 +31,22 @@ Command:
 
 2. Generate Sharding for a Single, Specific Case
 -------------------------------------------------
-Provide the `model_name`, `topology`, and `num_slice` as command-line arguments
+Provide the `model`, `topology`, and `num_slice` as command-line arguments
 to generate sharding information for a single configuration. You must provide
 all three arguments.
 
 Command:
-  python3 -m tests.utils.run_sharding_dump --model_name <model> --topology <topology> --num_slice <slices>
+  python3 -m tests.utils.run_sharding_dump --model <model> --topology <topology> --num_slice <slices>
 
 Example:
-  python3 -m tests.utils.run_sharding_dump --model_name gemma-7b --topology v5p-256 --num_slice 1
+  python3 -m tests.utils.run_sharding_dump --model gemma-7b --topology v5p-256 --num_slice 1
 
 """
 
 
 from typing import Sequence
 
-from maxtext.utils.globals import MAXTEXT_REPO_ROOT
+from megatext.utils.constants import MEGATEXT_REPO_ROOT
 from tests.utils.sharding_dump import TEST_CASES
 from tests.utils.test_helpers import get_test_config_path
 import subprocess
@@ -55,12 +55,12 @@ from pathlib import Path
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string("model_name", None, "Specific model name to dump.")
+flags.DEFINE_string("model", None, "Specific model name to dump.")
 flags.DEFINE_string("topology", None, "Specific topology to dump.")
 flags.DEFINE_string("num_slice", None, "Specific number of slices to dump.")
 
 
-def run_single_dump(model_name: str, topology: str, num_slice: str) -> None:
+def run_single_dump(model: str, topology: str, num_slice: str) -> None:
   """Generate sharding json file for one specific model, topology and slice."""
   subprocess.run(
       [
@@ -70,7 +70,7 @@ def run_single_dump(model_name: str, topology: str, num_slice: str) -> None:
           get_test_config_path(),
           f"compile_topology={topology}",
           f"compile_topology_num_slices={num_slice}",
-          f"model_name={model_name}",
+          f"model={model}",
           "weight_dtype=float32",
           "log_config=false",
           "debug_sharding=true",
@@ -81,24 +81,24 @@ def run_single_dump(model_name: str, topology: str, num_slice: str) -> None:
 
 def main(argv: Sequence[str]) -> None:
   """Generate json files for every combination of model, topology and slices."""
-  if FLAGS.model_name and FLAGS.topology and FLAGS.num_slice:
-    cases_to_run = [(FLAGS.model_name, FLAGS.topology, FLAGS.num_slice)]
+  if FLAGS.model and FLAGS.topology and FLAGS.num_slice:
+    cases_to_run = [(FLAGS.model, FLAGS.topology, FLAGS.num_slice)]
     print(
         "Running specific case from command line: "
-        f"Model={FLAGS.model_name}, Topology={FLAGS.topology}, NumSlice={FLAGS.num_slice}"
+        f"Model={FLAGS.model}, Topology={FLAGS.topology}, NumSlice={FLAGS.num_slice}"
     )
-  elif FLAGS.model_name or FLAGS.topology or FLAGS.num_slice:
-    print("Error: To specify a single test case, --model_name, --topology, and --num_slice must all be provided.")
+  elif FLAGS.model or FLAGS.topology or FLAGS.num_slice:
+    print("Error: To specify a single test case, --model, --topology, and --num_slice must all be provided.")
     return
   else:
     cases_to_run = TEST_CASES
     print(f"Running all {len(TEST_CASES)} predefined test cases.")
 
   total = len(cases_to_run)
-  for i, (model_name, topology, num_slice) in enumerate(cases_to_run):
-    print(f"\n[{i+1}/{total}] Processing: {model_name} | {topology} | Slice {num_slice}")
+  for i, (model, topology, num_slice) in enumerate(cases_to_run):
+    print(f"\n[{i+1}/{total}] Processing: {model} | {topology} | Slice {num_slice}")
 
-    base_path = Path(f"{MAXTEXT_REPO_ROOT}/tests/utils/sharding_info/{model_name}/" f"{topology}/slice_{num_slice}/")
+    base_path = Path(f"{MEGATEXT_REPO_ROOT}/tests/utils/sharding_info/{model}/" f"{topology}/slice_{num_slice}/")
     json_path_named = base_path / "named_shardings.json"
     json_path_logical = base_path / "logical_shardings.json"
 
@@ -106,9 +106,9 @@ def main(argv: Sequence[str]) -> None:
       print("  -> Sharding files already exist. Regenerating to overwrite.")
 
     try:
-      run_single_dump(model_name, topology, str(num_slice))
+      run_single_dump(model, topology, str(num_slice))
     except subprocess.CalledProcessError:
-      print(f"!!! FAILED: {model_name} {topology} {num_slice}")
+      print(f"!!! FAILED: {model} {topology} {num_slice}")
 
 
 if __name__ == "__main__":

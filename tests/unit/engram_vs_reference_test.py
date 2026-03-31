@@ -44,13 +44,13 @@ import jax
 import jax.numpy as jnp
 from jax.sharding import Mesh
 
-from maxtext.configs import pyconfig
-from maxtext.layers.engram import CompressedTokenizer as CompressedTokenizerJAX
-from maxtext.layers.engram import NgramHashMapping as NgramHashMappingJAX
-from maxtext.layers.engram import MultiHeadEmbedding as MultiHeadEmbeddingJAX
-from maxtext.layers.engram import ShortConv as ShortConvJAX
-from maxtext.layers.engram import Engram as EngramJAX
-from maxtext.utils import maxtext_utils
+from megatext.configs import pyconfig
+from megatext.layers.engram import CompressedTokenizer as CompressedTokenizerJAX
+from megatext.layers.engram import NgramHashMapping as NgramHashMappingJAX
+from megatext.layers.engram import MultiHeadEmbedding as MultiHeadEmbeddingJAX
+from megatext.layers.engram import ShortConv as ShortConvJAX
+from megatext.layers.engram import Engram as EngramJAX
+from megatext.utils import megatext_utils
 from tests.utils.test_helpers import get_test_config_path
 
 
@@ -69,7 +69,7 @@ def setUpModule():
 
 @dataclass
 class Config:
-  """MaxText config"""
+  """MegaText config"""
 
   base_emb_dim: int = 1024
   tokenizer_path: str = "deepseek-ai/DeepSeek-V3"
@@ -467,12 +467,12 @@ def init_torch_weights(module, std=1):
 
 
 def get_cfg_and_mesh(config):
-  """Returns MaxText configuration and mesh."""
+  """Returns MegaText configuration and mesh."""
   cfg = pyconfig.initialize(
       [None, get_test_config_path()],
       run_name="",
       enable_checkpointing=False,
-      model_name="default",
+      model="default",
       dtype="float32",
       # high precision
       weight_dtype="float32",
@@ -481,7 +481,7 @@ def get_cfg_and_mesh(config):
       float32_logits=True,
       base_emb_dim=config.base_emb_dim,
   )
-  devices_array = maxtext_utils.create_device_mesh(cfg)
+  devices_array = megatext_utils.create_device_mesh(cfg)
   mesh = Mesh(devices_array, cfg.mesh_axes)
   return cfg, mesh
 

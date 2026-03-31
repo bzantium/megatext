@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for _get_sharding_desc and maybe_shard_with_name in MaxText sharding module."""
+"""Unit tests for _get_sharding_desc and maybe_shard_with_name in Megatext sharding module."""
 
 import os
 import unittest
@@ -24,8 +24,8 @@ import numpy as np
 from jax.sharding import Mesh, NamedSharding
 from jax.sharding import PartitionSpec as P
 
-from maxtext.common.common_types import ShardMode
-from maxtext.utils.sharding import _get_sharding_desc, maybe_shard_with_name
+from megatext.common.common_types import ShardMode
+from megatext.utils.sharding import _get_sharding_desc, maybe_shard_with_name
 
 
 def _make_single_device_mesh():
@@ -135,7 +135,7 @@ class TestMaybeShardWithNameNoneInput(unittest.TestCase):
 
   def test_none_input_does_not_call_reshard(self):
     """When inputs is None, should not call reshard even in EXPLICIT mode."""
-    with mock.patch("maxtext.utils.sharding.reshard") as mock_reshard:
+    with mock.patch("megatext.utils.sharding.reshard") as mock_reshard:
       maybe_shard_with_name(None, named_sharding=None, shard_mode=ShardMode.EXPLICIT)
       mock_reshard.assert_not_called()
 
@@ -179,7 +179,7 @@ class TestMaybeShardWithNameAutoMode(unittest.TestCase):
     _, call_sharding = mock_wsc.call_args[0]
     self.assertIs(call_sharding, self.named_sharding)
 
-  @mock.patch("maxtext.utils.sharding.reshard")
+  @mock.patch("megatext.utils.sharding.reshard")
   @mock.patch("jax.lax.with_sharding_constraint")
   def test_auto_mode_does_not_call_reshard(self, mock_wsc, mock_reshard):
     """AUTO mode should NOT call reshard."""
@@ -196,14 +196,14 @@ class TestMaybeShardWithNameExplicitMode(unittest.TestCase):
     self.named_sharding = NamedSharding(self.mesh, P())
     self.inputs = jnp.ones((4, 4))
 
-  @mock.patch("maxtext.utils.sharding.reshard")
+  @mock.patch("megatext.utils.sharding.reshard")
   def test_explicit_mode_calls_reshard(self, mock_reshard):
     """EXPLICIT mode should delegate to reshard."""
     mock_reshard.return_value = self.inputs
     maybe_shard_with_name(self.inputs, self.named_sharding, ShardMode.EXPLICIT)
     mock_reshard.assert_called_once_with(self.inputs, self.named_sharding)
 
-  @mock.patch("maxtext.utils.sharding.reshard")
+  @mock.patch("megatext.utils.sharding.reshard")
   def test_explicit_mode_returns_reshard_result(self, mock_reshard):
     """EXPLICIT mode should return the value produced by reshard."""
     sentinel = object()
@@ -211,7 +211,7 @@ class TestMaybeShardWithNameExplicitMode(unittest.TestCase):
     result = maybe_shard_with_name(self.inputs, self.named_sharding, ShardMode.EXPLICIT)
     self.assertIs(result, sentinel)
 
-  @mock.patch("maxtext.utils.sharding.reshard")
+  @mock.patch("megatext.utils.sharding.reshard")
   def test_explicit_mode_passes_inputs_unchanged(self, mock_reshard):
     """EXPLICIT mode should forward the original inputs to reshard."""
     mock_reshard.return_value = self.inputs
@@ -219,7 +219,7 @@ class TestMaybeShardWithNameExplicitMode(unittest.TestCase):
     call_inputs, _ = mock_reshard.call_args[0]
     self.assertIs(call_inputs, self.inputs)
 
-  @mock.patch("maxtext.utils.sharding.reshard")
+  @mock.patch("megatext.utils.sharding.reshard")
   def test_explicit_mode_passes_sharding_unchanged(self, mock_reshard):
     """EXPLICIT mode should forward the original named_sharding to reshard."""
     mock_reshard.return_value = self.inputs
@@ -227,7 +227,7 @@ class TestMaybeShardWithNameExplicitMode(unittest.TestCase):
     _, call_sharding = mock_reshard.call_args[0]
     self.assertIs(call_sharding, self.named_sharding)
 
-  @mock.patch("maxtext.utils.sharding.reshard")
+  @mock.patch("megatext.utils.sharding.reshard")
   @mock.patch("jax.lax.with_sharding_constraint")
   def test_explicit_mode_does_not_call_with_sharding_constraint(self, mock_wsc, mock_reshard):
     """EXPLICIT mode should NOT call with_sharding_constraint."""
@@ -254,7 +254,7 @@ class TestMaybeShardWithNameDebugSharding(unittest.TestCase):
   def test_no_log_when_debug_sharding_false(self, mock_wsc):
     """When debug_sharding=False, max_logging.info should never be called."""
     mock_wsc.return_value = self.inputs
-    with mock.patch("maxtext.utils.sharding.max_logging") as mock_ml:
+    with mock.patch("megatext.utils.sharding.max_logging") as mock_ml:
       maybe_shard_with_name(self.inputs, self.named_sharding, ShardMode.AUTO, debug_sharding=False)
       mock_ml.info.assert_not_called()
 
@@ -262,14 +262,14 @@ class TestMaybeShardWithNameDebugSharding(unittest.TestCase):
   def test_no_log_for_non_tracer_input(self, mock_wsc):
     """When debug_sharding=True but input is a concrete array (not a Tracer), should not log."""
     mock_wsc.return_value = self.inputs
-    with mock.patch("maxtext.utils.sharding.max_logging") as mock_ml:
+    with mock.patch("megatext.utils.sharding.max_logging") as mock_ml:
       # A jnp array outside of jit is a concrete value, not a Tracer.
       maybe_shard_with_name(self.inputs, self.named_sharding, ShardMode.AUTO, debug_sharding=True)
       mock_ml.info.assert_not_called()
 
   def test_same_key_logged_only_once(self):
     """The same (type, pspec, stack_level) combination should only produce one log entry."""
-    with mock.patch("maxtext.utils.sharding.max_logging") as mock_ml:
+    with mock.patch("megatext.utils.sharding.max_logging") as mock_ml:
       with mock.patch("jax.lax.with_sharding_constraint", side_effect=lambda x, s: x):
 
         @jax.jit
@@ -290,7 +290,7 @@ class TestMaybeShardWithNameDebugSharding(unittest.TestCase):
 
   def test_different_stack_levels_produce_separate_log_entries(self):
     """Different extra_stack_level values create different log keys and each logs once."""
-    with mock.patch("maxtext.utils.sharding.max_logging") as mock_ml:
+    with mock.patch("megatext.utils.sharding.max_logging") as mock_ml:
       with mock.patch("jax.lax.with_sharding_constraint", side_effect=lambda x, s: x):
 
         @jax.jit

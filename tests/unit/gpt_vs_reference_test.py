@@ -34,10 +34,10 @@ from jax.sharding import Mesh
 import jax
 import jax.numpy as jnp
 
-from maxtext.configs import pyconfig
-from maxtext.layers import attentions, moe, embeddings
-from maxtext.layers.initializers import nd_dense_init
-from maxtext.utils import maxtext_utils
+from megatext.configs import pyconfig
+from megatext.layers import attentions, moe, embeddings
+from megatext.layers.initializers import nd_dense_init
+from megatext.utils import megatext_utils
 from tests.utils.test_helpers import get_test_config_path
 
 
@@ -182,7 +182,7 @@ def eager_attention_forward(
   """PyTorch reference implementation for eager attention.
 
   This function computes attention, including support for attention sinks,
-  and is used as a reference to validate the MaxText implementation.
+  and is used as a reference to validate the Megatext implementation.
 
   Args:
     module: A module-like object containing configuration (e.g., sinks).
@@ -262,10 +262,10 @@ class Config:
 
 
 class GptOssMLPTest(unittest.TestCase):
-  """Tests for the MaxText GPT-OSS MLP implementation against a PyTorch reference."""
+  """Tests for the Megatext GPT-OSS MLP implementation against a PyTorch reference."""
 
   def test_mlp_block(self):
-    """Validates the MaxText MoE MLP block against the PyTorch reference."""
+    """Validates the Megatext MoE MLP block against the PyTorch reference."""
     torch.set_default_dtype(torch.float32)
     torch.manual_seed(42)
     config = Config()
@@ -292,12 +292,12 @@ class GptOssMLPTest(unittest.TestCase):
     with torch.no_grad():
       expected_output, _ = model(hidden_states)
 
-    # MaxText model
+    # MegaText model
     cfg = pyconfig.initialize(
         [None, get_test_config_path()],
         run_name="gpt_oss_mlp_test",
         enable_checkpointing=False,
-        model_name="default",
+        model="default",
         dtype="float32",
         weight_dtype="float32",
         megablox=False,
@@ -318,7 +318,7 @@ class GptOssMLPTest(unittest.TestCase):
         attention="dot_product",
     )
     jax_hidden_states = to_jax(hidden_states)
-    devices_array = maxtext_utils.create_device_mesh(cfg)
+    devices_array = megatext_utils.create_device_mesh(cfg)
     mesh = Mesh(devices_array, cfg.mesh_axes)
     jax_model = moe.get_routed_moe(
         name="MoeBlock",
@@ -356,7 +356,7 @@ class GptOssMLPTest(unittest.TestCase):
 
 
 class GptOssAttentionTest(unittest.TestCase):
-  """Tests for the MaxText GPT-OSS attention implementation."""
+  """Tests for the Megatext GPT-OSS attention implementation."""
 
   def setUp(self):
     """Sets up the test environment, preparing tensors and configurations."""
@@ -404,7 +404,7 @@ class GptOssAttentionTest(unittest.TestCase):
         [None, get_test_config_path()],
         run_name="gpt_oss_attention_test_dot",
         enable_checkpointing=False,
-        model_name="default",
+        model="default",
         dtype="float32",
         per_device_batch_size=self.batch_size,
         max_target_length=self.seq_len,
@@ -416,7 +416,7 @@ class GptOssAttentionTest(unittest.TestCase):
         attention_bias=False,
         attention_sink=True,
     )
-    devices_array = maxtext_utils.create_device_mesh(cfg_dot)
+    devices_array = megatext_utils.create_device_mesh(cfg_dot)
     mesh = Mesh(devices_array, cfg_dot.mesh_axes)
 
     attention_op_dot = attentions.AttentionOp(
@@ -467,7 +467,7 @@ class GptOssAttentionTest(unittest.TestCase):
         [None, get_test_config_path()],
         run_name="gpt_oss_attention_test_flash",
         enable_checkpointing=False,
-        model_name="default",
+        model="default",
         dtype="float32",
         per_device_batch_size=self.batch_size,
         max_target_length=self.seq_len,
@@ -479,7 +479,7 @@ class GptOssAttentionTest(unittest.TestCase):
         attention_bias=False,
         attention_sink=True,
     )
-    devices_array = maxtext_utils.create_device_mesh(cfg_flash)
+    devices_array = megatext_utils.create_device_mesh(cfg_flash)
     mesh = Mesh(devices_array, cfg_flash.mesh_axes)
 
     attention_op_flash = attentions.AttentionOp(
@@ -691,7 +691,7 @@ def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
 
 
 class GptOssYarnTest(unittest.TestCase):
-  """Tests for the MaxText GPT-OSS Yarn RoPE implementation."""
+  """Tests for the Megatext GPT-OSS Yarn RoPE implementation."""
 
   def setUp(self):
     """Sets up the test environment for Yarn RoPE validation."""
@@ -726,7 +726,7 @@ class GptOssYarnTest(unittest.TestCase):
         "num_attention_heads": float("inf"),
     }
     self.pt_config = SimpleNamespace(**pt_config)
-    devices_array = maxtext_utils.create_device_mesh(self.config)
+    devices_array = megatext_utils.create_device_mesh(self.config)
     self.mesh = Mesh(devices_array, self.config.mesh_axes)
 
   def test_yarn(self):

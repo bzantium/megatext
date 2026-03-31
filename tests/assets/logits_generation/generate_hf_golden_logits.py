@@ -18,7 +18,7 @@ python3 -m tests.assets.logits_generation.generate_hf_golden_logits --model-id=d
      --output-path=golden_DeepSeek-V2-Lite.jsonl --prompts='I love to;Today is a;What is the' \
      --gcs-bucket=my-gcs-bucket
 
-For large models, you can use an m1 cpu. Calling the script directly instead of calling MaxText module \
+For large models, you can use an m1 cpu. Calling the script directly instead of calling Megatext module \
 can skip importing unnecessary dependencies.
 For large Hugginface checkpoints, you can use pre-downloaded checkpoints with --hf-model-path argument.
 For multimodal models, use --image-paths argument to provide image path(s),\
@@ -47,7 +47,7 @@ import pickle
 import numpy as np
 from google.cloud import storage
 from PIL import Image
-from maxtext.inference.inference_utils import str2bool
+from megatext.utils.max_utils import str2bool
 
 # Load the tokenizer and model from Hugging Face
 

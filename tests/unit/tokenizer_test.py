@@ -15,9 +15,9 @@
 """Tests for tokenizer"""
 
 import numpy as np
-from maxtext.utils.globals import MAXTEXT_ASSETS_ROOT
-from maxtext.input_pipeline import input_pipeline_utils
-from maxtext.trainers.tokenizer import train_tokenizer
+from megatext.utils.constants import MEGATEXT_ASSETS_ROOT
+from megatext.data import input_pipeline_utils
+from megatext.trainers.tokenizer import train_tokenizer
 
 import unittest
 import pytest
@@ -31,14 +31,14 @@ class TrainTokenizerTest(unittest.TestCase):
   @classmethod
   def setUpClass(cls):
     # the test only use ~10Mb of data, one file is enough, more files cause slow down
-    grain_train_files = "gs://maxtext-dataset/hf/c4/c4-train-00000-of-01637.parquet"
+    grain_train_files = "gs://megatext-dataset/hf/c4/c4-train-00000-of-01637.parquet"
     cls.vocab_size = 32_768
     cls.max_corpus_chars = 10_000_000
     assets_path = "tests"
-    vocab_model_name = "test_tokenizer"
-    cls.tokenizer_path = os.path.join(assets_path, vocab_model_name)
+    vocab_model = "test_tokenizer"
+    cls.tokenizer_path = os.path.join(assets_path, vocab_model)
     cls.source_tokenizer = input_pipeline_utils.get_tokenizer(
-        os.path.join(MAXTEXT_ASSETS_ROOT, "tokenizers", "tokenizer.default"),
+        os.path.join(MEGATEXT_ASSETS_ROOT, "tokenizers", "tokenizer.default"),
         "sentencepiece",
         add_bos=False,
         add_eos=False,
@@ -74,9 +74,9 @@ class TikTokenTest(unittest.TestCase):
 
   @classmethod
   def setUpClass(cls):
-    grain_train_files = "gs://maxtext-dataset/hf/c4/c4-train-00000-of-01637.parquet"
+    grain_train_files = "gs://megatext-dataset/hf/c4/c4-train-00000-of-01637.parquet"
     cls.source_tokenizer = input_pipeline_utils.get_tokenizer(
-        os.path.join(MAXTEXT_ASSETS_ROOT, "tokenizers", "tokenizer_llama3.tiktoken"),
+        os.path.join(MEGATEXT_ASSETS_ROOT, "tokenizers", "tokenizer_llama3.tiktoken"),
         "tiktoken",
         add_bos=False,
         add_eos=False,
@@ -101,17 +101,17 @@ class HFTokenizerTest(unittest.TestCase):
 
   @classmethod
   def setUpClass(cls):
-    source = "gs://maxtext-gemma/huggingface/gemma2-2b"
-    destination = os.path.join(MAXTEXT_ASSETS_ROOT, "tokenizers")
+    source = "gs://megatext-gemma/huggingface/gemma2-2b"
+    destination = os.path.join(MEGATEXT_ASSETS_ROOT, "tokenizers")
     subprocess.run(
         ["gcloud", "storage", "cp", "-R", source, destination],
         check=True,
     )
     cls.hf_tokenizer = input_pipeline_utils.get_tokenizer(
-        os.path.join(MAXTEXT_ASSETS_ROOT, "tokenizers", "gemma2-2b"), "huggingface", add_bos=False, add_eos=False
+        os.path.join(MEGATEXT_ASSETS_ROOT, "tokenizers", "gemma2-2b"), "huggingface", add_bos=False, add_eos=False
     )
     cls.sp_tokenizer = input_pipeline_utils.get_tokenizer(
-        os.path.join(MAXTEXT_ASSETS_ROOT, "tokenizers", "tokenizer.gemma"), "sentencepiece", add_bos=False, add_eos=False
+        os.path.join(MEGATEXT_ASSETS_ROOT, "tokenizers", "tokenizer.gemma"), "sentencepiece", add_bos=False, add_eos=False
     )
 
   @pytest.mark.tpu_only

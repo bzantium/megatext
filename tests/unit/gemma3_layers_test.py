@@ -14,7 +14,7 @@
 
 """Tests for the Gemma3 Rotary Positional Embedding (RoPE) implementation.
 
-This module validates the correctness of MaxText's JAX-based RoPE layer
+This module validates the correctness of Megatext's JAX-based RoPE layer
 against a reference PyTorch implementation from the Hugging Face `transformers`
 library. It specifically tests the linear scaling variant of RoPE used in
 Gemma3.
@@ -33,7 +33,7 @@ import numpy as np
 
 from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
 
-from maxtext.layers import embeddings
+from megatext.layers import embeddings
 
 
 def to_jax(pt_tensor: torch.Tensor) -> jax.Array:
@@ -53,7 +53,7 @@ class Gemma3RotaryEmbedding(nn.Module):
   """PyTorch reference implementation of Gemma3's Rotary Positional Embedding.
 
   This class is a reference implementation taken from the Hugging Face
-  transformers library to validate the correctness of the MaxText RoPE
+  transformers library to validate the correctness of the Megatext RoPE
   implementation.
   """
 
@@ -147,7 +147,7 @@ class Gemma3RotaryEmbeddingTest(unittest.TestCase):
   """Test for Gemma3 RoPE implementation with linear scaling."""
 
   def test_rope_compare_pytorch_and_jax(self):
-    """Validates the MaxText RoPE implementation against the PyTorch reference."""
+    """Validates the Megatext RoPE implementation against the PyTorch reference."""
     # Config parameters
     batch_size = 4
     seq_len = 128

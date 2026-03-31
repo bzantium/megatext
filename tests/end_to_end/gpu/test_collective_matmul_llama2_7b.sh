@@ -41,8 +41,8 @@ export XLA_FLAGS="--xla_dump_hlo_as_text
     --xla_gpu_threshold_for_windowed_einsum_mib=0
     --xla_gpu_multi_streamed_windowed_einsum=true"
 
-python3 -m maxtext.trainers.pre_train.train \
-    "${MAXTEXT_CONFIGS_DIR:-${MAXTEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}"//base.yml \
+python3 -m megatext.trainers.pre_train.train \
+    "${MEGATEXT_CONFIGS_DIR:-${MEGATEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}"//base.yaml \
     model_name=${MODEL} \
     per_device_batch_size=0.125 \
     steps=1 \

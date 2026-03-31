@@ -19,7 +19,7 @@ from unittest import mock
 
 import numpy as np
 
-from maxtext.common.metric_logger import MetricLogger
+from megatext.common.metric_logger import MetricLogger
 
 
 class MetricLoggerAbortTest(unittest.TestCase):

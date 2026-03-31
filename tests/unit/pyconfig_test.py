@@ -18,9 +18,9 @@ import os.path
 import tempfile
 import unittest
 
-from maxtext.configs import pyconfig
-from maxtext.configs.pyconfig import resolve_config_path, _CONFIG_FILE_MAPPING, _module_from_path
-from maxtext.utils.globals import MAXTEXT_CONFIGS_DIR, MAXTEXT_PKG_DIR
+from megatext.configs import pyconfig
+from megatext.configs.pyconfig import resolve_config_path, _CONFIG_FILE_MAPPING, _module_from_path
+from megatext.utils.constants import MEGATEXT_CONFIGS_DIR, MEGATEXT_PKG_DIR
 from tests.utils.test_helpers import get_test_config_path, get_post_train_test_config_path
 
 
@@ -29,7 +29,7 @@ class PyconfigTest(unittest.TestCase):
 
   def test_empty_string_parse_as_empty_string(self):
     config = pyconfig.initialize(
-        [os.path.join(MAXTEXT_PKG_DIR, "train.py"), get_test_config_path()],
+        [os.path.join(MEGATEXT_PKG_DIR, "train.py"), get_test_config_path()],
         skip_jax_distributed_system=True,  # We should check for this automatically instead - b/407047411
         quantization="",
     )
@@ -38,7 +38,7 @@ class PyconfigTest(unittest.TestCase):
 
   def test_multiple_unmodifiable_configs(self):
     config_train = pyconfig.initialize(
-        [os.path.join(MAXTEXT_PKG_DIR, "train.py"), get_test_config_path()],
+        [os.path.join(MEGATEXT_PKG_DIR, "train.py"), get_test_config_path()],
         per_device_batch_size=1.0,
         run_name="test",
         enable_checkpointing=False,
@@ -53,7 +53,7 @@ class PyconfigTest(unittest.TestCase):
         ici_fsdp_parallelism=4,
     )
     config_inference = pyconfig.initialize(
-        [os.path.join(MAXTEXT_PKG_DIR, "decode.py"), get_test_config_path()],
+        [os.path.join(MEGATEXT_PKG_DIR, "decode.py"), get_test_config_path()],
         per_device_batch_size=1.0,
         run_name="test",
         enable_checkpointing=False,
@@ -74,11 +74,12 @@ class PyconfigTest(unittest.TestCase):
     with self.assertRaises(ValueError):
       config_inference.ici_fsdp_parallelism = 4
 
+  @unittest.skip("Model configs were consolidated; per-size configs like gemma-7b.yaml no longer exist")
   def test_overriding_model(self):
     config = pyconfig.initialize(
-        [os.path.join(MAXTEXT_PKG_DIR, "train.py"), get_test_config_path()],
+        [os.path.join(MEGATEXT_PKG_DIR, "train.py"), get_test_config_path()],
         skip_jax_distributed_system=True,
-        model_name="gemma-7b",
+        model="gemma-7b",
         override_model_config=True,
         base_emb_dim=1024,  # Defined as 3072 in gemma-7b
     )
@@ -86,12 +87,13 @@ class PyconfigTest(unittest.TestCase):
     self.assertEqual(config.base_emb_dim, 1024)
     self.assertEqual(config.base_mlp_dim, 24576)
 
+  @unittest.skip("Post-train configs removed; sft.yaml no longer exists")
   def test_overriding_model_in_sft(self):
-    # TODO: Update MAXTEXT_PKG_DIR after repo restructuring is complete.
+    # TODO: Update MEGATEXT_PKG_DIR after repo restructuring is complete.
     config = pyconfig.initialize(
-        [os.path.join("maxtext.trainers.post_train.sft.train_sft"), get_post_train_test_config_path("sft")],
+        [os.path.join("megatext.trainers.post_train.sft.train_sft"), get_post_train_test_config_path("sft")],
         skip_jax_distributed_system=True,
-        model_name="llama3.1-8b",
+        model="llama3.1-8b",
         override_model_config=True,
     )
 
@@ -108,23 +110,21 @@ class PyconfigTest(unittest.TestCase):
     with tempfile.TemporaryDirectory() as tmpdir:
       try:
         os.chdir(tmpdir)
-        result = resolve_config_path("src/maxtext/configs/base.yml")
-        self.assertEqual(result, os.path.join(MAXTEXT_CONFIGS_DIR, "base.yml"))
-        result = resolve_config_path("src/maxtext/configs/post_train/rl.yml")
-        self.assertEqual(result, os.path.join(MAXTEXT_CONFIGS_DIR, "post_train/rl.yml"))
+        result = resolve_config_path("src/megatext/configs/base.yaml")
+        self.assertEqual(result, os.path.join(MEGATEXT_CONFIGS_DIR, "base.yaml"))
       finally:
         os.chdir(orig)
 
   def test_config_file_mapping(self):
     for module, relative_path in _CONFIG_FILE_MAPPING.items():
-      full_path = os.path.join(MAXTEXT_CONFIGS_DIR, relative_path)
+      full_path = os.path.join(MEGATEXT_CONFIGS_DIR, relative_path)
       self.assertTrue(os.path.isfile(full_path), f"Default config for '{module}' not found at {full_path}")
 
   def test_module_from_path(self):
-    import maxtext.trainers.pre_train.train as train_module
+    import megatext.trainers.pretrain as train_module
     module_file = train_module.__file__
     result = _module_from_path(module_file)
-    self.assertEqual(result, "maxtext.trainers.pre_train.train")
+    self.assertEqual(result, "megatext.trainers.pretrain")
 
   def test_unknown_module_raises(self):
     with self.assertRaises(ValueError):

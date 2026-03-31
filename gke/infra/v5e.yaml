@@ -1,0 +1,5 @@
+project_name: lse-team
+zone: us-west4-a
+cluster_name: tpu
+tpu_type: v5litepod-256
+priority: medium

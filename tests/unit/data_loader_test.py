@@ -24,12 +24,12 @@ import jax
 from unittest.mock import MagicMock
 from jax.sharding import Mesh
 
-from maxtext.configs import pyconfig
-from maxtext.common.data_loader import DataLoader, RampUpDataLoader
-from maxtext.utils import exceptions
-from maxtext.utils.maxtext_utils import create_device_mesh
-from maxtext.common.gcloud_stub import is_decoupled
-from maxtext.utils.rampup_batch import RampupBatchManager
+from megatext.configs import pyconfig
+from megatext.common.data_loader import DataLoader, RampUpDataLoader
+from megatext.utils import exceptions
+from megatext.utils.megatext_utils import create_device_mesh
+from megatext.common.gcloud_stub import is_decoupled
+from megatext.utils.rampup_batch import RampupBatchManager
 from tests.utils.test_helpers import get_test_config_path, get_decoupled_parallelism_overrides
 
 

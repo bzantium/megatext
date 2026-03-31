@@ -31,16 +31,16 @@ from flax import linen as nn
 from flax import nnx
 from jax.sharding import Mesh
 
-from maxtext.common.common_types import DECODING_ACTIVE_SEQUENCE_INDICATOR, MODEL_MODE_TRAIN, DecoderBlockType
-from maxtext.configs import pyconfig
-from maxtext.layers import linears
-from maxtext.layers.attentions import Attention
-from maxtext.layers.embeddings import Embed
-from maxtext.layers.nnx_decoders import NNXDecoder, NNXDecoderLayer, deepstack_process
-from maxtext.layers.normalizations import RMSNorm
-from maxtext.models.gpt3 import Gpt3LayerNorm
-from maxtext.models.llama2 import LlamaDecoderLayer
-from maxtext.utils import maxtext_utils
+from megatext.common.common_types import DECODING_ACTIVE_SEQUENCE_INDICATOR, MODEL_MODE_TRAIN, DecoderBlockType
+from megatext.configs import pyconfig
+from megatext.layers import linears
+from megatext.layers.attentions import Attention
+from megatext.layers.embeddings import Embed
+from megatext.layers.nnx_decoders import NNXDecoder, NNXDecoderLayer, deepstack_process
+from megatext.layers.normalizations import RMSNorm
+from megatext.models.gpt3 import Gpt3LayerNorm
+from megatext.models.llama2 import LlamaDecoderLayer
+from megatext.utils import megatext_utils
 from tests.utils.test_helpers import get_decoupled_parallelism_overrides, get_test_config_path
 
 # ---------------------------------------------------------------------------
@@ -74,7 +74,7 @@ def _make_config(**overrides):
 
 
 def _make_mesh(cfg):
-  devices_array = maxtext_utils.create_device_mesh(cfg)
+  devices_array = megatext_utils.create_device_mesh(cfg)
   return Mesh(devices_array, cfg.mesh_axes)
 
 
@@ -288,7 +288,7 @@ class TestNNXDecoderGetDecoderLayers(unittest.TestCase):
 
   def test_llama2_decoder_block(self):
 
-    decoder = self._make_decoder(model_name="llama2-7b")
+    decoder = self._make_decoder(model="llama2-7b")
     layers = decoder.get_decoder_layers()
     self.assertEqual(layers, [LlamaDecoderLayer])
 
@@ -324,7 +324,7 @@ class TestNNXDecoderGetNormLayer(unittest.TestCase):
 
   def test_gpt3_returns_gpt3_layer_norm(self):
 
-    cfg = _make_config(model_name="gpt3-52k")
+    cfg = _make_config(model="gpt3-52k")
     mesh = _make_mesh(cfg)
     decoder = NNXDecoder(config=cfg, mesh=mesh, rngs=nnx.Rngs(params=0, dropout=1))
     self.assertIsInstance(decoder.decoder_norm, Gpt3LayerNorm)

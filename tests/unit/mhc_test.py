@@ -24,12 +24,12 @@ import jax.numpy as jnp
 from jax.sharding import Mesh
 import numpy as np
 
-from maxtext.configs import pyconfig
-from maxtext.common.common_types import HyperConnectionType
-from maxtext.layers import attention_mla, linears, mhc, moe
-from maxtext.layers.initializers import nd_dense_init
-from maxtext.layers.normalizations import RMSNorm
-from maxtext.utils import maxtext_utils
+from megatext.configs import pyconfig
+from megatext.common.common_types import HyperConnectionType
+from megatext.layers import attention_mla, linears, mhc, moe
+from megatext.layers.initializers import nd_dense_init
+from megatext.layers.normalizations import RMSNorm
+from megatext.utils import megatext_utils
 from tests.utils.test_helpers import get_test_config_path, get_decoupled_parallelism_overrides
 
 
@@ -97,7 +97,7 @@ class TestMHC(unittest.TestCase):
         **extra_args,
         run_name="test_mhc",
         enable_checkpointing=False,
-        model_name="deepseek-custom",
+        model="deepseek-custom",
         per_device_batch_size=4,
         max_target_length=7,
         max_prefill_predict_length=7,
@@ -110,7 +110,7 @@ class TestMHC(unittest.TestCase):
         load_balance_loss_weight=0.02,
         engram_layers=[],
     )
-    devices_array = maxtext_utils.create_device_mesh(self.config)
+    devices_array = megatext_utils.create_device_mesh(self.config)
     self.mesh = Mesh(devices_array, self.config.mesh_axes)
 
     self.rngs = nnx.Rngs(params=jax.random.key(0), dropout=jax.random.key(42))

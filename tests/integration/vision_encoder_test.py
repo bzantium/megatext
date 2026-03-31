@@ -22,12 +22,12 @@ from flax.core.scope import VariableDict
 import jax
 import jax.numpy as jnp
 import jsonlines
-from maxtext.configs import pyconfig
-from maxtext.utils.globals import MAXTEXT_ASSETS_ROOT, MAXTEXT_TEST_ASSETS_ROOT
-from maxtext.inference.maxengine import maxengine
-from maxtext.models import models
-from maxtext.multimodal import processor_gemma3
-from maxtext.multimodal import utils as mm_utils
+from megatext.configs import pyconfig
+from megatext.utils.constants import MEGATEXT_ASSETS_ROOT, MEGATEXT_TEST_ASSETS_ROOT
+from megatext.inference.maxengine import maxengine
+from megatext.models import models
+from megatext.multimodal import processor_gemma3
+from megatext.multimodal import utils as mm_utils
 from tests.utils.test_helpers import get_test_config_path
 import numpy as np
 import pytest
@@ -36,7 +36,7 @@ pytestmark = [pytest.mark.external_serving, pytest.mark.integration_test]
 
 # 4b with vit
 DEFAULT_LOAD_PARAMETERS_PATH = (
-    "gs://maxtext-model-checkpoints/gemma3-4b/multimodal/2025-04-25-18-06-04/checkpoints/0/items"
+    "gs://megatext-model-checkpoints/gemma3-4b/multimodal/2025-04-25-18-06-04/checkpoints/0/items"
 )
 
 
@@ -46,8 +46,8 @@ class VisionEncoderEmbeddingTest(unittest.TestCase):
       "gemma3-4b": [  # tests decode with multimodal gemma-4b
           None,
           get_test_config_path(),
-          "model_name=gemma3-4b",
-          rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.gemma3')}",
+          "model=gemma3-4b",
+          rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.gemma3')}",
           "use_multimodal=True",
           "run_name=runner_test",
           f"load_parameters_path={DEFAULT_LOAD_PARAMETERS_PATH}",
@@ -59,7 +59,7 @@ class VisionEncoderEmbeddingTest(unittest.TestCase):
           "scan_layers=false",
           "enable_checkpointing=true",
           "prompt='Describe this image'",
-          rf"image_path={os.path.join(MAXTEXT_TEST_ASSETS_ROOT, 'test_image.jpg')}",
+          rf"image_path={os.path.join(MEGATEXT_TEST_ASSETS_ROOT, 'test_image.jpg')}",
           "skip_jax_distributed_system=True",
       ],
   }
@@ -95,7 +95,7 @@ class VisionEncoderEmbeddingTest(unittest.TestCase):
     image_embeddings = jitted_apply_vision_encoder_fn(vision_encoder_params, input_images)  # pylint: disable=not-callable
 
     # Load golden image embeddings generated from HuggingFace Gemma3-4b
-    input_golden_data_path = os.path.join(MAXTEXT_TEST_ASSETS_ROOT, "golden_logits", "golden_data_gemma3_vit.jsonl")
+    input_golden_data_path = os.path.join(MEGATEXT_TEST_ASSETS_ROOT, "golden_logits", "golden_data_gemma3_vit.jsonl")
     with jsonlines.open(input_golden_data_path, mode="r") as reader:
       loaded_data = next(iter(reader))
     golden_image_embeddings = np.asarray(loaded_data["soft_embeddings"], dtype=np.float32)

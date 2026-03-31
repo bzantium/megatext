@@ -18,8 +18,8 @@ import unittest
 import os.path
 import pytest
 
-from maxtext.utils.globals import MAXTEXT_ASSETS_ROOT
-from maxtext.trainers.pre_train.train import main as train_main
+from megatext.utils.constants import MEGATEXT_ASSETS_ROOT
+from megatext.trainers.pretrain import main as train_main
 from tests.utils.test_helpers import get_test_config_path
 
 pytestmark = pytest.mark.integration_test
@@ -33,13 +33,13 @@ class SimpleDecoderLayerTest(unittest.TestCase):
         [
             None,
             get_test_config_path(),
-            "base_output_directory=gs://runner-maxtext-logs",
+            "base_output_directory=gs://runner-megatext-logs",
             "run_name=runner_simple_decoder_layer_test",
-            "dataset_path=gs://maxtext-dataset",
+            "dataset_path=gs://megatext-dataset",
             "decoder_block=simple",
             "enable_checkpointing=False",
             "enable_goodput_recording=False",
-            rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+            rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
             "steps=3",
         ]
     )
@@ -50,13 +50,13 @@ class SimpleDecoderLayerTest(unittest.TestCase):
         [
             None,
             get_test_config_path(),
-            "base_output_directory=gs://runner-maxtext-logs",
+            "base_output_directory=gs://runner-megatext-logs",
             "run_name=runner_simple_decoder_layer_test",
-            "dataset_path=gs://maxtext-dataset",
+            "dataset_path=gs://megatext-dataset",
             "decoder_block=simple_mlp",
             "enable_checkpointing=False",
             "enable_goodput_recording=False",
-            rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+            rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
             "steps=3",
         ]
     )

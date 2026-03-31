@@ -19,8 +19,8 @@ from unittest import mock
 
 import pytest
 
-from maxtext.configs import pyconfig
-from maxtext.common.goodput import (
+from megatext.configs import pyconfig
+from megatext.common.goodput import (
     GoodputEvent,
     RECORD_JOB_END_TIME,
     RECORD_JOB_START_TIME,

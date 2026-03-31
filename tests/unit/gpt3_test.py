@@ -20,11 +20,11 @@ import unittest
 import jax
 import jax.numpy as jnp
 from jax.sharding import Mesh
-from maxtext.configs import pyconfig
-from maxtext.common.common_types import MODEL_MODE_TRAIN
-from maxtext.layers import quantizations
-from maxtext.models import models
-from maxtext.utils import maxtext_utils
+from megatext.configs import pyconfig
+from megatext.common.common_types import MODEL_MODE_TRAIN
+from megatext.layers import quantizations
+from megatext.models import models
+from megatext.utils import megatext_utils
 from tests.utils.test_helpers import get_test_config_path
 import pytest
 
@@ -59,12 +59,12 @@ class GPT3(unittest.TestCase):
         [sys.argv[0], get_test_config_path()],
         run_name="test",
         enable_checkpointing=False,
-        model_name="gpt3-52k",
+        model="gpt3-52k",
         dtype="float32",
     )
     self.rng = jax.random.PRNGKey(1234)
 
-    devices_array = maxtext_utils.create_device_mesh(self.cfg)
+    devices_array = megatext_utils.create_device_mesh(self.cfg)
     mesh = Mesh(devices_array, self.cfg.mesh_axes)
     quant = quantizations.configure_quantization(self.cfg)
     self.model = models.transformer_as_linen(config=self.cfg, mesh=mesh, quant=quant, model_mode=MODEL_MODE_TRAIN)
@@ -84,7 +84,7 @@ class GPT3(unittest.TestCase):
     # ground truth values are calculated from paxml after loading above model_vars
     # note we expect all xents are the same except the padding one since:
     #    paxml applies padding in mlp layer
-    #    while maxtext implementation applies padding in attention mask instead
+    #    while megatext implementation applies padding in attention mask instead
     # the two implementation are equivalent in valid non-padding tokens
     per_example_xent_truth = jnp.array([[31.976467, 25.806253, 17.311134, 45.362663, 0.0]], dtype=jnp.float32)
     logits, _ = self.model.apply(

@@ -22,8 +22,8 @@ import pytest
 from absl.testing import absltest
 from contextlib import redirect_stdout
 
-from maxtext.inference.decode import main as decode_main
-from maxtext.utils.globals import MAXTEXT_ASSETS_ROOT
+from megatext.inference.decode import main as decode_main
+from megatext.utils.constants import MEGATEXT_ASSETS_ROOT
 from tests.utils.test_helpers import get_test_config_path, get_test_dataset_path, get_test_base_output_directory
 
 pytestmark = [pytest.mark.tpu_only, pytest.mark.external_serving, pytest.mark.integration_test]
@@ -35,7 +35,7 @@ class DecodeTests(unittest.TestCase):
   _dataset_path = get_test_dataset_path()
   _base_output_directory = get_test_base_output_directory()
 
-  GEMMA_2B_CKPT_PATH = "gs://maxtext-gemma/2b/2025-11-04-04-33//0/items"
+  GEMMA_2B_CKPT_PATH = "gs://megatext-gemma/2b/2025-11-04-04-33//0/items"
   CONFIGS = {
       "base": [  # tests decode
           None,
@@ -48,7 +48,7 @@ class DecodeTests(unittest.TestCase):
           "ici_tensor_parallelism=4",
           "max_target_length=128",
           "per_device_batch_size=1",
-          rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+          rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
       ],
       "int8": [  # tests decode with int8 quantization
           None,
@@ -63,7 +63,7 @@ class DecodeTests(unittest.TestCase):
           "per_device_batch_size=1",
           "quantization=int8",
           "quantize_kvcache=True",
-          rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+          rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
       ],
       "pdb_lt_1": [  # tests decode with per_device_batch_size < 1
           None,
@@ -76,12 +76,12 @@ class DecodeTests(unittest.TestCase):
           "ici_tensor_parallelism=4",
           "max_target_length=128",
           "per_device_batch_size=.25",
-          rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+          rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
       ],
       "decode_sampling": [
           None,
           get_test_config_path(),
-          "base_output_directory=gs://runner-maxtext-logs",
+          "base_output_directory=gs://runner-megatext-logs",
           "run_name=runner_test",
           f"load_parameters_path={GEMMA_2B_CKPT_PATH}",
           "per_device_batch_size=1",
@@ -90,8 +90,8 @@ class DecodeTests(unittest.TestCase):
           "dataset_type=synthetic",
           "steps=10",
           "async_checkpointing=False",
-          "model_name=gemma-2b",
-          rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.gemma')}",
+          "model=gemma-2b",
+          rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.gemma')}",
           "attention=dot_product",
           "prompt=I love to",
           "skip_jax_distributed_system=True",

@@ -25,10 +25,10 @@ import random
 import os
 import os.path
 
-from maxtext.common.gcloud_stub import is_decoupled
-from maxtext.trainers.pre_train.train import main as train_main
-from maxtext.utils.globals import MAXTEXT_ASSETS_ROOT
-from maxtext.trainers.post_train.sft.train_sft_deprecated import main as sft_main
+from megatext.common.gcloud_stub import is_decoupled
+from megatext.trainers.pretrain import main as train_main
+from megatext.utils.constants import MEGATEXT_ASSETS_ROOT
+from megatext.trainers.post_train.sft.train_sft_deprecated import main as sft_main
 
 from tests.utils.test_helpers import get_test_config_path, get_test_dataset_path, get_test_base_output_directory
 
@@ -57,7 +57,7 @@ class GradientAccumulationTest(unittest.TestCase):
     temp_dir = tempfile.gettempdir()
     run_accumulate_metrics_file = os.path.join(temp_dir, f"runner_grad_accumulate_{random_suffix}.txt")
     run_regular_metrics_file = os.path.join(temp_dir, f"runner_regular_{random_suffix}.txt")
-    shared_maxtext_args = [
+    shared_megatext_args = [
         None,
         get_test_config_path(),
         f"base_output_directory={self.base_output_directory}",
@@ -67,12 +67,12 @@ class GradientAccumulationTest(unittest.TestCase):
         "enable_goodput_recording=False",
         "base_emb_dim=256",
         "base_num_decoder_layers=4",
-        rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+        rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
         "steps=20",
     ]
     # Run with gradient accumulation with accumulate_steps=10, per_device_batch=1 --> simulating per_device_batch=10
     train_main(
-        shared_maxtext_args
+        shared_megatext_args
         + [
             "run_name=runner_grad_accumulate",
             f"metrics_file={run_accumulate_metrics_file}",
@@ -83,7 +83,7 @@ class GradientAccumulationTest(unittest.TestCase):
 
     # Run without gradient accumulation with per_device_batch=10
     train_main(
-        shared_maxtext_args
+        shared_megatext_args
         + [
             "run_name=runner_grad_accumulate_regular",
             f"metrics_file={run_regular_metrics_file}",
@@ -152,14 +152,14 @@ class GradientAccumulationTest(unittest.TestCase):
         [
             None,
             get_test_config_path(),
-            "base_output_directory=gs://runner-maxtext-logs",
-            "dataset_path=gs://maxtext-dataset",
+            "base_output_directory=gs://runner-megatext-logs",
+            "dataset_path=gs://megatext-dataset",
             "gradient_clipping_threshold=0",  # Ensures we are testing raw scales of gradients (clipping off).
             "enable_checkpointing=False",
             "enable_goodput_recording=False",
             "base_emb_dim=256",
             "base_num_decoder_layers=4",
-            rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+            rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
             "steps=3",
             "gradient_accumulation_steps=2",
             "use_sft=True",

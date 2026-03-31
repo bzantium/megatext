@@ -22,12 +22,12 @@ import jax
 import jax.numpy as jnp
 from jax.sharding import Mesh
 
-from maxtext.layers import embeddings
+from megatext.layers import embeddings
 
 
 """
 An example reference jax_llama RoPE implementation from https://github.com/Sea-Snell/
-Users should feel free to change and optimize the RoPE implementation in MaxText defined in layers.py
+Users should feel free to change and optimize the RoPE implementation in Megatext defined in layers.py
 as long as it passes our tests. But they shouldn't change the "reference" implementation in
 llama_test.py which is only to be used for comparison purpose.
 """
@@ -68,7 +68,7 @@ def apply_rotary_emb(
   return xq_out.astype(dtype), xk_out.astype(dtype)
 
 
-def permute_to_match_maxtext_rope(arr):
+def permute_to_match_megatext_rope(arr):
   evens = arr[..., ::2]
   odds = arr[..., 1::2]
   return jax.numpy.concatenate((evens, odds), axis=arr.ndim - 1)
@@ -96,12 +96,12 @@ class RoPETest(unittest.TestCase):
 
     position = jnp.arange(seq_len, dtype=jnp.float32)[jnp.newaxis, :]
     rope = embeddings.RotaryEmbedding(min_timescale=1, max_timescale=10_000, embedding_dims=dim_per_head, mesh=self.mesh)
-    query_proj = rope(permute_to_match_maxtext_rope(x_q), position)
-    key_proj = rope(permute_to_match_maxtext_rope(x_k), position)
+    query_proj = rope(permute_to_match_megatext_rope(x_q), position)
+    key_proj = rope(permute_to_match_megatext_rope(x_k), position)
 
     # Compare results
-    self.assertTrue(jnp.allclose(permute_to_match_maxtext_rope(llama_output[0]), query_proj, rtol=1e-01, atol=1e-04))
-    self.assertTrue(jnp.allclose(permute_to_match_maxtext_rope(llama_output[1]), key_proj, rtol=1e-01, atol=1e-04))
+    self.assertTrue(jnp.allclose(permute_to_match_megatext_rope(llama_output[0]), query_proj, rtol=1e-01, atol=1e-04))
+    self.assertTrue(jnp.allclose(permute_to_match_megatext_rope(llama_output[1]), key_proj, rtol=1e-01, atol=1e-04))
 
   def test_scaling_rope(self):
     dim_per_head = 128

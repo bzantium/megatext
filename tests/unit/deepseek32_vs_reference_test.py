@@ -50,10 +50,10 @@ from jax.sharding import Mesh
 import jax.numpy as jnp
 from flax import nnx
 
-from maxtext.configs import pyconfig
-from maxtext.layers import embeddings, attention_mla
-from maxtext.common.common_types import MODEL_MODE_TRAIN
-from maxtext.utils import maxtext_utils
+from megatext.configs import pyconfig
+from megatext.layers import embeddings, attention_mla
+from megatext.common.common_types import MODEL_MODE_TRAIN
+from megatext.utils import megatext_utils
 from tests.utils.test_helpers import get_test_config_path
 
 
@@ -69,7 +69,7 @@ block_size = 128
 
 @dataclass
 class Config:
-  """MaxText config"""
+  """MegaText config"""
 
   # attention
   base_emb_dim: int = 71
@@ -104,7 +104,7 @@ class Config:
 class ModelArgs:
   """
   Arguments for the PyTorch Reference Model.
-  Maps MaxText Config keys to the specific variable names expected by the reference implementation.
+  Maps Megatext Config keys to the specific variable names expected by the reference implementation.
   """
 
   def __init__(self, config: Config, max_batch_size: int = 8, index_topk: int = 4):
@@ -752,12 +752,12 @@ def get_jax_mla_weights(pt_mla, cfg):
 
 
 def get_cfg_and_mesh(config, run_name, dtype, batch_size, seq_len, attention, indexer_topk):
-  """Returns MaxText configuration and mesh."""
+  """Returns MegaText configuration and mesh."""
   cfg = pyconfig.initialize(
       [None, get_test_config_path()],
       run_name=run_name,
       enable_checkpointing=False,
-      model_name="default",
+      model="default",
       dtype=dtype,
       # high precision
       weight_dtype="float32",
@@ -771,7 +771,7 @@ def get_cfg_and_mesh(config, run_name, dtype, batch_size, seq_len, attention, in
       indexer_topk=indexer_topk,
       **asdict(config),
   )
-  devices_array = maxtext_utils.create_device_mesh(cfg)
+  devices_array = megatext_utils.create_device_mesh(cfg)
   mesh = Mesh(devices_array, cfg.mesh_axes)
   return cfg, mesh
 

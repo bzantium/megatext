@@ -30,9 +30,9 @@ from jax.sharding import Mesh
 from flax import nnx
 import numpy as np
 
-from maxtext.layers.embeddings import PartialRotaryEmbedding, RotaryEmbedding
-from maxtext.configs import pyconfig
-from maxtext.utils import maxtext_utils
+from megatext.layers.embeddings import PartialRotaryEmbedding, RotaryEmbedding
+from megatext.configs import pyconfig
+from megatext.utils import megatext_utils
 from tests.utils.test_helpers import get_test_config_path, get_decoupled_parallelism_overrides
 
 
@@ -49,7 +49,7 @@ class PartialRotaryEmbeddingTest(unittest.TestCase):
         enable_checkpointing=False,
         **extra_args,
     )
-    devices_array = maxtext_utils.create_device_mesh(self.cfg)
+    devices_array = megatext_utils.create_device_mesh(self.cfg)
     self.mesh = Mesh(devices_array, self.cfg.mesh_axes)
     self.nnx_rng = nnx.Rngs(params=0)
 

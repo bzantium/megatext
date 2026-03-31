@@ -30,14 +30,14 @@ import jax
 import jax.numpy as jnp
 from jax.sharding import Mesh
 import jsonlines
-from maxtext.configs import pyconfig
-from maxtext.utils.globals import MAXTEXT_PKG_DIR, MAXTEXT_TEST_ASSETS_ROOT
-from maxtext.common.common_types import Array, MODEL_MODE_TRAIN
-from maxtext.experimental.rl.grpo_trainer import _merge_grpo_state, generate_completions, grpo_loss_fn
-from maxtext.experimental.rl.grpo_utils import compute_log_probs
-from maxtext.inference.maxengine import maxengine
-from maxtext.models import models
-from maxtext.utils import maxtext_utils
+from megatext.configs import pyconfig
+from megatext.utils.constants import MAXTEXT_PKG_DIR, MAXTEXT_TEST_ASSETS_ROOT
+from megatext.common.common_types import Array, MODEL_MODE_TRAIN
+from megatext.experimental.rl.grpo_trainer import _merge_grpo_state, generate_completions, grpo_loss_fn
+from megatext.experimental.rl.grpo_utils import compute_log_probs
+from megatext.inference.maxengine import maxengine
+from megatext.models import models
+from megatext.utils import megatext_utils
 from tests.integration.grpo_trainer_correctness_test import prepare_maxtext_inputs
 import numpy as np
 import torch
@@ -51,37 +51,37 @@ class GRPOTest(unittest.TestCase):
   def setUp(self):
     super().setUp()
     self.cfg = pyconfig.initialize(
-        [None, os.path.join(MAXTEXT_PKG_DIR, "experimental", "rl", "grpo_trainer_test.yml")],
-        model_name="llama3.1-8b",
+        [None, os.path.join(MAXTEXT_PKG_DIR, "experimental", "rl", "grpo_trainer_test.yaml")],
+        model="llama3.1-8b",
         run_name="generate_grpo_test_data",
         load_parameters_path="gs://maxtext-model-checkpoints/llama3.1-8b/2025-01-23-19-04/scanned/0/items",
         enable_checkpointing=True,
     )
     self.cfg_no_ckpt_loading = pyconfig.initialize(
-        [None, os.path.join(MAXTEXT_PKG_DIR, "experimental", "rl", "grpo_trainer_test.yml")],
+        [None, os.path.join(MAXTEXT_PKG_DIR, "experimental", "rl", "grpo_trainer_test.yaml")],
         run_name="generate_grpo_test_data_no_ckpt_loading",
         enable_checkpointing=False,
     )
     self.cfg_no_ckpt_loading_inference = pyconfig.initialize(
-        [None, os.path.join(MAXTEXT_PKG_DIR, "experimental", "rl", "grpo_trainer_test.yml")],
+        [None, os.path.join(MAXTEXT_PKG_DIR, "experimental", "rl", "grpo_trainer_test.yaml")],
         run_name="generate_grpo_test_data_no_ckpt_loading_inference",
         enable_checkpointing=False,
         ici_tensor_parallelism=4,
         per_device_batch_size=self.cfg_no_ckpt_loading.per_device_batch_size * self.cfg_no_ckpt_loading.num_generations,
     )
     self.rng = jax.random.key(self.cfg.init_weights_seed)
-    devices_array = maxtext_utils.create_device_mesh(self.cfg)
+    devices_array = megatext_utils.create_device_mesh(self.cfg)
     mesh = Mesh(devices_array, self.cfg.mesh_axes)
     # With checkpoint
     self.model = models.transformer_as_linen(config=self.cfg, mesh=mesh, quant=None, model_mode=MODEL_MODE_TRAIN)
-    self.state, state_mesh_annotations = maxtext_utils.setup_decode_state(self.model, self.cfg, self.rng, mesh, None)
+    self.state, state_mesh_annotations = megatext_utils.setup_decode_state(self.model, self.cfg, self.rng, mesh, None)
     self.state_mesh_shardings = nn.logical_to_mesh_sharding(state_mesh_annotations, mesh, self.cfg.logical_axis_rules)
     self.data_sharding = jax.NamedSharding(mesh, jax.sharding.PartitionSpec(None))
     # Without checkpoint
     self.model_no_ckpt_loading = models.transformer_as_linen(
         config=self.cfg_no_ckpt_loading, mesh=mesh, quant=None, model_mode=MODEL_MODE_TRAIN
     )
-    self.state_no_ckpt_loading, _ = maxtext_utils.setup_decode_state(
+    self.state_no_ckpt_loading, _ = megatext_utils.setup_decode_state(
         self.model_no_ckpt_loading, self.cfg_no_ckpt_loading, self.rng, mesh, None
     )
 
@@ -284,7 +284,7 @@ class GRPOTest(unittest.TestCase):
     }
     model_output_path = os.path.join(
         MAXTEXT_TEST_ASSETS_ROOT,
-        f"golden_data_grpo_{self.cfg_no_ckpt_loading.model_name}.jsonl",
+        f"golden_data_grpo_{self.cfg_no_ckpt_loading.model}.jsonl",
     )
     with jsonlines.open(model_output_path, "w") as f:
       f.write(data_to_save)

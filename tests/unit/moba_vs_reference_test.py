@@ -31,9 +31,9 @@ import numpy as np
 import torch
 from jax.sharding import Mesh
 
-from maxtext.configs import pyconfig
-from maxtext.layers.attention_op import AttentionOp
-from maxtext.utils import maxtext_utils
+from megatext.configs import pyconfig
+from megatext.layers.attention_op import AttentionOp
+from megatext.utils import megatext_utils
 from tests.utils.test_helpers import get_test_config_path
 
 # pylint: disable=missing-function-docstring,protected-access
@@ -239,14 +239,14 @@ class MobaTest(unittest.TestCase):
         [sys.argv[0], get_test_config_path()],
         run_name="moba_test",
         enable_checkpointing=False,
-        model_name="default",
+        model="default",
         dtype="bfloat16",
         moba=True,
         moba_chunk_size=moba_chunk_size,
         moba_topk=moba_topk,
         matmul_precision="highest",
     )
-    devices_array = maxtext_utils.create_device_mesh(config)
+    devices_array = megatext_utils.create_device_mesh(config)
     mesh = Mesh(devices_array, config.mesh_axes)
     attention_op = AttentionOp(
         config, mesh, "dot_product", seq_len, num_q_heads, num_kv_heads, float32_qk_product=True, float32_logits=True
@@ -382,14 +382,14 @@ class MobaTest(unittest.TestCase):
             [sys.argv[0], get_test_config_path()],
             run_name="moba_test_mask",
             enable_checkpointing=False,
-            model_name="default",
+            model="default",
             dtype="bfloat16",
             moba=True,
             moba_chunk_size=moba_chunk_size,
             moba_topk=moba_topk,
             matmul_precision="highest",
         )
-        devices_array = maxtext_utils.create_device_mesh(jax_config)
+        devices_array = megatext_utils.create_device_mesh(jax_config)
         mesh = Mesh(devices_array, jax_config.mesh_axes)
         attention_op = AttentionOp(
             jax_config,

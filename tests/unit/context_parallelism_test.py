@@ -24,8 +24,8 @@ import jax
 import jax.numpy as jnp
 from jax.sharding import Mesh, PartitionSpec, NamedSharding
 
-from maxtext.configs import pyconfig
-from maxtext.utils import maxtext_utils
+from megatext.configs import pyconfig
+from megatext.utils import megatext_utils
 from tests.utils.test_helpers import get_test_config_path
 
 
@@ -67,7 +67,7 @@ class ContextParallelismTest(unittest.TestCase):
         # there's no need for reordering the input/output
     )
     self.cfg_cp = config_cp
-    devices_array_cp = maxtext_utils.create_device_mesh(self.cfg_cp)  # for context parallelism
+    devices_array_cp = megatext_utils.create_device_mesh(self.cfg_cp)  # for context parallelism
     self.mesh_cp = Mesh(devices_array_cp, self.cfg_cp.mesh_axes)  # for context parallelism
 
   @pytest.mark.tpu_only

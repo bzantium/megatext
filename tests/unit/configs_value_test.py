@@ -20,13 +20,13 @@ from unittest.mock import patch, MagicMock
 
 import pydantic
 
-from maxtext.configs import pyconfig
-from maxtext.configs.pyconfig import initialize_pydantic
-from maxtext.configs import types
-from maxtext.utils.globals import MAXTEXT_REPO_ROOT
+from megatext.configs import pyconfig
+from megatext.configs.pyconfig import initialize_pydantic
+from megatext.configs import types
+from megatext.utils.constants import MEGATEXT_CONFIGS_DIR
 
-# Path to the base.yml config. This assumes that `pytest` is run from the project root.
-_BASE_CONFIG_PATH = os.path.join(MAXTEXT_REPO_ROOT, "src", "maxtext", "configs", "base.yml")
+# Path to the base.yaml config.
+_BASE_CONFIG_PATH = os.path.join(MEGATEXT_CONFIGS_DIR, "base.yaml")
 
 
 class ConfigTest(unittest.TestCase):
@@ -58,13 +58,13 @@ class ConfigTest(unittest.TestCase):
     self.assertIsInstance(config.steps, int)
 
   def test_model_override(self):
-    """Tests that model-specific configs override base.yml."""
-    argv = ["", _BASE_CONFIG_PATH, "model_name=llama2-7b", "run_name=test"]
+    """Tests that model-specific configs override base.yaml."""
+    argv = ["", _BASE_CONFIG_PATH, "model=llama3", "run_name=test"]
     config = pyconfig.initialize(argv)
-    self.assertEqual(config.base_emb_dim, 4096)  # From llama2-7b.yml
-    self.assertEqual(config.base_num_decoder_layers, 32)  # From llama2-7b.yml
-    self.assertEqual(config.decoder_block, types.DecoderBlockType.LLAMA2)  # from llama2-7b.yml
-    self.assertEqual(config.steps, 150001)  # From base.yml, not overridden
+    self.assertEqual(config.base_emb_dim, 4096)  # From llama3.yaml
+    self.assertEqual(config.base_num_decoder_layers, 32)  # From llama3.yaml
+    self.assertEqual(config.decoder_block, types.DecoderBlockType.LLAMA2)  # From llama3.yaml
+    self.assertEqual(config.steps, 150000)  # From base.yaml, not overridden
 
   def test_derived_values(self):
     """Tests that derived values are calculated correctly."""
@@ -119,7 +119,7 @@ class ConfigTest(unittest.TestCase):
     argv = [
         "",
         _BASE_CONFIG_PATH,
-        "model_name=llama3-8b",
+        "model=llama3",
         "tokenizer_path=assets/tokenizer_llama3.tiktoken",
         "run_name=test",
     ]
@@ -127,7 +127,7 @@ class ConfigTest(unittest.TestCase):
     self.assertEqual(config.tokenizer_type, "tiktoken")
 
   def test_initialize_pydantic_bad_keys(self):
-    """Test that `pydantic.ValidationError` is raised on keys not in MaxTextConfig"""
+    """Test that `pydantic.ValidationError` is raised on keys not in MegatextConfig"""
     with self.assertRaises(ValueError):
       initialize_pydantic(
           [

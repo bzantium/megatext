@@ -19,9 +19,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from maxtext.configs import pyconfig
-from maxtext.configs import types
-from maxtext.common import profiler
+from megatext.configs import pyconfig
+from megatext.configs import types
+from megatext.common import profiler
 from tests.utils.test_helpers import get_test_config_path
 
 

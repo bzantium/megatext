@@ -18,9 +18,9 @@ import unittest
 
 from absl.testing import absltest
 
-from maxtext.common.gcloud_stub import is_decoupled
-from maxtext.trainers.pre_train.train import main as train_main
-from maxtext.utils.globals import MAXTEXT_ASSETS_ROOT
+from megatext.common.gcloud_stub import is_decoupled
+from megatext.trainers.pretrain import main as train_main
+from megatext.utils.constants import MEGATEXT_ASSETS_ROOT
 from tests.utils.test_helpers import get_test_dataset_path, get_test_base_output_directory, get_test_config_path
 
 
@@ -43,13 +43,13 @@ class Train(unittest.TestCase):
     train_main(
         [
             None,
-            get_test_config_path("gpu/gpu_smoke_test.yml"),
+            get_test_config_path("gpu/gpu_smoke_test.yaml"),
             # pylint: disable=f-string-without-interpolation
             f"base_output_directory={self.base_output_directory}",
             "run_name=runner_test",
             r"dataset_path={self.dataset_path}",
             "enable_checkpointing=False",
-            rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+            rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
             "enable_goodput_recording=False",
             "enable_checkpoint_cloud_logger=False",
             "monitor_goodput=False",

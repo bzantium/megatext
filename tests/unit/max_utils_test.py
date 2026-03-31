@@ -28,9 +28,9 @@ from flax import linen as nn
 
 import optax
 
-from maxtext.configs import pyconfig
-from maxtext.utils import max_utils
-from maxtext.utils.train_utils import setup_train_loop
+from megatext.configs import pyconfig
+from megatext.utils import max_utils
+from megatext.utils.train_utils import setup_train_loop
 from tests.utils.test_helpers import get_test_config_path
 from unittest import mock
 
@@ -147,7 +147,7 @@ class UnscanTest(unittest.TestCase):
         "run_name": "test",
         "enable_checkpointing": False,
         "dataset_type": "synthetic",
-        "model_name": "llama3.1-8b",
+        "model": "llama3.1-8b",
     } | kwargs
     config = pyconfig.initialize(
         [sys.argv[0], get_test_config_path()],
@@ -215,7 +215,7 @@ class TestGpuDistributedInitialization(unittest.TestCase):
   )
   @mock.patch("jax.distributed.initialize")
   @mock.patch("jax.devices")
-  @mock.patch("maxtext.utils.max_logging.log")
+  @mock.patch("megatext.utils.max_logging.log")
   def test_initialize_jax_for_gpu_valid_devices(self, _mock_log, _mock_devices, mock_init):
     """Verifies that a comma-separated string of IDs is correctly parsed."""
     raw_keys = {"jax_distributed_initialization_timeout": 300}
@@ -237,7 +237,7 @@ class TestGpuDistributedInitialization(unittest.TestCase):
   )
   @mock.patch("jax.distributed.initialize")
   @mock.patch("jax.devices")
-  @mock.patch("maxtext.utils.max_logging.log")
+  @mock.patch("megatext.utils.max_logging.log")
   def test_initialize_jax_for_gpu_invalid_devices(self, _mock_log, mock_devices, mock_init):
     """Verifies fallback behavior when parsing fails (e.g., UUIDs)."""
     raw_keys = {"jax_distributed_initialization_timeout": 300}
@@ -258,7 +258,7 @@ class TestGpuDistributedInitialization(unittest.TestCase):
   )
   @mock.patch("jax.distributed.initialize")
   @mock.patch("jax.devices")
-  @mock.patch("maxtext.utils.max_logging.log")
+  @mock.patch("megatext.utils.max_logging.log")
   def test_initialize_jax_for_gpu_no_devices(self, _mock_log, mock_devices, mock_init):
     """Verifies that no error occurs when CUDA_VISIBLE_DEVICES is not set"""
     raw_keys = {"jax_distributed_initialization_timeout": 300}

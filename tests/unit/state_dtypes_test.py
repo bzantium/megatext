@@ -18,12 +18,12 @@ import unittest
 import jax
 import jax.numpy as jnp
 from jax.sharding import Mesh
-from maxtext.configs import pyconfig
-from maxtext.common.common_types import MODEL_MODE_TRAIN
-from maxtext.layers import quantizations
-from maxtext.models import models
-from maxtext.optimizers import optimizers
-from maxtext.utils import maxtext_utils
+from megatext.configs import pyconfig
+from megatext.common.common_types import MODEL_MODE_TRAIN
+from megatext.layers import quantizations
+from megatext.models import models
+from megatext.optimizers import optimizers
+from megatext.utils import megatext_utils
 from tests.utils.test_helpers import get_test_config_path, get_decoupled_parallelism_overrides
 
 Transformer = models.transformer_as_linen
@@ -40,14 +40,14 @@ class StateDtypes(unittest.TestCase):
     # Setup necessary inputs to build a model state
     config = pyconfig.initialize(argv)
     quant = quantizations.configure_quantization(config)
-    devices_array = maxtext_utils.create_device_mesh(config)
+    devices_array = megatext_utils.create_device_mesh(config)
     mesh = Mesh(devices_array, config.mesh_axes)
     model = Transformer(config, mesh, quant=quant, model_mode=MODEL_MODE_TRAIN)
-    learning_rate_schedule = maxtext_utils.create_learning_rate_schedule(config)
+    learning_rate_schedule = megatext_utils.create_learning_rate_schedule(config)
     tx = optimizers.get_optimizer(config, learning_rate_schedule)
     _, example_rng = jax.random.split(jax.random.PRNGKey(0), 2)
 
-    abstract_state, _, _ = maxtext_utils.get_abstract_state(model, tx, config, example_rng, mesh)
+    abstract_state, _, _ = megatext_utils.get_abstract_state(model, tx, config, example_rng, mesh)
     return abstract_state
 
   def get_weights(self, argv):

@@ -26,14 +26,14 @@ import jax
 import jax.numpy as jnp
 from jax.sharding import Mesh
 
-from maxtext.configs import pyconfig
-from maxtext.common.common_types import Config
-from maxtext.common.common_types import MODEL_MODE_TRAIN
-from maxtext.layers import quantizations
-from maxtext.models import models
-from maxtext.utils import max_utils
-from maxtext.utils import maxtext_utils
-from maxtext.utils.vocabulary_tiling import vocab_tiling_linen_loss
+from megatext.configs import pyconfig
+from megatext.common.common_types import Config
+from megatext.common.common_types import MODEL_MODE_TRAIN
+from megatext.layers import quantizations
+from megatext.models import models
+from megatext.utils import max_utils
+from megatext.utils import megatext_utils
+from megatext.utils.vocabulary_tiling import vocab_tiling_linen_loss
 
 from tests.utils.test_helpers import get_test_config_path
 
@@ -44,7 +44,7 @@ def compute_loss_linen(intermediate_outputs, logits, data, config, model, params
   """
   if config.num_vocab_tiling > 1:
     hidden_state_key = ("intermediates", "decoder", "hidden_states")
-    hidden_states = maxtext_utils.get_nested_value(intermediate_outputs, hidden_state_key)[0]
+    hidden_states = megatext_utils.get_nested_value(intermediate_outputs, hidden_state_key)[0]
     total_loss, _ = vocab_tiling_linen_loss(hidden_states, data, config, model, params, is_train)
   else:
     one_hot_targets = jax.nn.one_hot(data["targets"], config.vocab_size)
@@ -80,7 +80,7 @@ class LossAndGradientCorrectnessTest(unittest.TestCase):
     Computes and returns the gradients for a given configuration and set of parameters.
     """
     quant = quantizations.configure_quantization(cfg)
-    devices_array = maxtext_utils.create_device_mesh(cfg)
+    devices_array = megatext_utils.create_device_mesh(cfg)
     mesh = Mesh(devices_array, cfg.mesh_axes)
     model = models.transformer_as_linen(cfg, mesh=mesh, quant=quant, model_mode=MODEL_MODE_TRAIN)
 
@@ -145,7 +145,7 @@ class LossAndGradientCorrectnessTest(unittest.TestCase):
         gradient_accumulation_steps=1,
     )
     quant_non_ga = quantizations.configure_quantization(cfg_non_ga)
-    devices_array_non_ga = maxtext_utils.create_device_mesh(cfg_non_ga)
+    devices_array_non_ga = megatext_utils.create_device_mesh(cfg_non_ga)
     mesh_non_ga = Mesh(devices_array_non_ga, cfg_non_ga.mesh_axes)
     model_non_ga = models.transformer_as_linen(
         cfg_non_ga, mesh=mesh_non_ga, quant=quant_non_ga, model_mode=MODEL_MODE_TRAIN
@@ -210,7 +210,7 @@ class LossAndGradientCorrectnessTest(unittest.TestCase):
         z_loss_multiplier=1e-4,  # Enable z-loss
     )
     quant_non_tiling = quantizations.configure_quantization(cfg_non_tiling)
-    devices_array_non_tiling = maxtext_utils.create_device_mesh(cfg_non_tiling)
+    devices_array_non_tiling = megatext_utils.create_device_mesh(cfg_non_tiling)
     mesh_non_tiling = Mesh(devices_array_non_tiling, cfg_non_tiling.mesh_axes)
     model_non_tiling = models.transformer_as_linen(
         cfg_non_tiling, mesh=mesh_non_tiling, quant=quant_non_tiling, model_mode=MODEL_MODE_TRAIN
@@ -276,7 +276,7 @@ class LossAndGradientCorrectnessTest(unittest.TestCase):
         num_vocab_tiling=1,
     )
     quant_non_tiling = quantizations.configure_quantization(cfg_non_tiling)
-    devices_array_non_tiling = maxtext_utils.create_device_mesh(cfg_non_tiling)
+    devices_array_non_tiling = megatext_utils.create_device_mesh(cfg_non_tiling)
     mesh_non_tiling = Mesh(devices_array_non_tiling, cfg_non_tiling.mesh_axes)
     model_non_tiling = models.transformer_as_linen(
         cfg_non_tiling, mesh=mesh_non_tiling, quant=quant_non_tiling, model_mode=MODEL_MODE_TRAIN
@@ -341,7 +341,7 @@ class LossAndGradientCorrectnessTest(unittest.TestCase):
     )
 
     quant_non_tiling = quantizations.configure_quantization(cfg_non_tiling)
-    devices_array_non_tiling = maxtext_utils.create_device_mesh(cfg_non_tiling)
+    devices_array_non_tiling = megatext_utils.create_device_mesh(cfg_non_tiling)
     mesh_non_tiling = Mesh(devices_array_non_tiling, cfg_non_tiling.mesh_axes)
     model_non_tiling = models.transformer_as_linen(
         cfg_non_tiling, mesh=mesh_non_tiling, quant=quant_non_tiling, model_mode=MODEL_MODE_TRAIN
@@ -402,7 +402,7 @@ class LossAndGradientCorrectnessTest(unittest.TestCase):
         num_vocab_tiling=1,
     )
     quant_non_tiling = quantizations.configure_quantization(cfg_non_tiling)
-    devices_array_non_tiling = maxtext_utils.create_device_mesh(cfg_non_tiling)
+    devices_array_non_tiling = megatext_utils.create_device_mesh(cfg_non_tiling)
     mesh_non_tiling = Mesh(devices_array_non_tiling, cfg_non_tiling.mesh_axes)
     model_non_tiling = models.transformer_as_linen(
         cfg_non_tiling, mesh=mesh_non_tiling, quant=quant_non_tiling, model_mode=MODEL_MODE_TRAIN
@@ -466,7 +466,7 @@ class LossAndGradientCorrectnessTest(unittest.TestCase):
         num_vocab_tiling=1,
     )
     quant_non_tiling = quantizations.configure_quantization(cfg_non_tiling)
-    devices_array_non_tiling = maxtext_utils.create_device_mesh(cfg_non_tiling)
+    devices_array_non_tiling = megatext_utils.create_device_mesh(cfg_non_tiling)
     mesh_non_tiling = Mesh(devices_array_non_tiling, cfg_non_tiling.mesh_axes)
     model_non_tiling = models.transformer_as_linen(
         cfg_non_tiling, mesh=mesh_non_tiling, quant=quant_non_tiling, model_mode=MODEL_MODE_TRAIN
@@ -532,7 +532,7 @@ class LossAndGradientCorrectnessTest(unittest.TestCase):
         num_vocab_tiling=1,
     )
     quant_non_tiling = quantizations.configure_quantization(cfg_non_tiling)
-    devices_array_non_tiling = maxtext_utils.create_device_mesh(cfg_non_tiling)
+    devices_array_non_tiling = megatext_utils.create_device_mesh(cfg_non_tiling)
     mesh_non_tiling = Mesh(devices_array_non_tiling, cfg_non_tiling.mesh_axes)
     model_non_tiling = models.transformer_as_linen(
         cfg_non_tiling, mesh=mesh_non_tiling, quant=quant_non_tiling, model_mode=MODEL_MODE_TRAIN

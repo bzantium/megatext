@@ -12,18 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-""" Tests for verifying FLOPs calculation in maxtext_utils.py"""
+""" Tests for verifying FLOPs calculation in megatext_utils.py"""
 
 import unittest
 import pytest
 
-from maxtext.configs import pyconfig
-from maxtext.utils.maxtext_utils import calculate_tflops_training_per_device
+from megatext.configs import pyconfig
+from megatext.utils.megatext_utils import calculate_tflops_training_per_device
 from tests.utils.test_helpers import get_test_config_path
 
 
 class FlopCalculation(unittest.TestCase):
-  """Tests for verifying FLOP calculation in MaxText"""
+  """Tests for verifying FLOP calculation in Megatext"""
 
   def assertFlopsAlmostEqual(self, flops1, flops2, rel_tol=5e-2):
     """Assert that two FLOPs values are almost equal, within 5% relative tolerance."""
@@ -115,7 +115,7 @@ class FlopCalculation(unittest.TestCase):
     D_head = kwargs["head_dim"]
     H_q = kwargs["base_num_query_heads"]
     # 2 for QK^T and SV, 3 for fwd+bwd.
-    # Note: maxtext_utils divides by 2 for causal masking.
+    # Note: megatext_utils divides by 2 for causal masking.
     # Formula: 2 * 3 * B * S^2 * H * D
     full_attn_flops = 2 * 3 * num_full_layers * B * (S**2) * H_q * D_head
 
@@ -125,7 +125,7 @@ class FlopCalculation(unittest.TestCase):
     D_v = kwargs["gdn_value_head_dim"]
     C = kwargs["gdn_chunk_size"]
 
-    # Formulas from maxtext_utils.calculate_gated_delta_net_flops_per_device
+    # Formulas from megatext_utils.calculate_gated_delta_net_flops_per_device
     flops_intra = 2 * B * S * H_v * C * (2 * D_k + D_v) + (B * H_v * S * C**2)
     flops_inter = (2 * B * S * H_v * C * (D_k + D_v)) + (6 * B * S * H_v * D_k * D_v)
 
@@ -138,7 +138,7 @@ class FlopCalculation(unittest.TestCase):
   def test_qwen3_next_flops(self):
     """Test Qwen3-Next Flops calculation"""
     kwargs = {
-        "model_name": "qwen3-next-80b-a3b",
+        "model": "qwen3-next-80b-a3b",
         "override_model_config": True,
         "per_device_batch_size": 1,
         "max_target_length": 4096,
@@ -153,7 +153,7 @@ class FlopCalculation(unittest.TestCase):
         "head_dim": 256,
         "vocab_size": 151936,
         # MoE Parameters
-        "base_mlp_dim": 512,  # Note: maxtext_utils uses moe_mlp_dim for calculations
+        "base_mlp_dim": 512,  # Note: megatext_utils uses moe_mlp_dim for calculations
         "base_moe_mlp_dim": 512,
         "num_experts": 512,
         "num_experts_per_tok": 10,
@@ -246,7 +246,7 @@ class FlopCalculation(unittest.TestCase):
     """Test Llama2 7b Flops calculation with default parameters"""
     kwargs = {
         # Model bases
-        "model_name": "llama2-7b",
+        "model": "llama2-7b",
         "override_model_config": True,
         # Core workload parameters
         "per_device_batch_size": 12,
@@ -281,7 +281,7 @@ class FlopCalculation(unittest.TestCase):
     """Test Llama3 8b Flops calculation with default parameters"""
     kwargs = {
         # Model bases
-        "model_name": "llama3-8b",
+        "model": "llama3-8b",
         "override_model_config": True,
         # Core workload parameters
         "per_device_batch_size": 4,
@@ -319,7 +319,7 @@ class FlopCalculation(unittest.TestCase):
     """Test Mixtral 8x7b Flops calculation"""
     kwargs = {
         # Model bases
-        "model_name": "mixtral-8x7b",
+        "model": "mixtral-8x7b",
         "override_model_config": True,
         # Core workload parameters
         "per_device_batch_size": 4,
@@ -357,7 +357,7 @@ class FlopCalculation(unittest.TestCase):
     """Test DeepSeek2-16b FLops calculation"""
     kwargs = {
         # Model bases
-        "model_name": "deepseek2-16b",
+        "model": "deepseek2-16b",
         "override_model_config": True,
         # Core workload parameters
         "per_device_batch_size": 4,
@@ -402,7 +402,7 @@ class FlopCalculation(unittest.TestCase):
     """Test GPT OSS 20B Flops calculation"""
     kwargs = {
         # Model bases
-        "model_name": "gpt-oss-20b",
+        "model": "gpt-oss-20b",
         "override_model_config": True,
         # Core workload parameters
         "per_device_batch_size": 4,
@@ -441,7 +441,7 @@ class FlopCalculation(unittest.TestCase):
     """Test DeepSeek3.2-671b FLops calculation"""
     kwargs = {
         # Model bases
-        "model_name": "deepseek3.2-671b",
+        "model": "deepseek3.2-671b",
         "override_model_config": True,
         # Core workload parameters
         "per_device_batch_size": 4,
@@ -493,7 +493,7 @@ class FlopCalculation(unittest.TestCase):
     """Test model with Engram FLops calculation"""
     kwargs = {
         # Model bases
-        "model_name": "deepseek2-16b",
+        "model": "deepseek2-16b",
         "override_model_config": True,
         # Core workload parameters
         "per_device_batch_size": 4,

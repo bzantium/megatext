@@ -25,10 +25,10 @@ from flax import nnx
 import jax
 import jax.numpy as jnp
 from jax.sharding import AxisType, Mesh
-from maxtext.utils import maxtext_utils
-from maxtext.common.gcloud_stub import is_decoupled
+from megatext.utils import megatext_utils
+from megatext.common.gcloud_stub import is_decoupled
 
-from maxtext.common.common_types import (
+from megatext.common.common_types import (
     AttentionType,
     DECODING_ACTIVE_SEQUENCE_INDICATOR,
     MODEL_MODE_AUTOREGRESSIVE,
@@ -36,12 +36,12 @@ from maxtext.common.common_types import (
     MODEL_MODE_TRAIN,
     DEFAULT_MASK_VALUE,
 )
-from maxtext.layers.attention_mla import MLA
-from maxtext.layers.attention_op import ChunkedCausalMask, _generate_chunk_attention_mask, _make_bidirectional_block_mask
-from maxtext.layers.attentions import Attention
-from maxtext.layers import embeddings
-from maxtext.configs import pyconfig
-from maxtext.models.qwen3 import Qwen3NextGatedDeltaNet
+from megatext.layers.attention_mla import MLA
+from megatext.layers.attention_op import ChunkedCausalMask, _generate_chunk_attention_mask, _make_bidirectional_block_mask
+from megatext.layers.attentions import Attention
+from megatext.layers import embeddings
+from megatext.configs import pyconfig
+from megatext.models.qwen3 import Qwen3NextGatedDeltaNet
 import numpy as np
 import pytest
 
@@ -285,7 +285,7 @@ class AttentionTest(parameterized.TestCase):
     self.rng = jax.random.PRNGKey(0)
     self.nnx_rng = nnx.Rngs(params=0, dropout=jax.random.PRNGKey(42))
 
-    devices_array = maxtext_utils.create_device_mesh(self.cfg)
+    devices_array = megatext_utils.create_device_mesh(self.cfg)
     self.mesh = Mesh(devices_array, self.cfg.mesh_axes)
     self.global_batch_size = self.cfg.global_batch_size_to_train_on
     self.num_kv_heads = self.cfg.num_kv_heads
@@ -742,7 +742,7 @@ class AttentionTest(parameterized.TestCase):
         expert_shard_attention_option=expert_shard_attention_option,
         shard_mode=shard_mode,
     )
-    devices_array_cp = maxtext_utils.create_device_mesh(cfg_cp)
+    devices_array_cp = megatext_utils.create_device_mesh(cfg_cp)
     axis_type = AxisType.Explicit if shard_mode == "explicit" else AxisType.Auto
     axis_names = [axis_type for _ in cfg_cp.mesh_axes]
     mesh_cp = Mesh(devices_array_cp, cfg_cp.mesh_axes, axis_types=tuple(axis_names))
@@ -1177,7 +1177,7 @@ class AttentionTest(parameterized.TestCase):
         )
     )
 
-  @pytest.mark.skip(reason="Requires `vllm-tpu` package which is not yet a MaxText dependency.")
+  @pytest.mark.skip(reason="Requires `vllm-tpu` package which is not yet a Megatext dependency.")
   @pytest.mark.tpu_only
   @mock.patch("tpu_inference.layers.jax.attention_interface.sharded_ragged_paged_attention", create=True)
   def test_forward_serve_vllm(self, mock_sharded_ragged_paged_attention):
@@ -1526,7 +1526,7 @@ class MLATest(attention_test_util.MLATestBase):
         ici_expert_parallelism=ici_expert_parallelism,
         expert_shard_attention_option=expert_shard_attention_option,
     )
-    devices_array_cp = maxtext_utils.create_device_mesh(cfg_cp)
+    devices_array_cp = megatext_utils.create_device_mesh(cfg_cp)
     axis_type = AxisType.Explicit if shard_mode == "explicit" else AxisType.Auto
     axis_names = [axis_type for _ in cfg_cp.mesh_axes]
     mesh_cp = Mesh(devices_array_cp, cfg_cp.mesh_axes, axis_types=tuple(axis_names))

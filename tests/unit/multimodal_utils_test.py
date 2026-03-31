@@ -17,12 +17,12 @@ import os
 import unittest
 import numpy as np
 
-from maxtext.configs import pyconfig
-from maxtext.utils.globals import MAXTEXT_REPO_ROOT
-from maxtext.multimodal import processor as mm_processor
-from maxtext.multimodal import utils as mm_utils
-from maxtext.multimodal import processor_gemma3
-from maxtext.multimodal import processor_llama4
+from megatext.configs import pyconfig
+from megatext.utils.constants import MAXTEXT_REPO_ROOT
+from megatext.multimodal import processor as mm_processor
+from megatext.multimodal import utils as mm_utils
+from megatext.multimodal import processor_gemma3
+from megatext.multimodal import processor_llama4
 
 
 class TestTextImageFusionGemma3(unittest.TestCase):
@@ -151,7 +151,7 @@ class TestLlama4PostProcessing(unittest.TestCase):
     super().setUp()
     self.NUM_IMAGE_CHANNELS = 3
     self.LLAMA4_TILE_SIZE = 336
-    self.model_name = "llama4-17b-16e"
+    self.model = "llama4-17b-16e"
 
   def test_image_tokens_for_single_image(self):
     this_aspect_ratio = np.array([2, 2])
@@ -198,10 +198,10 @@ class TestLlama4PostProcessing(unittest.TestCase):
         pixel_values=dummy_pixel_values,
         aspect_ratios=dummy_aspect_ratios,
     )
-    base_config_path = os.path.join(MAXTEXT_REPO_ROOT, "src", "maxtext", "configs", "base.yml")
+    base_config_path = os.path.join(MAXTEXT_REPO_ROOT, "src", "maxtext", "configs", "base.yaml")
     config = pyconfig.initialize(
         ["", base_config_path],
-        model_name="llama4-17b-16e",
+        model="llama4-17b-16e",
     )
     image_offsets = mm_processor.get_image_offsets(config=config, processor_output=processor_output)
     post_processed_tokens = processor_llama4.add_extra_tokens_for_images_llama4(dummy_tokens, processor_output)
