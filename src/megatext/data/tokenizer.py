@@ -16,7 +16,7 @@
 
 from typing import Literal, Sequence, Collection
 from pathlib import Path
-from megatext.utils import max_logging
+from megatext.utils import logging as max_logging
 import transformers
 import tiktoken
 from tiktoken.load import load_tiktoken_bpe
@@ -188,7 +188,7 @@ class SentencePieceTokenizer:
     self._tokenizer_model = SentencePieceProcessor()
     try:
       if model_path.startswith("gs://"):
-        from megatext.utils.gcs_utils import read_bytes_from_gcs  # pylint: disable=import-outside-toplevel
+        from megatext.utils.storage import read_bytes_from_gcs  # pylint: disable=import-outside-toplevel
 
         model_proto = read_bytes_from_gcs(model_path)
         self._tokenizer_model.LoadFromSerializedProto(model_proto)

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared utilities for MaxText tests."""
+"""Shared utilities for Megatext tests."""
 
 import jax.numpy as jnp
 import numpy as np
@@ -144,21 +144,21 @@ def copy_attention_weights(torch_attn, jax_attn):
   copy_linear_weights(torch_attn.out_proj, jax_attn.out_proj)
 
 
-def copy_attention_weights_to_maxtext(torch_attn, maxtext_attn, fused_qkv=False):
-  """Copy attention weights from PyTorch to MaxText's Attention module.
+def copy_attention_weights_to_megatext(torch_attn, megatext_attn, fused_qkv=False):
+  """Copy attention weights from PyTorch to Megatext's Attention module.
 
   Args:
       torch_attn: PyTorch attention with either:
           - Separate q_proj, k_proj, v_proj, out_proj (fused_qkv=False, for audio)
           - Fused qkv and proj (fused_qkv=True, for vision)
-      maxtext_attn: MaxText Attention module with separate q/k/v projections
+      megatext_attn: Megatext Attention module with separate q/k/v projections
       fused_qkv: If True, torch_attn has fused qkv projection that needs splitting
   """
-  if not hasattr(maxtext_attn, "query"):
-    raise NotImplementedError("Unsupported MaxText Attention structure")
+  if not hasattr(megatext_attn, "query"):
+    raise NotImplementedError("Unsupported Megatext Attention structure")
 
-  num_heads = maxtext_attn.num_query_heads
-  head_dim = maxtext_attn.head_dim
+  num_heads = megatext_attn.num_query_heads
+  head_dim = megatext_attn.head_dim
   hidden_size = num_heads * head_dim
   output_dim = hidden_size
 
@@ -188,20 +188,20 @@ def copy_attention_weights_to_maxtext(torch_attn, maxtext_attn, fused_qkv=False)
     out_proj = torch_attn.out_proj
 
   # Copy Q/K/V weights (common logic for both)
-  maxtext_attn.query.kernel.value = jnp.array(q_weight.T.reshape(hidden_size, num_heads, head_dim))
-  maxtext_attn.query.bias.value = jnp.array(q_bias.reshape(num_heads, head_dim))
+  megatext_attn.query.kernel.value = jnp.array(q_weight.T.reshape(hidden_size, num_heads, head_dim))
+  megatext_attn.query.bias.value = jnp.array(q_bias.reshape(num_heads, head_dim))
 
-  maxtext_attn.key.kernel.value = jnp.array(k_weight.T.reshape(hidden_size, num_heads, head_dim))
-  maxtext_attn.key.bias.value = jnp.array(k_bias.reshape(num_heads, head_dim))
+  megatext_attn.key.kernel.value = jnp.array(k_weight.T.reshape(hidden_size, num_heads, head_dim))
+  megatext_attn.key.bias.value = jnp.array(k_bias.reshape(num_heads, head_dim))
 
-  maxtext_attn.value.kernel.value = jnp.array(v_weight.T.reshape(hidden_size, num_heads, head_dim))
-  maxtext_attn.value.bias.value = jnp.array(v_bias.reshape(num_heads, head_dim))
+  megatext_attn.value.kernel.value = jnp.array(v_weight.T.reshape(hidden_size, num_heads, head_dim))
+  megatext_attn.value.bias.value = jnp.array(v_bias.reshape(num_heads, head_dim))
 
   # Copy output projection (common logic for both)
   out_weight = out_proj.weight.detach().cpu().numpy()
   out_bias = out_proj.bias.detach().cpu().numpy()
-  maxtext_attn.out.kernel.value = jnp.array(out_weight.T.reshape(num_heads, head_dim, output_dim))
-  maxtext_attn.out.bias.value = jnp.array(out_bias)
+  megatext_attn.out.kernel.value = jnp.array(out_weight.T.reshape(num_heads, head_dim, output_dim))
+  megatext_attn.out.bias.value = jnp.array(out_bias)
 
 
 def copy_encoder_layer_weights(torch_layer, jax_layer):
@@ -238,75 +238,75 @@ def copy_encoder_weights(torch_encoder, jax_encoder):
     copy_encoder_layer_weights(torch_layer, jax_layer)
 
 
-def copy_maxtext_encoder_layer_weights(torch_layer, maxtext_layer):
-  """Copy encoder layer weights from PyTorch to MaxText AudioEncoderLayer.
+def copy_megatext_encoder_layer_weights(torch_layer, megatext_layer):
+  """Copy encoder layer weights from PyTorch to Megatext AudioEncoderLayer.
 
   Args:
       torch_layer: PyTorch TorchQwen3OmniMoeAudioEncoderLayer
-      maxtext_layer: MaxText AudioEncoderLayer
+      megatext_layer: Megatext AudioEncoderLayer
   """
   # Copy layer norms
-  copy_layernorm_weights(torch_layer.self_attn_layer_norm, maxtext_layer.input_layer_norm)
-  copy_layernorm_weights(torch_layer.final_layer_norm, maxtext_layer.post_attention_layer_norm)
+  copy_layernorm_weights(torch_layer.self_attn_layer_norm, megatext_layer.input_layer_norm)
+  copy_layernorm_weights(torch_layer.final_layer_norm, megatext_layer.post_attention_layer_norm)
 
-  # Copy attention weights to MaxText Attention module
-  copy_attention_weights_to_maxtext(torch_layer.self_attn, maxtext_layer.self_attention_audio)
+  # Copy attention weights to Megatext Attention module
+  copy_attention_weights_to_megatext(torch_layer.self_attn, megatext_layer.self_attention_audio)
 
-  copy_linear_weights(torch_layer.fc1, maxtext_layer.AudioMLP.wi)
-  copy_linear_weights(torch_layer.fc2, maxtext_layer.AudioMLP.wo)
+  copy_linear_weights(torch_layer.fc1, megatext_layer.AudioMLP.wi)
+  copy_linear_weights(torch_layer.fc2, megatext_layer.AudioMLP.wo)
 
 
-def copy_maxtext_audio_encoder_weights(torch_model, maxtext_encoder, config):
-  """Copy AudioEncoder weights from PyTorch to MaxText (encoder only, no projector).
+def copy_megatext_audio_encoder_weights(torch_model, megatext_encoder, config):
+  """Copy AudioEncoder weights from PyTorch to Megatext (encoder only, no projector).
 
   Args:
       torch_model: PyTorch TorchQwen3OmniMoeAudioEncoder
-      maxtext_encoder: MaxText Qwen3OmniAudioEncoder
-      config: MaxText config with encoder_layers_for_audio
+      megatext_encoder: Megatext Qwen3OmniAudioEncoder
+      config: MegaText config with encoder_layers_for_audio
 
   Note:
-      Positional embeddings are not copied because MaxText's PositionalEmbedding
+      Positional embeddings are not copied because Megatext's PositionalEmbedding
       computes them deterministically on-the-fly, unlike PyTorch which stores them.
   """
   # Copy convolutional layers
-  copy_conv2d_weights(torch_model.conv2d1, maxtext_encoder.conv2d1)
-  copy_conv2d_weights(torch_model.conv2d2, maxtext_encoder.conv2d2)
-  copy_conv2d_weights(torch_model.conv2d3, maxtext_encoder.conv2d3)
+  copy_conv2d_weights(torch_model.conv2d1, megatext_encoder.conv2d1)
+  copy_conv2d_weights(torch_model.conv2d2, megatext_encoder.conv2d2)
+  copy_conv2d_weights(torch_model.conv2d3, megatext_encoder.conv2d3)
 
   # Copy conv output projection
-  copy_linear_weights(torch_model.conv_out, maxtext_encoder.conv_out)
+  copy_linear_weights(torch_model.conv_out, megatext_encoder.conv_out)
 
-  # Note: Positional embeddings are not copied - MaxText computes them on-the-fly
+  # Note: Positional embeddings are not copied - Megatext computes them on-the-fly
 
   # Copy layer norm
-  copy_layernorm_weights(torch_model.ln_post, maxtext_encoder.layernorm_post)
+  copy_layernorm_weights(torch_model.ln_post, megatext_encoder.layernorm_post)
 
   # Copy encoder layers
-  for torch_layer, maxtext_layer in zip(
+  for torch_layer, megatext_layer in zip(
       torch_model.layers,
-      [getattr(maxtext_encoder, f"layers_{i}") for i in range(config.encoder_layers_for_audio)],
+      [getattr(megatext_encoder, f"layers_{i}") for i in range(config.encoder_layers_for_audio)],
   ):
-    copy_maxtext_encoder_layer_weights(torch_layer, maxtext_layer)
+    copy_megatext_encoder_layer_weights(torch_layer, megatext_layer)
 
 
-def copy_audio_projector_weights(torch_model, maxtext_projector):
-  """Copy AudioProjector weights from PyTorch to MaxText.
+def copy_audio_projector_weights(torch_model, megatext_projector):
+  """Copy AudioProjector weights from PyTorch to Megatext.
 
   Args:
       torch_model: PyTorch TorchQwen3OmniMoeAudioEncoder (contains proj1, proj2)
-      maxtext_projector: MaxText Qwen3OmniAudioProjector
+      megatext_projector: Megatext Qwen3OmniAudioProjector
   """
-  copy_linear_weights(torch_model.proj1, maxtext_projector.proj1)
-  copy_linear_weights(torch_model.proj2, maxtext_projector.proj2)
+  copy_linear_weights(torch_model.proj1, megatext_projector.proj1)
+  copy_linear_weights(torch_model.proj2, megatext_projector.proj2)
 
 
-def copy_maxtext_encoder_weights(torch_encoder, maxtext_encoder):
+def copy_megatext_encoder_weights(torch_encoder, megatext_encoder):
   # Copy weights for each encoder layer
-  for torch_layer, maxtext_layer in zip(
+  for torch_layer, megatext_layer in zip(
       torch_encoder.layers,
-      [getattr(maxtext_encoder, f"layers_{i}") for i in range(len(torch_encoder.layers))],
+      [getattr(megatext_encoder, f"layers_{i}") for i in range(len(torch_encoder.layers))],
   ):
-    copy_maxtext_encoder_layer_weights(torch_layer, maxtext_layer)
+    copy_megatext_encoder_layer_weights(torch_layer, megatext_layer)
 
 
 # Vision-specific weight copying utilities
@@ -361,7 +361,7 @@ def copy_vision_encoder_weights(torch_encoder, jax_encoder):
     copy_layernorm_weights(torch_block.norm2, jax_block.ln2)
 
     # Copy attention weights (vision uses fused QKV)
-    copy_attention_weights_to_maxtext(torch_block.attn, jax_block.attn.attn, fused_qkv=True)
+    copy_attention_weights_to_megatext(torch_block.attn, jax_block.attn.attn, fused_qkv=True)
 
     # Copy MLP weights (vision MLP uses DenseGeneral)
     copy_linear_weights(torch_block.mlp.linear_fc1, jax_block.mlp)

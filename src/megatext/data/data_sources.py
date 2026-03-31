@@ -28,9 +28,53 @@ from pathlib import Path
 import grain.python as grain
 import numpy as np
 
-from megatext.utils import max_logging
+from megatext.utils import logging as max_logging
 from megatext.data.indexed_dataset import make_arecord_dataset, make_mmap_dataset
-from megatext.data.bin_packing import build_packed_sample_index
+from megatext.data.packing import build_greedy_sample_index, build_packed_sample_index
+
+
+# ── GCS-aware cache I/O ─────────────────────────────────────────────────────
+
+def _is_gcs(path: str) -> bool:
+    return isinstance(path, str) and path.startswith("gs://")
+
+
+def _get_fs():
+    import gcsfs
+    return gcsfs.GCSFileSystem()
+
+
+def _cache_path(cache_dir: str, filename: str) -> str:
+    if _is_gcs(cache_dir):
+        return f"{cache_dir.rstrip('/')}/{filename}"
+    return str(Path(cache_dir) / filename)
+
+
+def _cache_exists(path: str) -> bool:
+    if _is_gcs(path):
+        return _get_fs().exists(path)
+    return Path(path).exists()
+
+
+def _cache_makedirs(path: str):
+    if _is_gcs(path):
+        return  # GCS doesn't need mkdir
+    Path(path).mkdir(parents=True, exist_ok=True)
+
+
+def _cache_save(path: str, arr: np.ndarray):
+    if _is_gcs(path):
+        with _get_fs().open(path, "wb") as f:
+            np.save(f, arr)
+    else:
+        np.save(path, arr)
+
+
+def _cache_load(path: str) -> np.ndarray:
+    if _is_gcs(path):
+        with _get_fs().open(path, "rb") as f:
+            return np.load(f)
+    return np.load(path)
 
 
 def _get_num_epochs(
@@ -130,9 +174,9 @@ class DocumentDataSource(grain.RandomAccessDataSource):
 
         # Build or load cached indices
         if cache_dir:
-            cache_path = Path(cache_dir)
+            cache_path = str(cache_dir)
         else:
-            cache_path = Path(data_path)
+            cache_path = str(data_path)
 
         if packing_type == "greedy":
             self._document_index, self._sample_index, self._shuffle_index = (
@@ -145,6 +189,7 @@ class DocumentDataSource(grain.RandomAccessDataSource):
                     split=(doc_start, doc_end),
                     cache_dir=cache_path,
                     add_extra_token=add_extra_token,
+                    tokens_per_epoch=tokens_per_epoch,
                 )
             )
             self._chunk_index = None
@@ -160,7 +205,6 @@ class DocumentDataSource(grain.RandomAccessDataSource):
                     split=(doc_start, doc_end),
                     cache_dir=cache_path,
                     add_extra_token=add_extra_token,
-                    packing_type=packing_type,
                     max_chunks_per_sample=max_chunks_per_sample,
                 )
             )
@@ -274,8 +318,9 @@ class DocumentDataSource(grain.RandomAccessDataSource):
         num_epochs: int,
         num_samples: int,
         split: tuple[int, int],
-        cache_dir: Path,
+        cache_dir: str,
         add_extra_token: bool = True,
+        tokens_per_epoch: int = 0,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Load cached indices or build and cache them."""
         config_str = json.dumps(
@@ -293,16 +338,16 @@ class DocumentDataSource(grain.RandomAccessDataSource):
         )
         config_hash = hashlib.md5(config_str.encode()).hexdigest()
 
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        doc_idx_path = cache_dir / f"{config_hash}-document_index.npy"
-        sample_idx_path = cache_dir / f"{config_hash}-sample_index.npy"
-        shuffle_idx_path = cache_dir / f"{config_hash}-shuffle_index.npy"
+        _cache_makedirs(cache_dir)
+        doc_idx_path = _cache_path(cache_dir, f"{config_hash}-document_index.npy")
+        sample_idx_path = _cache_path(cache_dir, f"{config_hash}-sample_index.npy")
+        shuffle_idx_path = _cache_path(cache_dir, f"{config_hash}-shuffle_index.npy")
 
-        if doc_idx_path.exists() and sample_idx_path.exists() and shuffle_idx_path.exists():
+        if _cache_exists(doc_idx_path) and _cache_exists(sample_idx_path) and _cache_exists(shuffle_idx_path):
             max_logging.log(f"Loading cached indices from {cache_dir}")
-            document_index = np.load(doc_idx_path)
-            sample_index = np.load(sample_idx_path)
-            shuffle_index = np.load(shuffle_idx_path)
+            document_index = _cache_load(doc_idx_path)
+            sample_index = _cache_load(sample_idx_path)
+            shuffle_index = _cache_load(shuffle_idx_path)
             return document_index, sample_index, shuffle_index
 
         max_logging.log(f"Building indices (seq_len={seq_len}, epochs={num_epochs}, docs={len(self._doc_ids)})...")
@@ -311,20 +356,21 @@ class DocumentDataSource(grain.RandomAccessDataSource):
         num_split_docs = len(self._doc_ids)
 
         document_index = _build_document_index(num_split_docs, num_epochs, rng)
-        sample_index = _build_sample_index(
+        sample_index = build_greedy_sample_index(
             document_index, self._split_doc_lengths, seq_len,
             add_extra_token=add_extra_token,
+            num_epochs=num_epochs,
+            tokens_per_epoch=tokens_per_epoch,
         )
 
         total_samples = len(sample_index) - 1
         shuffle_index = _build_shuffle_index_with_separate_epoch(
-            sample_index, document_index, num_split_docs, num_epochs,
-            num_samples, total_samples, rng,
+            sample_index, num_split_docs, num_epochs, total_samples, rng,
         )
 
-        np.save(doc_idx_path, document_index)
-        np.save(sample_idx_path, sample_index)
-        np.save(shuffle_idx_path, shuffle_index)
+        _cache_save(doc_idx_path, document_index)
+        _cache_save(sample_idx_path, sample_index)
+        _cache_save(shuffle_idx_path, shuffle_index)
         max_logging.log(f"Built {len(sample_index) - 1} samples, cached to {cache_dir}")
 
         return document_index, sample_index, shuffle_index
@@ -337,9 +383,8 @@ class DocumentDataSource(grain.RandomAccessDataSource):
         num_epochs: int,
         num_samples: int,
         split: tuple[int, int],
-        cache_dir: Path,
+        cache_dir: str,
         add_extra_token: bool = True,
-        packing_type: str = "first_fit",
         max_chunks_per_sample: int = 0,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Load cached packed indices or build and cache them."""
@@ -352,7 +397,6 @@ class DocumentDataSource(grain.RandomAccessDataSource):
                 "split": f"{split[0]}:{split[1]}",
                 "num_epochs": num_epochs,
                 "num_samples": num_samples,
-                "packing_type": packing_type,
                 "max_chunks_per_sample": max_chunks_per_sample,
             },
             indent=4,
@@ -360,37 +404,37 @@ class DocumentDataSource(grain.RandomAccessDataSource):
         )
         config_hash = hashlib.md5(config_str.encode()).hexdigest()
 
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        chunk_idx_path = cache_dir / f"{config_hash}-chunk_index.npy"
-        sample_idx_path = cache_dir / f"{config_hash}-sample_index.npy"
-        shuffle_idx_path = cache_dir / f"{config_hash}-shuffle_index.npy"
+        _cache_makedirs(cache_dir)
+        chunk_idx_path = _cache_path(cache_dir, f"{config_hash}-chunk_index.npy")
+        sample_idx_path = _cache_path(cache_dir, f"{config_hash}-sample_index.npy")
+        shuffle_idx_path = _cache_path(cache_dir, f"{config_hash}-shuffle_index.npy")
 
-        if chunk_idx_path.exists() and sample_idx_path.exists() and shuffle_idx_path.exists():
+        if _cache_exists(chunk_idx_path) and _cache_exists(sample_idx_path) and _cache_exists(shuffle_idx_path):
             max_logging.log(f"Loading cached packed indices from {cache_dir}")
-            return np.load(chunk_idx_path), np.load(sample_idx_path), np.load(shuffle_idx_path)
+            return _cache_load(chunk_idx_path), _cache_load(sample_idx_path), _cache_load(shuffle_idx_path)
 
         max_logging.log(
-            f"Building packed indices ({packing_type}, seq_len={seq_len}, epochs={num_epochs}, docs={len(self._doc_ids)})..."
+            f"Building packed indices (best_fit, seq_len={seq_len}, epochs={num_epochs}, docs={len(self._doc_ids)})..."
         )
 
         rng = np.random.RandomState(seed)
         num_split_docs = len(self._doc_ids)
         document_index = _build_document_index(num_split_docs, num_epochs, rng)
+        tokens_per_epoch = int(np.sum(self._split_doc_lengths))
         chunk_index, sample_index = build_packed_sample_index(
             document_index, self._split_doc_lengths, seq_len,
-            packing_type=packing_type,
             add_extra_token=add_extra_token,
             max_chunks_per_sample=max_chunks_per_sample,
+            num_epochs=num_epochs,
+            tokens_per_epoch=tokens_per_epoch,
         )
 
         total_samples = len(sample_index) - 1
-        # For packed indices, we don't have sample_index with doc positions,
-        # so we use a simple full shuffle (no separate_final_epoch logic)
         shuffle_index = _build_shuffle_index(total_samples, total_samples, rng)
 
-        np.save(chunk_idx_path, chunk_index)
-        np.save(sample_idx_path, sample_index)
-        np.save(shuffle_idx_path, shuffle_index)
+        _cache_save(chunk_idx_path, chunk_index)
+        _cache_save(sample_idx_path, sample_index)
+        _cache_save(shuffle_idx_path, shuffle_index)
         max_logging.log(f"Built {len(sample_index) - 1} packed samples, cached to {cache_dir}")
 
         return chunk_index, sample_index, shuffle_index
@@ -408,55 +452,11 @@ def _build_document_index(
     return np.concatenate(epochs)
 
 
-def _build_sample_index(
-    document_index: np.ndarray,
-    doc_lengths: np.ndarray,
-    seq_len: int,
-    add_extra_token: bool = True,
-) -> np.ndarray:
-    """Map samples to document spans.
-
-    Returns 2-D int64 array of shape (N+1, 2).
-    Each row = (doc_index_position, offset_within_doc).
-    Pure NumPy implementation of sample index building.
-    """
-    target = seq_len + add_extra_token
-    samples = [(0, 0)]
-    doc_pos = 0
-    offset = 0
-    remaining = target
-
-    while doc_pos < len(document_index):
-        doc_id = int(document_index[doc_pos])
-        doc_len = int(doc_lengths[doc_id])
-        available = doc_len - offset
-
-        if available <= 0:
-            doc_pos += 1
-            offset = 0
-            continue
-
-        if available >= remaining:
-            offset += remaining
-            samples.append((doc_pos, offset))
-            remaining = target
-            if offset >= doc_len:
-                doc_pos += 1
-                offset = 0
-        else:
-            remaining -= available
-            doc_pos += 1
-            offset = 0
-
-    return np.array(samples, dtype=np.int64)
-
 
 def _build_shuffle_index_with_separate_epoch(
     sample_index: np.ndarray,
-    document_index: np.ndarray,
     num_documents: int,
     num_epochs: int,
-    num_samples: int,
     total_samples: int,
     rng: np.random.RandomState,
 ) -> np.ndarray:

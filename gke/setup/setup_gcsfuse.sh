@@ -53,11 +53,11 @@ fi
 mkdir -p "${MOUNT_PATH}"
 
 # Build app-name for gcsfuse metrics
-MAXTEXT_VERSION=$(pip list 2>/dev/null | grep '^MaxText ' | awk '{print $2}')
-MAXTEXT_VERSION="${MAXTEXT_VERSION:-unknown}"
+MEGATEXT_VERSION=$(pip list 2>/dev/null | grep '^megatext ' | awk '{print $2}')
+MEGATEXT_VERSION="${MEGATEXT_VERSION:-unknown}"
 GRAIN_VERSION=$(pip list 2>/dev/null | grep '^grain ' | awk '{print $2}')
 GRAIN_VERSION="${GRAIN_VERSION:-unknown}"
-APP_NAME="maxtext-gcsfuse/maxtext-$MAXTEXT_VERSION/grain-$GRAIN_VERSION"
+APP_NAME="megatext-gcsfuse/megatext-$MEGATEXT_VERSION/grain-$GRAIN_VERSION"
 
 # Mount with aggressive metadata caching (read-only, optimized for ML reads)
 # See https://cloud.google.com/storage/docs/gcsfuse-cli

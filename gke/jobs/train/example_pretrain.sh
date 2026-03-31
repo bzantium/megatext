@@ -3,12 +3,13 @@
 set -euo pipefail
 
 bash gke/setup/preflight.sh
-bash gke/setup/setup_gcsfuse.sh BUCKET=my-bucket MOUNT_PATH=/mnt/bucket
+MOUNT_PATH=/mnt/bucket
+bash gke/setup/setup_gcsfuse.sh BUCKET=lmt-tpu-datasets MOUNT_PATH=${MOUNT_PATH}
 
-python -m megatext.trainers.pre_train.train \
-  model_name=qwen3 \
+python -m megatext.trainers.pretrain \
+  model=qwen3 \
   dataset_type=synthetic \
-  steps=50 \
+  steps=10 \
   max_target_length=4096 \
   per_device_batch_size=4 \
   learning_rate=3e-4 \
@@ -18,4 +19,4 @@ python -m megatext.trainers.pre_train.train \
   enable_checkpointing=false \
   log_period=1 \
   run_name=pretrain-qwen3-8b \
-  base_output_directory=gs://my-bucket/experiments
+  base_output_directory=gs://lmt-tpu-datasets/experiments/ryan

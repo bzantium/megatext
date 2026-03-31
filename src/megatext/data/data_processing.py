@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Grain pipeline with multi-host support via maxtext's MultiHostDataLoadIterator.
+"""Grain pipeline with multi-host support via megatext's MultiHostDataLoadIterator.
 
-Combines pre-computed packing with maxtext's multi-host data loading.
+Combines pre-computed packing with megatext's multi-host data loading.
 Process 0 builds/caches indices, then all hosts load from cache.
 """
 
@@ -26,7 +26,7 @@ import grain.python as grain
 import jax
 import numpy as np
 
-from megatext.utils import max_logging
+from megatext.utils import logging as max_logging
 from megatext.data.data_sources import (
     BlendedDataSource,
     DocumentDataSource,
@@ -107,7 +107,7 @@ def _create_multihost_iterator(config, mesh, split_index: int):
     dataset = dataset.repeat(None)
 
     # Apply transforms
-    dataset = dataset.map(FormatForMaxText(
+    dataset = dataset.map(FormatForMegatext(
         seq_len=config.max_target_length,
         add_extra_token=config.add_extra_token,
     ))
@@ -157,7 +157,7 @@ def _create_fixed_arecord_iterator(config, mesh):
         + (f", ga_steps={ga_steps}" if ga_steps > 1 else "")
     )
 
-    fmt = FormatForMaxText(seq_len=seq_len, add_extra_token=True)
+    fmt = FormatForMegatext(seq_len=seq_len, add_extra_token=True)
 
     def _make_iter_dataset(path: str) -> grain.IterDataset:
         source = FixedArecordDataSource(data_path=path, seq_len=seq_len)
@@ -198,7 +198,7 @@ def _build_synthetic_source(config) -> SyntheticDataSource:
     num_samples = config.steps * int(
         config.per_device_batch_size * jax.device_count()
     )
-    # Use vocab_size from maxtext config
+    # Use vocab_size from megatext config
     vocab_size = int(config.vocab_size)
     max_logging.log(f"Synthetic data: {num_samples} samples, seq_len={seq_len}, vocab_size={vocab_size}")
     return SyntheticDataSource(seq_len=seq_len, num_samples=num_samples, vocab_size=vocab_size, seed=config.data_shuffle_seed)
@@ -276,8 +276,8 @@ def _parse_split(split_str: str) -> tuple[float, float, float]:
     return (parts[0], parts[1], parts[2])
 
 
-class FormatForMaxText(grain.MapTransform):
-    """Convert tokens dict to maxtext's expected format.
+class FormatForMegatext(grain.MapTransform):
+    """Convert tokens dict to megatext's expected format.
 
     Input: {"tokens": [seq_len+1], optional "segment_ids", "loss_mask"}
     Output: {"inputs": [seq_len], "targets": [seq_len],
@@ -299,6 +299,7 @@ class FormatForMaxText(grain.MapTransform):
         else:
             inputs = tokens[:seq_len]
             targets = np.roll(tokens[:seq_len], -1)
+            targets[-1] = 0
 
         # Build segmentation and position arrays
         if "segment_ids" in element:
@@ -326,6 +327,8 @@ class FormatForMaxText(grain.MapTransform):
             positions = np.arange(seq_len, dtype=np.int32)
             inputs_segmentation = np.ones(seq_len, dtype=np.int32)
             targets_segmentation = np.ones(seq_len, dtype=np.int32)
+            if not self._add_extra_token:
+                targets_segmentation[-1] = 0  # mask loss for last position (no valid target)
 
         # Apply loss_mask to targets_segmentation if present
         if "loss_mask" in element:

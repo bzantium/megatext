@@ -10,7 +10,7 @@
 # Example Usage:
 #
 # # (Required) Path to the converted MaxText checkpoint
-# export MAXTEXT_CHECKPOINT_PATH=gs://path/to/converted_ckpt/0/items/
+# export MEGATEXT_CHECKPOINT_PATH=gs://path/to/converted_ckpt/0/items/
 #
 # # (Optional) Override the default HF model
 # export HF_MODEL_PATH=MyCustom/Qwen3-variant
@@ -43,7 +43,7 @@ BASE_OUTPUT_PATH=${BASE_OUTPUT_PATH%/}
 echo using BASE_OUTPUT_PATH = ${BASE_OUTPUT_PATH}
 
 # 1.1 Convert checkpoint to `scanned` format, more suitable for training 
-JAX_PLATFORMS=cpu python3 -m maxtext.checkpoint_conversion.to_maxtext src/maxtext/configs/base.yml \
+JAX_PLATFORMS=cpu python3 -m megatext.checkpoint_conversion.to_maxtext src/maxtext/configs/base.yaml \
     model_name=qwen3-next-80b-a3b \
     base_output_directory=${BASE_OUTPUT_PATH}/scanned \
     hf_access_token=${HF_TOKEN} \
@@ -51,7 +51,7 @@ JAX_PLATFORMS=cpu python3 -m maxtext.checkpoint_conversion.to_maxtext src/maxtex
     use_multimodal=false
 
 # 1.2 Convert checkpoint to `unscanned` format, more suitable for decoding
-JAX_PLATFORMS=cpu python3 -m maxtext.checkpoint_conversion.to_maxtext src/maxtext/configs/base.yml \
+JAX_PLATFORMS=cpu python3 -m megatext.checkpoint_conversion.to_maxtext src/maxtext/configs/base.yaml \
     model_name=qwen3-next-80b-a3b \
     base_output_directory=${BASE_OUTPUT_PATH}/unscanned \
     hf_access_token=${HF_TOKEN} \

@@ -32,7 +32,7 @@ except ImportError:
   decord = None
 
 from megatext.multimodal import utils as mm_utils
-from megatext.utils import max_logging
+from megatext.utils import logging as max_logging
 
 # Image constants.
 IMAGE_MEAN = 127.5  # Mean value for image normalization.

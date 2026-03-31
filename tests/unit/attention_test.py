@@ -1177,7 +1177,7 @@ class AttentionTest(parameterized.TestCase):
         )
     )
 
-  @pytest.mark.skip(reason="Requires `vllm-tpu` package which is not yet a MaxText dependency.")
+  @pytest.mark.skip(reason="Requires `vllm-tpu` package which is not yet a Megatext dependency.")
   @pytest.mark.tpu_only
   @mock.patch("tpu_inference.layers.jax.attention_interface.sharded_ragged_paged_attention", create=True)
   def test_forward_serve_vllm(self, mock_sharded_ragged_paged_attention):

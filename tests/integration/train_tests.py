@@ -20,8 +20,8 @@ import jax
 
 from absl.testing import absltest
 from megatext.common.gcloud_stub import is_decoupled
-from megatext.trainers.pre_train.train import main as train_main
-from megatext.utils.globals import MAXTEXT_ASSETS_ROOT
+from megatext.trainers.pretrain import main as train_main
+from megatext.utils.constants import MEGATEXT_ASSETS_ROOT
 from tests.utils.test_helpers import (
     get_test_config_path,
     get_test_dataset_path,
@@ -57,7 +57,7 @@ class TrainTests(unittest.TestCase):
           "steps=2",
           "enable_checkpointing=False",
           "enable_goodput_recording=False",
-          rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+          rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
       ]
       + get_decoupled_parallelism_overrides(fsdp_parallelism=dev_count, as_argv=True),
       "synthetic": [  # tests base config with synthetic dataset
@@ -70,7 +70,7 @@ class TrainTests(unittest.TestCase):
           "enable_checkpointing=False",
           "enable_goodput_recording=False",
           "dataset_type=synthetic",
-          rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+          rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
       ]
       + get_decoupled_parallelism_overrides(fsdp_parallelism=dev_count, as_argv=True),
       "pdb_lt_1": [  # tests base config with per_device_batch_size < 1
@@ -84,7 +84,7 @@ class TrainTests(unittest.TestCase):
           "enable_goodput_recording=False",
           "per_device_batch_size=0.25",
           "ici_tensor_parallelism=4",
-          rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+          rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
       ]
       + get_decoupled_parallelism_overrides(fsdp_parallelism=dev_count, as_argv=True),
       "tp_transpose": [  # tests base config with ici_tensor_transpose_parallelism=4
@@ -96,7 +96,7 @@ class TrainTests(unittest.TestCase):
           "steps=2",
           "ici_tensor_transpose_parallelism=4",
           "enable_goodput_recording=False",
-          rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+          rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
       ]
       + get_decoupled_parallelism_overrides(fsdp_parallelism=dev_count, as_argv=True),
       "int8": [  # tests base config with int8
@@ -109,7 +109,7 @@ class TrainTests(unittest.TestCase):
           "steps=2",
           "enable_checkpointing=False",
           "enable_goodput_recording=False",
-          rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+          rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
       ]
       + get_decoupled_parallelism_overrides(fsdp_parallelism=dev_count, as_argv=True),
       "fp8": [  # tests base config with fp8
@@ -122,7 +122,7 @@ class TrainTests(unittest.TestCase):
           "steps=2",
           "enable_checkpointing=False",
           "enable_goodput_recording=False",
-          rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+          rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
       ]
       + get_decoupled_parallelism_overrides(fsdp_parallelism=dev_count, as_argv=True),
       "nanoo_fp8": [  # tests base config with nanoo_fp8
@@ -135,7 +135,7 @@ class TrainTests(unittest.TestCase):
           "steps=2",
           "enable_checkpointing=False",
           "enable_goodput_recording=False",
-          rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+          rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
       ]
       + get_decoupled_parallelism_overrides(fsdp_parallelism=dev_count, as_argv=True),
       "te_fp8_delayedscaling": [  # tests base config with te_fp8_delayedscaling
@@ -148,7 +148,7 @@ class TrainTests(unittest.TestCase):
           "steps=2",
           "enable_checkpointing=False",
           "enable_goodput_recording=False",
-          rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+          rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
       ]
       + get_decoupled_parallelism_overrides(fsdp_parallelism=dev_count, as_argv=True),
       "te_fp8_currentscaling": [  # tests base config with te_fp8_currentscaling
@@ -161,7 +161,7 @@ class TrainTests(unittest.TestCase):
           "steps=2",
           "enable_checkpointing=False",
           "enable_goodput_recording=False",
-          rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+          rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
       ]
       + get_decoupled_parallelism_overrides(fsdp_parallelism=dev_count, as_argv=True),
       "te_mxfp8": [  # tests base config with te_mxfp8
@@ -174,7 +174,7 @@ class TrainTests(unittest.TestCase):
           "steps=2",
           "enable_checkpointing=False",
           "enable_goodput_recording=False",
-          rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+          rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
       ]
       + get_decoupled_parallelism_overrides(fsdp_parallelism=dev_count, as_argv=True),
       "dropout": [  # tests base config with dropout
@@ -189,7 +189,7 @@ class TrainTests(unittest.TestCase):
           "max_target_length=128",
           "per_device_batch_size=1",
           "dropout_rate=0.02",
-          rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+          rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
       ]
       + get_decoupled_parallelism_overrides(fsdp_parallelism=dev_count, as_argv=True),
       "hf_input_pipeline": [  # test for train.py with TFDS c4, using HF input pipeline
@@ -339,7 +339,7 @@ class TrainTests(unittest.TestCase):
         "enable_goodput_recording=False",
         "attention=cudnn_flash_te",
         "packing=False",
-        rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+        rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
     ]
     train_main(cudnn_flash_te)
 
@@ -363,7 +363,7 @@ class TrainTests(unittest.TestCase):
         "context_parallel_strategy=all_gather",
         "context_parallel_load_balance=True",
         "packing=False",
-        rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+        rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
     ]
     if self.decoupled:
       context_parallel.append("shardy=False")
@@ -399,7 +399,7 @@ class TrainTests(unittest.TestCase):
         "ici_fsdp_parallelism=-1",
         "ici_tensor_parallelism=2",
         "packing=False",
-        rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+        rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
     ]
     if self.decoupled:
       tensor_parallel.append("shardy=False")
@@ -431,7 +431,7 @@ class TrainTests(unittest.TestCase):
         "dataset_type=synthetic",
         "enable_checkpointing=False",
         "enable_goodput_recording=False",
-        rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+        rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
     ]
     train_main(optimizer_offload + get_decoupled_parallelism_overrides(fsdp_parallelism=self.dev_count, as_argv=True))
 
@@ -452,7 +452,7 @@ class TrainTests(unittest.TestCase):
         "dataset_type=synthetic",
         "enable_checkpointing=False",
         "enable_goodput_recording=False",
-        rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+        rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
     ]
     train_main(parameter_offload + get_decoupled_parallelism_overrides(fsdp_parallelism=self.dev_count, as_argv=True))
 
@@ -472,7 +472,7 @@ class TrainTests(unittest.TestCase):
         "attention=cudnn_flash_jax",
         "packing=False",
         "shardy=False",  # The cudnn kernel is not compatible with shardy, see (b/425746362).
-        rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+        rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
     ]
     train_main(cudnn_flash_jax)
 
@@ -486,9 +486,9 @@ class TrainTests(unittest.TestCase):
     zero1_ga = [  # tests Zero-1 optimizer sharding with gradient accumulation
         None,
         get_test_config_path(),
-        "base_output_directory=gs://runner-maxtext-logs",
+        "base_output_directory=gs://runner-megatext-logs",
         "run_name=runner_test",
-        "dataset_path=gs://maxtext-dataset",
+        "dataset_path=gs://megatext-dataset",
         "steps=10",
         "enable_checkpointing=False",
         "enable_goodput_recording=False",
@@ -504,7 +504,7 @@ class TrainTests(unittest.TestCase):
         "shard_optimizer_over_data=True",
         "shard_mode=explicit",
         "decoder_block=llama2",
-        rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+        rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
     ]
     train_main(zero1_ga)
 
@@ -536,7 +536,7 @@ class TrainTests(unittest.TestCase):
         "gradient_accumulation_steps=8",
         "shard_optimizer_over_data=True",
         "override_model_config=True",
-        rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+        rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
     ]
     train_main(zero1_ga)
 
@@ -565,7 +565,7 @@ class TrainTests(unittest.TestCase):
         "attention=cudnn_flash_te",
         "ici_fsdp_parallelism=-1",
         "packing=True",
-        rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+        rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
     ]
     train_main(packed_attention)
 
@@ -593,7 +593,7 @@ class TrainTests(unittest.TestCase):
         "context_parallel_strategy=ring",
         "packing=False",
         "hardware=gpu",
-        rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+        rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
     ]
     train_main(ring_attention)
 

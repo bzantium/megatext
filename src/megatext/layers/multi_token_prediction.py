@@ -23,7 +23,7 @@ import jax.numpy as jnp
 from jax.sharding import Mesh
 from megatext.common.common_types import Config, MODEL_MODE_TRAIN
 from megatext.layers.nnx_decoders import NNXDecoderLayer
-from megatext.utils.globals import EPS
+from megatext.utils.constants import EPS
 from megatext.layers.decoders import DecoderLayer
 from megatext.layers.initializers import variable_to_logically_partitioned
 from megatext.layers.linears import DenseGeneral

@@ -17,11 +17,10 @@ import tempfile
 
 import yaml
 
-DEFAULT_IMAGE_TEMPLATE = "us-west4-docker.pkg.dev/{project}/maxtext-patch/maxtext-patch-tpu:{tag}"
+DEFAULT_IMAGE_TEMPLATE = "us-west4-docker.pkg.dev/{project}/megatext/megatext-tpu:{tag}"
 DEFAULT_DOCKERFILE = "Dockerfile"
 
 # Chips per host bounds for each TPU generation (single host).
-# Source: maxtext/utils/accelerator_to_spec_map.py
 _CHIPS_PER_HOST = {
     "v4": (2, 2, 1),     # 4 chips/host
     "v5e": (2, 2, 1),    # 4 chips/host

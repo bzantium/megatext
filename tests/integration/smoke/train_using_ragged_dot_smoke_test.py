@@ -21,9 +21,9 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 from tests.utils.test_helpers import get_test_config_path
-from megatext.trainers.pre_train import train
+from megatext.trainers import pretrain
 
-train_main = train.main
+train_main = pretrain.main
 gettempdir = tempfile.gettempdir
 
 

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Custom exceptions for MaxText."""
+"""Custom exceptions for Megatext."""
 
 
 class StopTraining(Exception):

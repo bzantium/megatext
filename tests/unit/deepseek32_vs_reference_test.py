@@ -69,7 +69,7 @@ block_size = 128
 
 @dataclass
 class Config:
-  """MaxText config"""
+  """MegaText config"""
 
   # attention
   base_emb_dim: int = 71
@@ -104,7 +104,7 @@ class Config:
 class ModelArgs:
   """
   Arguments for the PyTorch Reference Model.
-  Maps MaxText Config keys to the specific variable names expected by the reference implementation.
+  Maps Megatext Config keys to the specific variable names expected by the reference implementation.
   """
 
   def __init__(self, config: Config, max_batch_size: int = 8, index_topk: int = 4):
@@ -752,7 +752,7 @@ def get_jax_mla_weights(pt_mla, cfg):
 
 
 def get_cfg_and_mesh(config, run_name, dtype, batch_size, seq_len, attention, indexer_topk):
-  """Returns MaxText configuration and mesh."""
+  """Returns MegaText configuration and mesh."""
   cfg = pyconfig.initialize(
       [None, get_test_config_path()],
       run_name=run_name,

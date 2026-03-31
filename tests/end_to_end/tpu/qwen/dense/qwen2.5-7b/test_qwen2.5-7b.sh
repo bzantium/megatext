@@ -30,8 +30,8 @@ export BASE_OUTPUT_PATH_PREFIX="${BASE_OUTPUT_PATH}/${MODEL_NAME}/$(date +%Y-%m-
 echo "--- Starting Checkpoint Conversion ---"
 
 # 1.1 Convert checkpoint to `scanned` format
-JAX_PLATFORMS=cpu python3 -m maxtext.checkpoint_conversion.to_maxtext \
-  "${MAXTEXT_CONFIGS_DIR:-${MAXTEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}"/base.yml \
+JAX_PLATFORMS=cpu python3 -m megatext.checkpoint_conversion.to_maxtext \
+  "${MEGATEXT_CONFIGS_DIR:-${MEGATEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}"/base.yaml \
   model_name=${MODEL_NAME} \
   base_output_directory=${BASE_OUTPUT_PATH_PREFIX}/scanned \
   run_name=scanned_conversion \
@@ -42,8 +42,8 @@ JAX_PLATFORMS=cpu python3 -m maxtext.checkpoint_conversion.to_maxtext \
 export SCANNED_CKPT_PATH=${BASE_OUTPUT_PATH_PREFIX}/scanned/0/items
 
 # 1.2 Convert checkpoint to `unscanned` format
-JAX_PLATFORMS=cpu python3 -m maxtext.checkpoint_conversion.to_maxtext \
-  "${MAXTEXT_CONFIGS_DIR:-${MAXTEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}"/base.yml \
+JAX_PLATFORMS=cpu python3 -m megatext.checkpoint_conversion.to_maxtext \
+  "${MEGATEXT_CONFIGS_DIR:-${MEGATEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}"/base.yaml \
   model_name=${MODEL_NAME} \
   base_output_directory=${BASE_OUTPUT_PATH_PREFIX}/unscanned \
   run_name=unscanned_conversion \
@@ -57,7 +57,7 @@ export UNSCANNED_CKPT_PATH=${BASE_OUTPUT_PATH_PREFIX}/unscanned/0/items
 echo "--- Starting Forward Pass Logit Checker ---"
 # 2.1 Check unscanned checkpoint
 JAX_PLATFORMS=cpu python3 -m tests.utils.forward_pass_logit_checker \
-    "${MAXTEXT_CONFIGS_DIR:-${MAXTEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}"/base.yml \
+    "${MEGATEXT_CONFIGS_DIR:-${MEGATEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}"/base.yaml \
     run_name=forward_pass_test_unscanned \
     model_name=${MODEL_NAME} \
     tokenizer_path=${TOKENIZER_PATH} \
@@ -75,7 +75,7 @@ JAX_PLATFORMS=cpu python3 -m tests.utils.forward_pass_logit_checker \
 
 # 2.2 Check scanned checkpoint
 JAX_PLATFORMS=cpu python3 -m tests.utils.forward_pass_logit_checker \
-    "${MAXTEXT_CONFIGS_DIR:-${MAXTEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}"/base.yml \
+    "${MEGATEXT_CONFIGS_DIR:-${MEGATEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}"/base.yaml \
     run_name=forward_pass_test_scanned \
     model_name=${MODEL_NAME} \
     tokenizer_path=${TOKENIZER_PATH} \
@@ -93,8 +93,8 @@ JAX_PLATFORMS=cpu python3 -m tests.utils.forward_pass_logit_checker \
 
 # Step 3: Decode
 echo "--- Starting Decode ---"
-python3 -m maxtext.inference.decode \
-    "${MAXTEXT_CONFIGS_DIR:-${MAXTEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}"/base.yml \
+python3 -m megatext.inference.decode \
+    "${MEGATEXT_CONFIGS_DIR:-${MEGATEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}"/base.yaml \
     model_name=${MODEL_NAME} \
     tokenizer_path=${TOKENIZER_PATH} \
     load_parameters_path=${UNSCANNED_CKPT_PATH} \
@@ -111,8 +111,8 @@ python3 -m maxtext.inference.decode \
 
 # Step 4: SFT
 echo "--- Starting SFT ---"
-python3 -m maxtext.trainers.post_train.sft.train_sft \
-    "${MAXTEXT_CONFIGS_DIR:-${MAXTEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}"/post_train/sft.yml \
+python3 -m megatext.trainers.post_train.sft.train_sft \
+    "${MEGATEXT_CONFIGS_DIR:-${MEGATEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}"/post_train/sft.yaml \
     base_output_directory=${BASE_OUTPUT_PATH_PREFIX}/finetuned \
     run_name=sft_test \
     model_name=${MODEL_NAME} \
@@ -130,8 +130,8 @@ python3 -m maxtext.trainers.post_train.sft.train_sft \
 # Step 5: Pre-train
 echo "--- Starting Pre-train ---"
 export DATASET_PATH=gs://maxtext-dataset
-python3 -m maxtext.trainers.pre_train.train \
-    "${MAXTEXT_CONFIGS_DIR:-${MAXTEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}"/base.yml \
+python3 -m megatext.trainers.pre_train.train \
+    "${MEGATEXT_CONFIGS_DIR:-${MEGATEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}"/base.yaml \
     model_name=${MODEL_NAME} \
     base_output_directory=${BASE_OUTPUT_PATH_PREFIX}/pretrain \
     dataset_path=${DATASET_PATH} \

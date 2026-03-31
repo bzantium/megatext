@@ -670,7 +670,7 @@ def match_aqt_and_unquantized_param(aqt_params, params):
       # AqtDotGeneral and AqtEinsum replace leaf node.
       # Therefore, leaf node should be ignored for path matching
       # Note: Aqt only operates on kernels so don't pop bias parameters.
-      # Ref: https://github.com/AI-Hypercomputer/maxtext/compare/main...quantize_r1
+      # Ref: https://github.com/AI-Hypercomputer/megatext/compare/main...quantize_r1
       if k[: path_depth - 1] == aqt_k[: path_depth - 1] and k[-1].key != "bias":
         aqt_paths.append(aqt_k)
         param_paths.append(k)
@@ -880,7 +880,7 @@ class TransformerEngineQuantization(Quantization):
     This method does a couple things:
 
 
-    1. Wraps the given function in a context that specifies MaxText's physical mesh axes to
+    1. Wraps the given function in a context that specifies Megatext's physical mesh axes to
     TransformerEngine. This ensures our collective operations in TransformerEngine are using
     the correct axes.
 

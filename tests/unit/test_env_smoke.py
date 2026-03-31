@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Pytest-based environment smoke test for MaxText.
+"""Pytest-based environment smoke test for Megatext.
 
 Checks:
   - Core imports (jax, flax, numpy)
@@ -33,7 +33,7 @@ import pytest
 from megatext.common.gcloud_stub import is_decoupled
 
 CORE_IMPORTS = ["jax", "jax.numpy", "flax", "numpy"]
-OPTIONAL_IMPORTS = ["transformers", "MaxText", "megatext.configs.pyconfig", "megatext.inference.maxengine.maxengine"]
+OPTIONAL_IMPORTS = ["transformers", "Megatext", "megatext.configs.pyconfig", "megatext.inference.maxengine.maxengine"]
 
 _defects: list[str] = []
 

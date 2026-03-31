@@ -58,10 +58,11 @@ from megatext.models import (
     mixtral,
     olmo3,
     qwen3,
+    qwen3_swa,
     simple_layer,
 )
 from megatext.multimodal import utils as mm_utils
-from megatext.utils import max_logging, max_utils, megatext_utils, sharding
+from megatext.utils import logging as max_logging, max_utils, megatext_utils, sharding
 from megatext.utils.sharding import create_sharding
 
 # ------------------------------------------------------------------------------
@@ -514,6 +515,7 @@ class NNXDecoder(nnx.Module):
         DecoderBlockType.QWEN3_NEXT: get_scannable(qwen3.Qwen3NextDecoderLayer, qwen3.Qwen3NextScannableBlock),
         DecoderBlockType.LLAMA4: get_scannable(llama4.Llama4DecoderLayer, llama4.Llama4ScannableBlock),
         DecoderBlockType.OLMO3: get_scannable(olmo3.Olmo3DecoderLayer, olmo3.Olmo3ScannableBlock),
+        DecoderBlockType.QWEN3_SWA: get_scannable(qwen3_swa.Qwen3SWADecoderLayer, qwen3_swa.Qwen3SWAScannableBlock),
     }
 
     if cfg.decoder_block not in layer_map:

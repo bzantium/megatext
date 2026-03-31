@@ -84,7 +84,7 @@ class GPT3(unittest.TestCase):
     # ground truth values are calculated from paxml after loading above model_vars
     # note we expect all xents are the same except the padding one since:
     #    paxml applies padding in mlp layer
-    #    while maxtext implementation applies padding in attention mask instead
+    #    while megatext implementation applies padding in attention mask instead
     # the two implementation are equivalent in valid non-padding tokens
     per_example_xent_truth = jnp.array([[31.976467, 25.806253, 17.311134, 45.362663, 0.0]], dtype=jnp.float32)
     logits, _ = self.model.apply(

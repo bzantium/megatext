@@ -11,5 +11,5 @@ set -euox pipefail
 RUNNAME=${1:-${RUNNAME:-some-run}}
 BASE_OUTPUT_DIRECTORY=${2:-${BASE_OUTPUT_DIRECTORY:-gs://some-bucket}}
 
-chmod +x "${MAXTEXT_CONFIGS_DIR:-${MAXTEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}"/tpu/v5p/gpt3_175b/gpt3_175b_base.sh
+chmod +x "${MEGATEXT_CONFIGS_DIR:-${MEGATEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}"/tpu/v5p/gpt3_175b/gpt3_175b_base.sh
 ./maxtext/configs/tpu/v5p/gpt3_175b/gpt3_175b_base.sh 2 "save_dot_except_mlpwi" 8 16 8 "${RUNNAME}" "${BASE_OUTPUT_DIRECTORY}" 

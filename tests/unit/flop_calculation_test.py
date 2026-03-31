@@ -23,7 +23,7 @@ from tests.utils.test_helpers import get_test_config_path
 
 
 class FlopCalculation(unittest.TestCase):
-  """Tests for verifying FLOP calculation in MaxText"""
+  """Tests for verifying FLOP calculation in Megatext"""
 
   def assertFlopsAlmostEqual(self, flops1, flops2, rel_tol=5e-2):
     """Assert that two FLOPs values are almost equal, within 5% relative tolerance."""

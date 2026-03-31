@@ -16,7 +16,7 @@
 """Utilities for Muon optimizer integration and dimension number generation.
 
 This module provides functions to automatically generate MuonDimensionNumbers
-for various MaxText models. These dimension numbers are crucial for the Muon
+for various MegaText models. These dimension numbers are crucial for the Muon
 optimizer to correctly apply its update rules.
 
 This module can also be run as a script to inspect the generated dimension
@@ -32,7 +32,7 @@ from typing import Optional, Tuple
 import flax.linen as nn
 import jax
 from megatext.configs import pyconfig
-from megatext.utils.globals import MEGATEXT_PKG_DIR
+from megatext.utils.constants import MEGATEXT_PKG_DIR
 from megatext.layers import quantizations
 from megatext.models import models
 from megatext.utils import megatext_utils
@@ -150,7 +150,7 @@ def get_model_mdn(model, scan_layers=True, verbose=False):
   # Setup config
   argv = [
       None,
-      os.path.join(MEGATEXT_PKG_DIR, "configs", "base.yml"),
+      os.path.join(MEGATEXT_PKG_DIR, "configs", "base.yaml"),
       f"model={model}",
       f"scan_layers={scan_layers}",
       "attention=dot_product",

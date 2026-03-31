@@ -70,7 +70,7 @@ def save_golden_logits(model_id, output_path):
   with jsonlines.open(output_path, "w") as f:
     f.write_all(all_data_to_save)
 
-  upload_blob("maxtext-llama", output_path, f"Llama3_1_8B/golden-logits/{output_path}")
+  upload_blob("megatext-llama", output_path, f"Llama3_1_8B/golden-logits/{output_path}")
   print(f"File {output_path} uploaded to Llama3_1_8B/golden-logits/{output_path}.")
   os.remove(output_path)
 

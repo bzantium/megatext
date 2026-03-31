@@ -28,14 +28,13 @@ import jax.numpy as jnp
 
 import omegaconf
 
-from megatext.configs import pyconfig_deprecated
-from megatext.utils.globals import MEGATEXT_CONFIGS_DIR, MEGATEXT_ASSETS_ROOT, HF_IDS, MEGATEXT_PKG_DIR
+from megatext.utils.constants import MEGATEXT_CONFIGS_DIR, MEGATEXT_ASSETS_ROOT, HF_IDS, MEGATEXT_PKG_DIR
 from megatext.common.common_types import DecoderBlockType, ShardMode
 from megatext.configs import types
 from megatext.configs.types import MegaTextConfig
-from megatext.inference.inference_utils import str2bool
+from megatext.utils.max_utils import str2bool
 from megatext.utils import max_utils
-from megatext.utils import max_logging
+from megatext.utils import logging as max_logging
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("LOGLEVEL", "INFO"))
@@ -49,17 +48,7 @@ KEYS_NO_LOGGING = ("hf_access_token",)
 
 # Module paths to their default config file (relative to MEGATEXT_CONFIGS_DIR).
 _CONFIG_FILE_MAPPING: dict[str, str] = {
-    "megatext.trainers.pre_train.train": "base.yml",
-    "megatext.trainers.pre_train.train_compile": "base.yml",
-    "megatext.inference.decode": "base.yml",
-    "megatext.inference.decode_multi": "base.yml",
-    "megatext.inference.inference_microbenchmark": "base.yml",
-    "megatext.inference.inference_microbenchmark_sweep": "base.yml",
-    "megatext.inference.maxengine.maxengine_server": "base.yml",
-    "megatext.inference.mlperf.microbenchmarks.benchmark_chunked_prefill": "base.yml",
-    "megatext.inference.vllm_decode": "base.yml",
-    "megatext.checkpoint_conversion.to_megatext": "base.yml",
-    "megatext.checkpoint_conversion.to_huggingface": "base.yml",
+    "megatext.trainers.pretrain": "base.yaml",
 }
 
 
@@ -75,7 +64,7 @@ def _module_from_path(path: str) -> str | None:
 
 def _resolve_or_infer_config(argv: list[str]) -> tuple[str, list[str]]:
   """Resolves or infers config file path from module."""
-  if len(argv) >= 2 and argv[1].endswith(".yml"):
+  if len(argv) >= 2 and argv[1].endswith(".yaml"):
     return resolve_config_path(argv[1]), argv[2:]
   module = _module_from_path(argv[0])
   if module not in _CONFIG_FILE_MAPPING:
@@ -96,7 +85,7 @@ def resolve_config_path(param: str) -> str:
   if os.path.isfile(param):
     return param
   elif "MegaText" in param:
-    lowercase_param = param.replace("MegaText", "maxtext")
+    lowercase_param = param.replace("MegaText", "megatext")
     if os.path.isfile(lowercase_param):
       return lowercase_param
   # For pip-installed packages, strip the src prefix and resolve against
@@ -184,12 +173,7 @@ def _prepare_for_pydantic(raw_keys: dict[str, Any]) -> dict[str, Any]:
     if (
         key
         in (
-            "hf_train_files",
-            "hf_eval_files",
             "hf_access_token",
-            "hf_name",
-            "hf_data_dir",
-            "hf_eval_split",
             "tokenizer_path",
         )
         and new_value == ""
@@ -205,7 +189,7 @@ def _prepare_for_pydantic(raw_keys: dict[str, Any]) -> dict[str, Any]:
       except KeyError:
         new_value = os.path.join(MEGATEXT_ASSETS_ROOT, "tokenizers/tokenizer.llama2")
         max_logging.warning(
-            "tokenizer_path not found in HF_IDS in megatext/src/megatext/utils/globals.py. \
+            "tokenizer_path not found in HF_IDS in megatext/src/megatext/utils/constants.py. \
           Using the default src/megatext/assets/tokenizers/tokenizer.llama2 instead. \
           Please pass tokenizer_path in your command if this is not intended."
         )
@@ -304,19 +288,19 @@ def initialize_pydantic(argv: list[str], **kwargs) -> MegaTextConfig:
   model_cfg = {}
   if model != "default":
     # First try relative to base config path
-    model_config_path = os.path.join(os.path.dirname(config_path), "models", f"{model}.yml")
+    model_config_path = os.path.join(os.path.dirname(config_path), "models", f"{model}.yaml")
     # Try looking for "models" under "src/megatext/configs/"
     if not os.path.isfile(model_config_path):
       model_config_path = os.path.join(
           os.path.dirname(os.path.dirname(config_path)),
           "models",
-          f"{model}.yml",
+          f"{model}.yaml",
       )
 
     if not os.path.isfile(model_config_path):
       # Fallback to the default location within package
       dir_path = os.path.dirname(os.path.realpath(__file__))
-      model_config_path = os.path.join(dir_path, "configs", "models", f"{model}.yml")
+      model_config_path = os.path.join(dir_path, "configs", "models", f"{model}.yaml")
 
     if os.path.exists(model_config_path):
       model_loaded_cfg = omegaconf.OmegaConf.load(model_config_path)
@@ -411,6 +395,4 @@ def initialize_pydantic(argv: list[str], **kwargs) -> MegaTextConfig:
   return pydantic_config
 
 
-# Shim for backward compatibility with pyconfig_deprecated_test.py
-validate_and_update_keys = pyconfig_deprecated.validate_and_update_keys
 __all__ = ["initialize", "initialize_pydantic"]

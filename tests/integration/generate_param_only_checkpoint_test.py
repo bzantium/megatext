@@ -21,9 +21,9 @@ import os
 import pytest
 
 from megatext.inference.decode import main as decode_main
-from megatext.trainers.pre_train.train import main as train_main
-from megatext.utils.globals import MAXTEXT_ASSETS_ROOT
-from megatext.utils.generate_param_only_checkpoint import main as generate_param_only_ckpt_main
+from megatext.trainers.pretrain import main as train_main
+from megatext.utils.constants import MEGATEXT_ASSETS_ROOT
+from tools.generate_param_only_checkpoint import main as generate_param_only_ckpt_main
 from tests.integration.checkpointing_test import get_checkpointing_command
 from tests.utils.test_helpers import get_test_config_path, get_test_dataset_path, get_test_base_output_directory
 
@@ -132,12 +132,12 @@ def test_param_ckpt_generation_with_pre_generated_ckpt(capsys):
   """Tests the parameter-only checkpoint generation and decode flow with a pre-generated Gemma-2b model checkpoint."""
   model_config = [
       "model=gemma-2b",
-      f"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.gemma')}",
+      f"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.gemma')}",
   ]
   run_e2e_test_flow(
       hardware="tpu",
       model_config=model_config,
-      state_path="gs://runner-maxtext-logs/runner_finetune_2025-08-15-04-05/checkpoints/5/items",
+      state_path="gs://runner-megatext-logs/runner_finetune_2025-08-15-04-05/checkpoints/5/items",
   )
   captured = capsys.readouterr()
   expected_output = "Input `I love to`"

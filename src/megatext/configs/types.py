@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Pydantic-based configuration system for MaxText, organized into modular classes."""
+"""Pydantic-based configuration system for Megatext, organized into modular classes."""
 
 # pylint: disable=too-many-lines
 
@@ -30,9 +30,9 @@ from typing import Any, Literal, NewType, Optional
 
 import jax
 from megatext.common.common_types import AttentionType, DecoderBlockType, ShardMode
-from megatext.utils import gcs_utils
+from megatext.utils import storage as gcs_utils
 from megatext.utils import max_utils
-from megatext.utils.globals import MEGATEXT_ASSETS_ROOT
+from megatext.utils.constants import MEGATEXT_ASSETS_ROOT
 from megatext.utils import accelerator_to_spec_map
 from pydantic.config import ConfigDict
 from pydantic.fields import Field
@@ -177,15 +177,6 @@ class DatasetType(str, Enum):
   FIXED_ARECORD = "fixed_arecord"
 
 
-class SamplingStrategy(str, Enum):
-  """Supported decoding and sampling strategies."""
-
-  GREEDY = "greedy"
-  WEIGHTED = "weighted"
-  NUCLEUS = "nucleus"
-  TOPK = "topk"
-  COMPOSITE = "composite"
-
 
 class ProfilerType(str, Enum):
   """Supported performance profilers."""
@@ -199,74 +190,6 @@ class ProfilerType(str, Enum):
 # Pydantic models for configuration
 # ----------------------------------------------------------------------------
 
-ModelName = Literal[
-    "default",
-    "llama2-7b",
-    "llama2-13b",
-    "llama2-70b",
-    "llama3-8b",
-    "llama3.1-8b-Instruct",
-    "llama3-70b",
-    "llama3.1-70b-Instruct",
-    "llama3.1-8b",
-    "llama3.1-70b",
-    "llama3.1-405b",
-    "llama3.3-70b",
-    "mistral-7b",
-    "mixtral-8x7b",
-    "mixtral-8x22b",
-    "deepseek2-16b",
-    "deepseek2-236b",
-    "deepseek3-671b",
-    "deepseek3-671b-2dfsdp",
-    "deepseek3-671b-batchsplit",
-    "deepseek3-test",
-    "deepseek3-tiny",
-    "deepseek3.2-671b",
-    "deepseek-custom",
-    "kimi-k2-1t",
-    "gemma-7b",
-    "gemma-2b",
-    "gemma2-2b",
-    "gemma2-9b",
-    "gemma2-27b",
-    "gemma3-4b",
-    "gemma3-12b",
-    "gemma3-27b",
-    "qwen2.5-1.5b",
-    "qwen2.5-7b",
-    "qwen2.5-14b",
-    "qwen3-0.6b",
-    "qwen3-1.7b",
-    "qwen3-1.7b-base",
-    "qwen3-4b",
-    "qwen3-4b-base",
-    "qwen3-4b-thinking-2507",
-    "qwen3-8b",
-    "qwen3-8b-base",
-    "qwen3-14b",
-    "qwen3-14b-base",
-    "qwen3-32b",
-    "qwen3-235b-a22b",
-    "qwen3-30b-a3b",
-    "qwen3-30b-a3b-base",
-    "qwen3-480b-a35b",
-    "qwen3-next-80b-a3b",
-    "qwen3-omni-30b-a3b",
-    "gpt3-175b",
-    "gpt3-22b",
-    "gpt3-6b",
-    "gpt3-52k",
-    "gpt-oss-20b",
-    "gpt-oss-120b",
-    "llama4-17b-16e",
-    "llama4-17b-128e",
-    "olmo3-7b",
-    "olmo3-7b-pt",
-    "olmo3-32b",
-]
-
-
 class RunInfo(BaseModel):
   """Configuration for the overall run, model identity, and logging."""
 
@@ -278,7 +201,7 @@ class RunInfo(BaseModel):
       "",
       description="The name of the run. Checkpoints will be stored under this name.",
   )
-  model: ModelName = Field("default", description="The name of the model configuration to use.")
+  model: str = Field("default", description="Architecture template to use (e.g. 'qwen3', 'llama3', 'deepseek'). Loads models/{model}.yaml.")
   override_model_config: bool = Field(False, description="If True, allows overriding model parameters via CLI.")
   override_logical_axis_rules: bool = Field(
       False,
@@ -823,7 +746,6 @@ class LayoutAndSharding(BaseModel):
 class DcnParallelism(BaseModel):
   """Parallelism dimensions across the DCN (Data Center Network)."""
 
-  dcn_diloco_parallelism: int = Field(1, description="DCN axis for Diloco parallelism.")
   dcn_data_parallelism: int = Field(-1, description="DCN axis for data parallelism.")
   dcn_fsdp_parallelism: int = Field(1, description="DCN axis for FSDP.")
   dcn_fsdp_transpose_parallelism: int = Field(1, description="DCN axis for FSDP transpose.")
@@ -843,7 +765,6 @@ class DcnParallelism(BaseModel):
 class IciParallelism(BaseModel):
   """Parallelism dimensions within the ICI (Inter-Chip Interconnect)."""
 
-  ici_diloco_parallelism: int = Field(1, description="ICI axis for Diloco parallelism.")
   ici_data_parallelism: int = Field(1, description="ICI axis for data parallelism.")
   ici_fsdp_parallelism: int = Field(-1, description="ICI axis for FSDP.")
   ici_fsdp_transpose_parallelism: int = Field(1, description="ICI axis for FSDP transpose.")
@@ -991,6 +912,8 @@ class DatasetGeneral(BaseModel):
   """General configuration for dataset and data loading."""
 
   dataset_type: DatasetType = Field(DatasetType.SYNTHETIC, description="The type of the data loading pipeline.")
+  dataset_path: PathStr = Field("", description="Path to the training data (local or GCS).")
+  hf_access_token: None | str = Field(None, description="HuggingFace access token for gated models/tokenizers.")
   per_device_batch_size: int | float = Field(12, description="The batch size per device.")
   eval_per_device_batch_size: int | float = Field(
       0.0,
@@ -1005,9 +928,9 @@ class DatasetGeneral(BaseModel):
       True,
       description="Whether to pack multiple short examples into a single sequence.",
   )
-  grain_packing_type: Literal["greedy", "first_fit", "best_fit", "concat_then_split"] = Field(
-      "first_fit",
-      description="Packing type. 'greedy' (contiguous), 'first_fit', 'best_fit' or 'concat_then_split'.",
+  grain_packing_type: Literal["greedy", "best_fit", "concat_then_split"] = Field(
+      "greedy",
+      description="Packing type. 'greedy' (contiguous) or 'best_fit'",
   )
   max_segments_per_seq: int = Field(
       -1,
@@ -1059,6 +982,15 @@ class MMapArecordDataset(BaseModel):
 
 
 
+class Distillation(BaseModel):
+  """Configuration for knowledge distillation."""
+
+  distill_alpha: float = Field(0.5, description="Weight for the distillation loss (KL divergence).")
+  distill_temperature: float = Field(1.0, description="Temperature for softmax in distillation.")
+  distill_beta: float = Field(0.0, description="Weight for cosine similarity loss on intermediate activations. 0 disables.")
+  distill_layer_indices: None | list[int] = Field(None, description="Layer indices for intermediate distillation loss.")
+
+
 class TrainingLoop(BaseModel):
   """Configuration for the main training loop, evaluation, and reproducibility."""
 
@@ -1096,15 +1028,6 @@ class ManifoldConstrainedHyperConnections(BaseModel):
   sinkhorn_iterations: PositiveInt = Field(20, description="The number of iterations for the Sinkhorn-Knopp algorithm.")
 
 
-class DilocoParams(BaseModel):
-  """Diloco Hyperparameters"""
-
-  enable_diloco: bool = Field(False, description="Enable Diloco parallelism")
-  diloco_sync_period: int = Field(36, description="Diloco sync period.")
-  diloco_outer_lr: float = Field(0.3, description="learning rate for outer optimizer.")
-  diloco_outer_momentum: float = Field(0.9, description="momentum for outer optimizer.")
-
-
 class Optimizer(BaseModel):
   """Configuration for the optimizer and learning rate schedule."""
 
@@ -1128,17 +1051,12 @@ class Optimizer(BaseModel):
       0.1,
       description="Final LR as a fraction of peak LR (applies to both cosine and WSD schedules).",
   )
-  wsd_decay_steps_fraction: float = Field(
-      0.1,
-      ge=0.0,
-      le=1.0,
-      description="Fraction of total steps for decay phase in WSD schedule.",
-  )
+  warmup_steps: int = Field(0, ge=0, description="Number of steps for LR warmup. 0 disables warmup.")
+  wsd_decay_steps: int = Field(0, ge=0, description="Number of steps for decay phase in WSD schedule.")
   wsd_decay_style: WsdDecayStyle = Field(
       WsdDecayStyle.LINEAR,
       description="The decay style for WSD schedule ('linear' or 'cosine').",
   )
-  warmup_steps_fraction: float = Field(0.1, ge=0.0, le=1.0, description="Fraction of total steps for LR warmup.")
   learning_rate_schedule_steps: int = Field(
       -1,
       ge=-1,
@@ -1249,29 +1167,9 @@ class InferenceGeneral(BaseModel):
 
   max_target_length: int = Field(2048, description="Maximum sequence length for the model.")
   max_prefill_predict_length: int = Field(64, description="Maximum length for the prefill stage in decoding.")
-  prompt: str = Field("I love to", description="The default prompt for sampling.")
-  load_from_prefill_dir: bool = Field(False, description="Reads prefill cache from directory instead of computing it.")
-  prefill_cache_dir: PathStr = Field("", description="Directory for the prefill cache.")
-  autoregressive_decode_assert: str = Field(
-      "",
-      description="Value to assert against during autoregressive decoding, for testing.",
-  )
-  model_call_mode: str = Field("", description="Mode for model call, e.g., 'inference'.")
   use_chunked_prefill: bool = Field(False, description="Use chunked prefilling for long sequences.")
   prefill_chunk_size: int = Field(256, description="The chunk size for chunked prefilling.")
-  enable_model_warmup: bool = Field(False, description="Run a warmup cycle before starting the server.")
-  enable_llm_inference_pool: bool = Field(False, description="Launch inference server for llm_inference_gateway.")
-  multi_sampling: bool = Field(False, description="Enable multiple sampling configurations.")
-  return_log_prob: bool = Field(False, description="Return log probabilities during inference.")
 
-
-class Decoding(BaseModel):
-  """Configuration for decoding and sampling strategies."""
-
-  decode_sampling_strategy: SamplingStrategy = Field(SamplingStrategy.GREEDY, description="The strategy for decoding.")
-  decode_sampling_nucleus_p: int | float = Field(-1.0, description="Nucleus (top-p) sampling probability. -1 to disable.")
-  decode_sampling_top_k: int = Field(0, description="Top-k sampling value. 0 to disable.")
-  decode_sampling_temperature: float = Field(1.0, description="Sampling temperature.")
 
 
 class InferenceLayout(BaseModel):
@@ -1283,13 +1181,6 @@ class InferenceLayout(BaseModel):
   compute_axis_order: str = Field("0,1,2,3", description="Axis order for compute operations.")
   reshape_q: bool = Field(False, description="Reshape Q tensor in attention.")
 
-
-class InferenceServer(BaseModel):
-  """Configuration for running as an inference server."""
-
-  inference_server: str = Field("MaxtextInterleavedServer", description="Inference server to start.")
-  prefill_slice: str = Field("v5e-16", description="Slice to use for prefill in disaggregation mode.")
-  generate_slice: str = Field("v5e-16", description="Slice to use for generatation in disaggregation mode.")
 
 
 class InferenceBenchmark(BaseModel):
@@ -1305,16 +1196,6 @@ class InferenceBenchmark(BaseModel):
   inference_metadata_file: PathStr = Field("", description="Path to a JSON file with inference metadata.")
   inference_benchmark_test: bool = Field(False, description="Flag to indicate a benchmark test run.")
 
-
-class PrefixCaching(BaseModel):
-  """Configuration for Prefix Caching in JetStream."""
-
-  enable_prefix_caching: bool = Field(False, description="Enable prefix caching.")
-  prefix_caching_hbm_byte: int = Field(10_000_000_000, description="HBM memory allocation for prefix caching in bytes.")
-  prefix_caching_dram_byte: int = Field(
-      100_000_000_000,
-      description="DRAM memory allocation for prefix caching in bytes.",
-  )
 
 
 class AOT(BaseModel):
@@ -1611,11 +1492,6 @@ class DerivedValues(BaseModel):
       description="Effective number of query heads, scaled by `global_parameter_scale`.",
   )
 
-  num_diloco_replicas: None | int = Field(
-      None,
-      description="The number of diloco replicas, derived from ICI and DCN values.",
-  )
-
   ici_parallelism: None | list[int] = Field(
       None,
       description="Aggregated list of all ICI parallelism values for legacy compatibility.",
@@ -1727,7 +1603,7 @@ def get_individual_scales(scale: int) -> tuple[int, int, int, int]:
 # ----------------------------------------------------------------------------
 
 
-class MaxTextConfig(
+class MegaTextConfig(
     # Run and Checkpointing
     RunInfo,
     Checkpointing,
@@ -1762,9 +1638,9 @@ class MaxTextConfig(
     PipelineParallelism,
     # Training, Optimization, and Fine-Tuning
     RematAndOffload,
+    Distillation,
     TrainingLoop,
     ManifoldConstrainedHyperConnections,
-    DilocoParams,
     Optimizer,
     AdamW,
     Muon,
@@ -1778,11 +1654,8 @@ class MaxTextConfig(
     Tokenizer,
     # Inference
     InferenceGeneral,
-    Decoding,
     InferenceLayout,
-    InferenceServer,
     InferenceBenchmark,
-    PrefixCaching,
     # Development and Debugging
     AOT,
     DevelopmentAndDebugging,
@@ -1804,7 +1677,7 @@ class MaxTextConfig(
     DerivedValues,
 ):
   """
-  The main configuration object for MaxText.
+  The main configuration object for Megatext.
 
   This class aggregates all configuration options from modular `BaseModel` classes
   into a single, validated object. It is populated by the `initialize` function.
@@ -1821,16 +1694,13 @@ class MaxTextConfig(
     return values
 
   @model_validator(mode="after")
-  def set_derived_and_validate_values(self) -> "MaxTextConfig":
-    """
-    Computes all derived values and runs all cross-field validations after initial parsing.
-    This logic is ported from the legacy pyconfig_deprecated.py system and adapted for Pydantic.
-    """
+  def set_derived_and_validate_values(self) -> "MegaTextConfig":
+    """Computes all derived values and runs all cross-field validations after initial parsing."""
     if self.custom_mesh_and_rule:
       custom_mesh_path = os.path.join(
           os.path.dirname(os.path.abspath(__file__)),
           "custom_mesh_and_rule",
-          f"{self.custom_mesh_and_rule}.yml",
+          f"{self.custom_mesh_and_rule}.yaml",
       )
       if os.path.exists(custom_mesh_path):
         with open(custom_mesh_path, "r") as f:  # pylint: disable=unspecified-encoding
@@ -1913,14 +1783,15 @@ class MaxTextConfig(
           "Set scan_layers=False in your config to use deepstack features."
       )
 
-    # Validate WSD learning rate schedule fractions
+    # Validate WSD learning rate schedule step counts
     if self.lr_schedule_type == LearningRateScheduleType.WSD:
-      total_fraction = self.warmup_steps_fraction + self.wsd_decay_steps_fraction
-      if total_fraction > 1.0:
+      total = self.warmup_steps + self.wsd_decay_steps
+      if total > self.learning_rate_schedule_steps:
         raise ValueError(
-            f"Invalid WSD schedule: warmup_steps_fraction ({self.warmup_steps_fraction}) + "
-            f"wsd_decay_steps_fraction ({self.wsd_decay_steps_fraction}) must not exceed 1.0. "
-            f"Current sum: {total_fraction}"
+            f"Invalid WSD schedule: warmup_steps ({self.warmup_steps}) + "
+            f"wsd_decay_steps ({self.wsd_decay_steps}) must not exceed "
+            f"learning_rate_schedule_steps ({self.learning_rate_schedule_steps}). "
+            f"Current sum: {total}"
         )
 
     # If eval_per_device_batch_size is not set, it defaults to the training per_device_batch_size.
@@ -2219,8 +2090,6 @@ class MaxTextConfig(
     # H. RUN ALL CROSS-FIELD VALIDATIONS
     if self.load_parameters_path and self.load_full_state_path:
       raise ValueError("At most one of `load_parameters_path` or `load_full_state_path` should be set.")
-    if (self.load_parameters_path or self.load_full_state_path) and not self.enable_checkpointing:
-      raise ValueError("You must set enable_checkpointing=True to load a checkpoint.")
     if self.enable_multi_tier_checkpointing:
       if not self.local_checkpoint_directory:
         raise ValueError("`local_checkpoint_directory` must be set for multi-tier checkpointing.")
@@ -2422,7 +2291,6 @@ class MaxTextConfig(
 
     # I. FINAL TYPE CONVERSIONS AND DERIVED LISTS
     ici_map = {
-        "diloco": self.ici_diloco_parallelism,
         "data": self.ici_data_parallelism,
         "stage": self.ici_pipeline_parallelism,
         "fsdp": self.ici_fsdp_parallelism,
@@ -2442,7 +2310,6 @@ class MaxTextConfig(
     self.ici_parallelism = [ici_map[axis] for axis in self.mesh_axes]
 
     dcn_map = {
-        "diloco": self.dcn_diloco_parallelism,
         "data": self.dcn_data_parallelism,
         "stage": self.dcn_pipeline_parallelism,
         "fsdp": self.dcn_fsdp_parallelism,
@@ -2461,34 +2328,6 @@ class MaxTextConfig(
     }
     self.dcn_parallelism = [dcn_map[axis] for axis in self.mesh_axes]
 
-    # Diloco params
-    # Resolve dcn_diloco_parallelism=-1 if left unspecified, using the same convention as dcn_data_parallelism.
-    # num_diloco_replicas must be computed after this resolution, so we resolve it here rather than
-    # relying on fill_unspecified_mesh_axes (which runs later during mesh creation).
-    if self.dcn_diloco_parallelism == -1:
-      other_dcn_product = prod(v for v in self.dcn_parallelism if v != -1)
-      assert other_dcn_product > 0 and self.num_slices % other_dcn_product == 0, (
-          f"Cannot resolve dcn_diloco_parallelism=-1: num_slices={self.num_slices} is not divisible "
-          f"by the product of other DCN parallelism values ({other_dcn_product})."
-      )
-      self.dcn_diloco_parallelism = self.num_slices // other_dcn_product
-      # Keep dcn_parallelism list consistent with the resolved value.
-      diloco_idx = self.dcn_parallelism.index(-1)
-      self.dcn_parallelism[diloco_idx] = self.dcn_diloco_parallelism
-    self.num_diloco_replicas = int(self.ici_diloco_parallelism * self.dcn_diloco_parallelism)
-
-    # (b/496973624) use_tokamax_gmm is incompatible with enable_diloco: drjax.map_fn wraps
-    # the train step in jax.vmap over the diloco axis, which causes JAX to batch through
-    # lax.scan (layer scan).
-    # Tokamax's vmap_rule then tries to reconstruct GroupSizes with a batched 2-D value, but
-    # GroupSizes.__post_init__ requires exactly a 1-D shape.
-    if self.enable_diloco and self.use_tokamax_gmm:
-      raise ValueError(
-          "use_tokamax_gmm=True is not compatible with enable_diloco=True due to a known "
-          "incompatibility between tokamax's GroupSizes vmap_rule and JAX's scan batching. "
-          "Please set use_tokamax_gmm=False."
-      )
-
     # Final string-to-enum conversions if they haven't been coerced by pydantic yet.
     if isinstance(self.decoder_block, str):
       self.decoder_block = DecoderBlockType(self.decoder_block.lower())
@@ -2503,3 +2342,6 @@ class MaxTextConfig(
         self.constant_bound_config = []
 
     return self
+
+# Alias for naming consistency
+MegaTextConfig = MegaTextConfig

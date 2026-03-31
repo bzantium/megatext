@@ -46,7 +46,7 @@ class OfflineEngineTest(unittest.TestCase):
     self.cfg = self.init_pyconfig()
 
   def init_pyconfig(self, **kwargs):
-    """Initialize MaxText pyconfig."""
+    """Initialize Megatext pyconfig."""
     init_kwargs = {
         "run_name": "test",
         # Parallelism

@@ -174,7 +174,7 @@ class ManifoldConstrainedHyperConnections(nnx.Module):
 
   def res_mapping(self, x: Array):
     """Helper function for residual mapping."""
-    # In MaxText, we match weight precision to activations before Matmul
+    # In Megatext, we match weight precision to activations before Matmul
     res_alpha = jnp.asarray(self.res_alpha[...], self.dtype)
     res_beta = jnp.asarray(self.res_beta[...], self.dtype)
     res_alpha_scale = jnp.asarray(self.res_alpha_scale[...], self.dtype)
@@ -192,7 +192,7 @@ class ManifoldConstrainedHyperConnections(nnx.Module):
       self, x: Array, alpha_scale: Array, alpha: Array, beta: Array, scale: int
   ):
     """Helper function for both pre and post mappings."""
-    # In MaxText, we match weight precision to activations before Matmul
+    # In Megatext, we match weight precision to activations before Matmul
     alpha = jnp.asarray(alpha, self.dtype)
     beta = jnp.asarray(beta, self.dtype)
     alpha_scale = jnp.asarray(alpha_scale, self.dtype)

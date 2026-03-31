@@ -73,7 +73,7 @@ from megatext.inference import page_manager
 from megatext.inference import paged_attention
 from megatext.inference.kvcache import KVQuant
 from megatext.utils.sharding import create_sharding
-from megatext.utils.globals import EPS
+from megatext.utils.constants import EPS
 
 
 class Indexer(nnx.Module):
@@ -828,7 +828,7 @@ class MLA(Attention):
     q_nope = self._maybe_shard_with_logical(q_nope, query_logical_name)
     q_pe = self.apply_rotary_embedding(q_pe, inputs_positions=inputs_positions)
     q_pe = self._maybe_shard_with_logical(q_pe, query_logical_name)
-    # Query projection is scaled by self.softmax_scale to be consistent MaxText implementation.
+    # Query projection is scaled by self.softmax_scale to be consistent Megatext implementation.
     # DeepSeek v3 was doing it in attention score computation.
     query = jnp.concatenate([q_nope, q_pe], axis=-1) * self.softmax_scale
     query = self._maybe_shard_with_logical(query, query_logical_name)

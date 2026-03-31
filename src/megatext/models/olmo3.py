@@ -229,7 +229,7 @@ class Olmo3ScannableBlock(nnx.Module):
     used with `nn.scan` for efficient compilation.
 
   Attributes:
-    config: Config, MaxText model config
+    config: Config, MegaText model config
     mesh: Mesh, JAX device mesh (used for sharding)
     num_of_layers: int, number of decoder layers in the block
     quant: Optional[Quant], quantization config

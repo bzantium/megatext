@@ -16,7 +16,7 @@
 
 from megatext.configs import pyconfig
 from megatext.data.synthetic_data_processing import SyntheticDataIterator
-from megatext.utils import max_logging
+from megatext.utils import logging as max_logging
 
 
 def create_data_iterator(config: pyconfig.HyperParameters, mesh):

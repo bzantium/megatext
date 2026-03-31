@@ -22,7 +22,7 @@ to various logging platforms, including cloud logging and TensorBoard.
 import contextlib
 import jax
 from enum import Enum
-from megatext.utils import max_logging
+from megatext.utils import logging as max_logging
 from megatext.common.gcloud_stub import goodput_modules
 
 goodput, monitoring, _GOODPUT_STUB = goodput_modules()
