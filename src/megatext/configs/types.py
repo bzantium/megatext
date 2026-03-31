@@ -190,74 +190,6 @@ class ProfilerType(str, Enum):
 # Pydantic models for configuration
 # ----------------------------------------------------------------------------
 
-ModelName = Literal[
-    "default",
-    "llama2-7b",
-    "llama2-13b",
-    "llama2-70b",
-    "llama3-8b",
-    "llama3.1-8b-Instruct",
-    "llama3-70b",
-    "llama3.1-70b-Instruct",
-    "llama3.1-8b",
-    "llama3.1-70b",
-    "llama3.1-405b",
-    "llama3.3-70b",
-    "mistral-7b",
-    "mixtral-8x7b",
-    "mixtral-8x22b",
-    "deepseek2-16b",
-    "deepseek2-236b",
-    "deepseek3-671b",
-    "deepseek3-671b-2dfsdp",
-    "deepseek3-671b-batchsplit",
-    "deepseek3-test",
-    "deepseek3-tiny",
-    "deepseek3.2-671b",
-    "deepseek-custom",
-    "kimi-k2-1t",
-    "gemma-7b",
-    "gemma-2b",
-    "gemma2-2b",
-    "gemma2-9b",
-    "gemma2-27b",
-    "gemma3-4b",
-    "gemma3-12b",
-    "gemma3-27b",
-    "qwen2.5-1.5b",
-    "qwen2.5-7b",
-    "qwen2.5-14b",
-    "qwen3-0.6b",
-    "qwen3-1.7b",
-    "qwen3-1.7b-base",
-    "qwen3-4b",
-    "qwen3-4b-base",
-    "qwen3-4b-thinking-2507",
-    "qwen3-8b",
-    "qwen3-8b-base",
-    "qwen3-14b",
-    "qwen3-14b-base",
-    "qwen3-32b",
-    "qwen3-235b-a22b",
-    "qwen3-30b-a3b",
-    "qwen3-30b-a3b-base",
-    "qwen3-480b-a35b",
-    "qwen3-next-80b-a3b",
-    "qwen3-omni-30b-a3b",
-    "gpt3-175b",
-    "gpt3-22b",
-    "gpt3-6b",
-    "gpt3-52k",
-    "gpt-oss-20b",
-    "gpt-oss-120b",
-    "llama4-17b-16e",
-    "llama4-17b-128e",
-    "olmo3-7b",
-    "olmo3-7b-pt",
-    "olmo3-32b",
-]
-
-
 class RunInfo(BaseModel):
   """Configuration for the overall run, model identity, and logging."""
 
@@ -269,7 +201,7 @@ class RunInfo(BaseModel):
       "",
       description="The name of the run. Checkpoints will be stored under this name.",
   )
-  model: ModelName = Field("default", description="The name of the model configuration to use.")
+  model: str = Field("default", description="Architecture template to use (e.g. 'qwen3', 'llama3', 'deepseek'). Loads models/{model}.yml.")
   override_model_config: bool = Field(False, description="If True, allows overriding model parameters via CLI.")
   override_logical_axis_rules: bool = Field(
       False,
