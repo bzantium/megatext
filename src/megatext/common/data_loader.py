@@ -23,7 +23,6 @@ from megatext.common.goodput import (
     GoodputEvent,
     maybe_record_goodput,
 )
-from megatext.trainers.diloco import diloco
 from megatext.utils import exceptions
 from megatext.utils.sharding import get_input_data_sharding
 

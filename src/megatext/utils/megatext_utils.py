@@ -64,27 +64,6 @@ from megatext.utils.flops import calculate_engram_tflops  # noqa: F401
 from megatext.utils.flops import calculate_vision_encoder_tflops  # noqa: F401
 from megatext.utils.flops import calculate_prefill_tflops_per_device  # noqa: F401
 
-# --- train_utils ---
-from megatext.utils.train_utils import get_functional_train_with_signature  # noqa: F401
-from megatext.utils.train_utils import get_functional_eval_with_signature  # noqa: F401
-from megatext.utils.train_utils import get_shaped_batch  # noqa: F401
-from megatext.utils.train_utils import should_prevent_cse_in_remat  # noqa: F401
-from megatext.utils.train_utils import load_compiled  # noqa: F401
-from megatext.utils.train_utils import apply_gradient_clipping  # noqa: F401
-from megatext.utils.train_utils import update_state_param  # noqa: F401
-from megatext.utils.train_utils import init_decode_state  # noqa: F401
-from megatext.utils.train_utils import init_training_state  # noqa: F401
-from megatext.utils.train_utils import init_initial_state  # noqa: F401
-from megatext.utils.train_utils import get_abstract_param  # noqa: F401
-from megatext.utils.train_utils import setup_decode_state  # noqa: F401
-from megatext.utils.train_utils import setup_training_state  # noqa: F401
-from megatext.utils.train_utils import setup_initial_state  # noqa: F401
-from megatext.utils.train_utils import get_logical_annotations  # noqa: F401
-from megatext.utils.train_utils import get_abstract_state  # noqa: F401
-from megatext.utils.train_utils import get_prefill_kv_cache_annotations  # noqa: F401
-from megatext.utils.train_utils import get_kv_cache_annotations  # noqa: F401
-from megatext.utils.train_utils import save_quantized_checkpoint_if_configured  # noqa: F401
-
 # --- debug ---
 from megatext.utils.debug import print_shardings_params  # noqa: F401
 from megatext.utils.debug import add_config_to_summary_writer  # noqa: F401
@@ -97,3 +76,21 @@ from megatext.utils.training import OVERWRITE_WITH_GRADIENT  # noqa: F401
 
 # --- schedulers (pre-existing re-export) ---
 from megatext.schedulers import create_learning_rate_schedule  # noqa: F401
+
+# --- Lazy re-exports from train_utils (avoids circular import) ---
+_LAZY_TRAIN_UTILS = {
+    "get_functional_train_with_signature", "get_functional_eval_with_signature",
+    "get_shaped_batch", "should_prevent_cse_in_remat", "load_compiled",
+    "apply_gradient_clipping", "update_state_param",
+    "init_decode_state", "init_training_state", "init_initial_state",
+    "get_abstract_param", "setup_decode_state", "setup_training_state",
+    "setup_initial_state", "get_logical_annotations", "get_abstract_state",
+    "get_prefill_kv_cache_annotations", "get_kv_cache_annotations",
+    "save_quantized_checkpoint_if_configured",
+}
+
+def __getattr__(name):
+    if name in _LAZY_TRAIN_UTILS:
+        from megatext.utils import train_utils
+        return getattr(train_utils, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

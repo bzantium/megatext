@@ -30,7 +30,6 @@ from megatext.utils import megatext_utils
 from megatext.utils import model_factory as model_creation_utils
 from megatext.utils import sharding
 from megatext.utils.rampup_batch import create_rampup_manager
-from megatext.trainers.diloco import diloco
 
 
 def create_training_tools(config, model, mesh):

@@ -642,16 +642,6 @@ per_device_batch_size_increment: 2.0
 # There is no strict rule for this value, it only needs to be positive.
 global_rampup_samples: 500
 
-# direct preference optimization (DPO)
-use_dpo: False
-dpo_label_smoothing: 0.0
-dpo_beta: 0.1
-
-# Supervised Fine-Tuning (SFT)
-use_sft: False
-# sft_train_on_completion_only=False trains on both prompt and completion tokens; trains only on completion tokens otherwise
-sft_train_on_completion_only: False
-
 # dataset_type: synthetic, mmap, arecord, or fixed_arecord
 dataset_type: synthetic
 dataset_path: ""
@@ -1089,12 +1079,9 @@ use_jax_splash: false
 
 # vLLM Adapter Configurations
 # Path to the HuggingFace-style config directory for the adapter (e.g. src/maxtext/integration/vllm/maxtext_vllm_adapter)
-vllm_hf_config_path: ""
 # A JSON string of overrides to apply to the HuggingFace-style config for the vLLM adapter.
 # This can be used to override specific settings without modifying the original config file. 
-vllm_hf_overrides: {}
 # JSON string containing additional configuration for the vLLM model (e.g. '{"maxtext_config": {...}}')
-vllm_additional_config: {}
 # When use_jax_splash=True, force the layout of the query tensor to be [..., NUM_HEADS, HEAD_DIM, SEQ_LENGTH]
 force_q_layout: false
 
@@ -1122,9 +1109,5 @@ engram_kernel_size: 4
 engram_seed: 0
 
 ##### Distillation parameters
-distill_alpha: 0.5
-distill_temperature: 1.0
 # distill_beta is used for cosine similarity loss between intermediate activataitions of out_proj in teacher/student models.
 # 0.0 value disables this feature.
-distill_beta: 0.0
-distill_layer_indices: None

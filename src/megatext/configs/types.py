@@ -982,6 +982,8 @@ class DatasetGeneral(BaseModel):
   """General configuration for dataset and data loading."""
 
   dataset_type: DatasetType = Field(DatasetType.SYNTHETIC, description="The type of the data loading pipeline.")
+  dataset_path: PathStr = Field("", description="Path to the training data (local or GCS).")
+  hf_access_token: None | str = Field(None, description="HuggingFace access token for gated models/tokenizers.")
   per_device_batch_size: int | float = Field(12, description="The batch size per device.")
   eval_per_device_batch_size: int | float = Field(
       0.0,
