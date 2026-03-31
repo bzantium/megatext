@@ -25,10 +25,10 @@ import os
 import shutil
 import jax
 from tests.utils.test_helpers import get_test_config_path
-from megatext.trainers.pre_train import train_compile
-from megatext.trainers.pre_train import train
+from megatext.trainers import pretrain
 
 
+@pytest.mark.skip(reason="module removed in restructure: train_compile was deleted")
 class CompileThenLoadTest(unittest.TestCase):
   """Tests for the Split Compile and Train workflow"""
 
@@ -115,7 +115,7 @@ class CompileThenLoadTest(unittest.TestCase):
     print(f"\n--- Starting Load/Train Step for {test_name} ---")
     # Clear caches before train to ensure we are actually loading from the pickle
     jax.clear_caches()
-    train.main(train_argv)
+    pretrain.main(train_argv)
 
     print(f"Successfully compiled and loaded for test {test_name}!")
 

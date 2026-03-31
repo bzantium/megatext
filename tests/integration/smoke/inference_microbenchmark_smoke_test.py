@@ -20,7 +20,7 @@ import unittest
 from absl.testing import absltest
 
 from megatext.configs import pyconfig
-from megatext.utils.constants import MAXTEXT_CONFIGS_DIR, MAXTEXT_ASSETS_ROOT
+from megatext.utils.constants import MEGATEXT_CONFIGS_DIR, MEGATEXT_ASSETS_ROOT
 from megatext.common.gcloud_stub import is_decoupled
 
 pytestmark = [pytest.mark.external_serving]
@@ -43,8 +43,8 @@ class Inference_Microbenchmark(unittest.TestCase):
     config = pyconfig.initialize(
         [
             None,
-            os.path.join(MAXTEXT_CONFIGS_DIR, "tpu", "tpu_smoke_test.yml"),
-            rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+            os.path.join(MEGATEXT_CONFIGS_DIR, "tpu", "tpu_smoke_test.yml"),
+            rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
             "ici_autoregressive_parallelism=-1",
             "ici_fsdp_parallelism=1",
             "max_prefill_predict_length=1024",

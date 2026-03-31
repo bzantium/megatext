@@ -27,8 +27,7 @@ import hashlib
 import re
 import jax
 from tests.utils.test_helpers import get_test_config_path
-from megatext.trainers.pre_train import train_compile
-from megatext.trainers.pre_train import train
+from megatext.trainers import pretrain
 
 
 class AotBaseTest(unittest.TestCase):
@@ -80,6 +79,7 @@ class AotBaseTest(unittest.TestCase):
     return h1.hexdigest() == h2.hexdigest()
 
 
+@pytest.mark.skip(reason="module removed in restructure: train_compile was deleted")
 class AotHloIdenticalTest(AotBaseTest):
   """Tests for Ahead of Time Compilation HLO Graph Verification."""
 
@@ -131,7 +131,7 @@ class AotHloIdenticalTest(AotBaseTest):
             "--xla_dump_hlo_module_re=jit_train_step",
         )
     )
-    train.main(train_argv)
+    pretrain.main(train_argv)
     shutil.move(local_landing_dir, train_dump_dir)
     jax.clear_caches()
 
@@ -158,6 +158,7 @@ class AotHloIdenticalTest(AotBaseTest):
     self.assert_compile_and_real_match_hlo("default_run")
 
 
+@pytest.mark.skip(reason="module removed in restructure: train_compile was deleted")
 class AotJaxprIdenticalTest(AotBaseTest):
   """Tests for Ahead of Time Compilation Jaxpr Verification."""
 
@@ -194,7 +195,7 @@ class AotJaxprIdenticalTest(AotBaseTest):
         get_test_config_path(),
         f"dump_jaxpr_local_dir={train_dump_dir}",
     ) + tuple(shared_args)
-    train.main(train_argv)
+    pretrain.main(train_argv)
     jax.clear_caches()
 
     # Run train_compile.py and dump jaxpr
