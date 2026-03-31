@@ -58,7 +58,7 @@ from megatext.models import (
 )
 from megatext.multimodal import utils as mm_utils
 from megatext.utils.sharding import create_sharding
-from megatext.utils import max_logging
+from megatext.utils import logging as max_logging
 from megatext.utils import max_utils
 from megatext.utils import megatext_utils
 from megatext.utils import sharding

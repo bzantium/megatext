@@ -46,7 +46,7 @@ Example:
 
 from typing import Sequence
 
-from megatext.utils.globals import MAXTEXT_REPO_ROOT
+from megatext.utils.constants import MAXTEXT_REPO_ROOT
 from tests.utils.sharding_dump import TEST_CASES
 from tests.utils.test_helpers import get_test_config_path
 import subprocess

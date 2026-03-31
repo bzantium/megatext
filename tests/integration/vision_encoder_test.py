@@ -23,7 +23,7 @@ import jax
 import jax.numpy as jnp
 import jsonlines
 from megatext.configs import pyconfig
-from megatext.utils.globals import MAXTEXT_ASSETS_ROOT, MAXTEXT_TEST_ASSETS_ROOT
+from megatext.utils.constants import MAXTEXT_ASSETS_ROOT, MAXTEXT_TEST_ASSETS_ROOT
 from megatext.inference.maxengine import maxengine
 from megatext.models import models
 from megatext.multimodal import processor_gemma3

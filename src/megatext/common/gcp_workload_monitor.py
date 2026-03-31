@@ -26,7 +26,7 @@ import jax
 
 from urllib3.util.retry import Retry
 
-from megatext.utils import max_logging
+from megatext.utils import logging as max_logging
 from megatext.common.gcloud_stub import monitoring_modules
 
 monitoring_v3, metric_pb2, monitored_resource_pb2, GoogleAPIError, _MONITORING_STUB = monitoring_modules()

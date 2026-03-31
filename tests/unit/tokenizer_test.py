@@ -15,7 +15,7 @@
 """Tests for tokenizer"""
 
 import numpy as np
-from megatext.utils.globals import MAXTEXT_ASSETS_ROOT
+from megatext.utils.constants import MAXTEXT_ASSETS_ROOT
 from megatext.data import input_pipeline_utils
 from megatext.trainers.tokenizer import train_tokenizer
 

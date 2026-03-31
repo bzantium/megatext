@@ -26,7 +26,7 @@ from unittest import mock
 import pytest
 
 from megatext.common import gcloud_stub
-from megatext.utils import gcs_utils
+from megatext.utils import storage as gcs_utils
 
 
 @pytest.mark.cpu_only

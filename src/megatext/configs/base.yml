@@ -131,10 +131,6 @@ kv_quant_dtype: "int8"
 checkpoint_is_quantized: false # set to true if reading from a saved aqt quantized checkpoint
 # saves params quantized on fly at following path
 save_quantized_params_path: ""
-#used to configure the mode in which model is called
-# when left as is, corresponds to training
-# accepted values are "inference"
-model_call_mode: ""
 use_qwix_quantization: false # whether to use qwix for quantization. if set to true, the model will be quantized using qwix.
 # quantization calibration method used for weights and activations. supported methods can be found in https://github.com/google/qwix/blob/dc2a0770351c740e5ab3cce7c0efe9f7beacce9e/qwix/qconfig.py#l70-l80
 weight_quantization_calibration_method: "absmax"
@@ -656,50 +652,15 @@ use_sft: False
 # sft_train_on_completion_only=False trains on both prompt and completion tokens; trains only on completion tokens otherwise
 sft_train_on_completion_only: False
 
-# dataset_type must be synthetic, hf, grain, tfds
-# details in: https://github.com/AI-Hypercomputer/maxtext/blob/main/docs/guides/data_input_pipeline.md
-dataset_type: tfds
-# for TFDS input pipeline (dataset_type=tfds)
-dataset_path: "" # your path given as argument in download_dataset.sh, e.g. "gs://my-maxtext-dataset/"
-dataset_name: 'c4/en:3.0.1'
-eval_dataset_name: 'c4/en:3.0.1'
-train_split: 'train'
-eval_split: 'validation'
-# for HuggingFace input pipeline (dataset_type=hf)
-# Check definition at https://github.com/huggingface/datasets/blob/0feb65dd8733191dd2d1e74215b422fc5939a56a/src/datasets/load.py#L1338-L1408
-hf_path: ''
-hf_name: ''
-hf_data_dir: ''
-hf_train_files: ''
-hf_eval_split: ''
-hf_eval_files: ''
+# dataset_type: synthetic, mmap, arecord, or fixed_arecord
+dataset_type: synthetic
+dataset_path: ""
 hf_access_token: ''
-# for Grain input pipeline (dataset_type=grain)
-# Path to grain data files. Can be a single pattern or multiple patterns with weights.
-# For multiple patterns, use semicolon (;) to separate and comma (,) to specify weights.
-# Example: "path/to/data1.array_record*,0.3;path/to/data2.array_record*,0.7"
-# Note: When using multiple files (separated by ';'), only ArrayRecord format is supported.
-# For more details, see https://github.com/AI-Hypercomputer/maxtext/blob/main/docs/guides/data_input_pipeline/data_input_grain.md
-grain_train_files: ''
-grain_eval_files: ''
-grain_train_mixture_config_path: '' # Path to a JSON file specifying the mixture weights for Grain training data.
-grain_file_type: 'arrayrecord' # arrayrecord or parquet
-grain_packing_type: 'first_fit' # 'first_fit', 'best_fit' or 'concat_then_split'. See details of the corresponding module in https://google-grain.readthedocs.io/en/latest/grain.experimental.html
-grain_worker_count: 1 # Set to -1 to enable auto-tuning: automatically determines optimal worker count. See https://google-grain.readthedocs.io/en/latest/_autosummary/grain.experimental.pick_performance_config.html
+
+# Grain data loading settings (used by mmap/arecord/fixed_arecord pipelines)
+grain_packing_type: 'first_fit'
+grain_worker_count: 1
 grain_per_worker_buffer_size: 1
-# num_threads and prefetch_buffer_size are per-worker per-dataset.
-# When using array_records, they are used in ReadOptions (https://google-grain.readthedocs.io/en/latest/tutorials/data_loader_tutorial.html#per-worker-readoptions)
-# The default value matches that in the Grain package. If mixing multiple data sources, consider lowering these values to reduce memory usage.
-# When using parquet, grain_num_threads is the number of files to read and interleave in parallel
-grain_num_threads: 16
-grain_prefetch_buffer_size: 500
-grain_worker_count_eval: 1
-grain_per_worker_buffer_size_eval: 1
-grain_ram_budget_mb: 1024 # RAM budget (MB) for auto-tuning worker count. Only used when grain_worker_count is -1.
-grain_num_threads_eval: 16
-grain_prefetch_buffer_size_eval: 500
-grain_data_source_max_workers: 16  # Max workers for ThreadPoolExecutor when mixing multiple Grain data sources.
-grain_shuffle_buffer_size: 100 # shuffle buffer when using sequential access formats such as Parquet, TFRecord.
 
 # for mmap/arecord data pipeline (dataset_type=mmap, arecord, or fixed_arecord)
 # Uses dataset_path for data path, data_shuffle_seed for seed,
@@ -713,7 +674,7 @@ data_cache_dir: ''
 colocated_python_data_input: False  # experimental feature, under testing
 
 # Training loop
-steps: 150_001 # If set to -1 then will inherit value from learning_rate_schedule_steps
+steps: 150_000 # If set to -1 then will inherit value from learning_rate_schedule_steps
 log_period: 100 # The frequency of Tensorboard flush, gcs metrics writing, and managed profiler metrics updating.
 
 jax_distributed_initialization_timeout: 300 # This is the default timeout in https://github.com/jax-ml/jax/blob/main/jax/_src/distributed.py
@@ -728,35 +689,27 @@ skip_jax_distributed_system: False # If True we will not initialize the jax dist
 # Learning rate schedule structure depends on lr_schedule_type:
 #
 # Cosine schedule (lr_schedule_type='cosine'):
-# Inspired by Llama2's learning rate schedule, see https://arxiv.org/pdf/2307.09288.pdf section 2.2
-# 1) Linear warmup from 0 to [learning_rate] over steps 0 to [learning_rate_schedule_steps * warmup_steps_fraction]
-# 2) Cosine decay from [learning_rate] to [learning_rate * learning_rate_final_fraction] until learning_rate_schedule_steps
-# 3) Constant learning rate of 0 from learning_rate_schedule_steps to steps (if steps > learning_rate_schedule_steps)
+# 1) Linear warmup from 0 to learning_rate over [0, warmup_steps]
+# 2) Cosine decay from learning_rate to learning_rate * learning_rate_final_fraction over [warmup_steps, learning_rate_schedule_steps]
+# 3) Constant 0 from learning_rate_schedule_steps to steps (if steps > learning_rate_schedule_steps)
 #
 # WSD schedule (lr_schedule_type='wsd', Warmup-Stable-Decay):
-# 1) Linear warmup from 0 to [learning_rate] over steps 0 to [learning_rate_schedule_steps * warmup_steps_fraction]
-# 2) Stable phase at [learning_rate] for the majority of training
-# 3) Decay from [learning_rate] to [learning_rate * learning_rate_final_fraction] over [learning_rate_schedule_steps * wsd_decay_steps_fraction] steps
-#    The decay can be either linear or cosine based on wsd_decay_style
-# 4) Constant learning rate of 0 from learning_rate_schedule_steps to steps (if steps > learning_rate_schedule_steps)
-#
-# The zero learning rate section can be used to more accurately measure the fully trained model's performance.
+# 1) Linear warmup from 0 to learning_rate over [0, warmup_steps]
+# 2) Stable phase at learning_rate
+# 3) Decay from learning_rate to learning_rate * learning_rate_final_fraction over wsd_decay_steps
+# 4) Constant 0 from learning_rate_schedule_steps to steps (if steps > learning_rate_schedule_steps)
 learning_rate: 3.e-5
 lr_schedule_type: 'cosine'  # Options: 'cosine' or 'wsd'
-learning_rate_final_fraction: 0.1  # Final LR as fraction of peak LR (applies to both cosine and WSD schedules)
-wsd_decay_steps_fraction: 0.1  # Fraction of learning_rate_schedule_steps used for decay phase in WSD (e.g., 0.1 = 10%)
+learning_rate_final_fraction: 0.1  # Final LR as fraction of peak LR
+warmup_steps: 0  # Number of warmup steps (applies to both schedules)
+wsd_decay_steps: 0  # Number of decay steps for WSD schedule
 wsd_decay_style: 'linear'  # Decay style for WSD schedule: 'linear' or 'cosine'
-warmup_steps_fraction: 0.1  # Fraction of learning_rate_schedule_steps used for warmup phase (applies to both schedules)
 learning_rate_schedule_steps: -1 # By default the length of the schedule is set to the number of steps.
 # However you may choose a longer schedule (learning_rate_schedule_steps > steps), in which case the training will end before
 # dropping fully down. Or you may choose a shorter schedule, where the unspecified steps will have a learning rate of 0.
 
 max_target_length: 2048 # Maximum sequence length
 max_prefill_predict_length: 64 # Maximum length for the prefill when doing autoregression
-prompt: "I love to" # Prompt for language model sampling.
-load_from_prefill_dir: False # If true, decode.py doesn't "prefill" but just reads from directory
-prefill_cache_dir: "" # If set and load_from_prefill_dir, decode.py reads from directory. If set, decode.py writes to directory
-autoregressive_decode_assert: ""
 
 # For nsys profiler, pass the training command to nsys command
 # e.g. nsys profile -s none --force-overwrite true --capture-range=cudaProfilerApi --capture-range-end=stop {training command}
@@ -878,10 +831,6 @@ compiled_trainstep_file: "" # Name of saved serialized compiled train_step, e.g.
 compile_topology: '' # Target hardware version, e.g. 'v5e-256'
 compile_topology_num_slices: -1 # Number of target slices, set to a positive integer.
 
-decode_sampling_strategy: "greedy" # decode_sampling_strategy should be one of greedy, weighted, nucleus, topk, or composite(top_k -> top_p -> weighted temperature)
-decode_sampling_nucleus_p: -1 # set if you're doing nucleus / top-p
-decode_sampling_top_k: 0 # set if you're doing top-k
-decode_sampling_temperature: 1.
 
 eval_interval: -1  # the specific number of train step between eval_step
 eval_steps: -1  # run this number of steps for eval, recommend setting this to prevent error due to running out of evel data
@@ -926,14 +875,7 @@ inference_microbenchmark_loop_iters: 10
 inference_microbenchmark_log_file_path: ""
 inference_microbenchmark_num_samples: [1, 2, 3, 4, 5]
 inference_metadata_file: "" # path to a json file
-inference_server: "MaxtextInterleavedServer"  # inference server to start
-prefill_slice: "v5e-16" # slice to use for prefill in disaggregation mode
-generate_slice: "v5e-16" # slice to use for generatation in disaggregation mode
 inference_benchmark_test: False
-enable_model_warmup: False
-enable_llm_inference_pool: False          # Bool to launch inference server for llm_inference_gateway with their specified APIs
-multi_sampling: False
-return_log_prob: False
 
 # Stack prefill cache across the layer to reduce the
 # Python layer latency.
@@ -1027,10 +969,6 @@ pagedattn_head_dim_alignment: 128
 prefill_chunk_size: 256
 use_chunked_prefill: False
 
-# Prefix Caching parameters in jetstream
-enable_prefix_caching: False
-prefix_caching_hbm_byte: 10_000_000_000 # 10 GB
-prefix_caching_dram_byte: 100_000_000_000 # 100 GB
 
 # This is a temporary flag that will be removed soon after the fix lands in TE
 enable_padding_causal_mask: True

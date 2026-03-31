@@ -31,7 +31,7 @@ import jax.numpy as jnp
 from jax.sharding import Mesh
 import jsonlines
 from megatext.configs import pyconfig
-from megatext.utils.globals import MAXTEXT_PKG_DIR, MAXTEXT_TEST_ASSETS_ROOT
+from megatext.utils.constants import MAXTEXT_PKG_DIR, MAXTEXT_TEST_ASSETS_ROOT
 from megatext.common.common_types import Array, MODEL_MODE_TRAIN
 from megatext.experimental.rl.grpo_trainer import _merge_grpo_state, generate_completions, grpo_loss_fn
 from megatext.experimental.rl.grpo_utils import compute_log_probs

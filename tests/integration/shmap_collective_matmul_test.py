@@ -19,7 +19,7 @@ import sys
 
 import pytest
 
-from megatext.utils.globals import MAXTEXT_REPO_ROOT
+from megatext.utils.constants import MAXTEXT_REPO_ROOT
 
 sys.path.append(os.path.join(MAXTEXT_REPO_ROOT, "pedagogical_examples"))
 

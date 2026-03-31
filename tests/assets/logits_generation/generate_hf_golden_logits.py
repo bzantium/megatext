@@ -47,7 +47,7 @@ import pickle
 import numpy as np
 from google.cloud import storage
 from PIL import Image
-from megatext.inference.inference_utils import str2bool
+from megatext.utils.max_utils import str2bool
 
 # Load the tokenizer and model from Hugging Face
 

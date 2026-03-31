@@ -23,10 +23,10 @@ from flax.training import train_state
 from flax.linen import partitioning as nn_partitioning
 
 from megatext.common import checkpointing
-from megatext.utils import gcs_utils
+from megatext.utils import storage as gcs_utils
 from megatext.utils import max_utils
 from megatext.utils import megatext_utils
-from megatext.utils import max_logging
+from megatext.utils import logging as max_logging
 
 
 def apply_lora_on_base_params(base_params, lora_params, lora_scale_factor=1.0):

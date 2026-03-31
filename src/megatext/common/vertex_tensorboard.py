@@ -18,7 +18,7 @@ import os
 
 import jax
 
-from megatext.utils import max_logging
+from megatext.utils import logging as max_logging
 from megatext.utils import max_utils
 from megatext.common.gcloud_stub import is_decoupled
 

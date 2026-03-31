@@ -75,6 +75,10 @@ def get_optimizer(config, learning_rate_schedule, model=None):
   elif config.opt_type == "sgd":
     base_opt = optax.sgd(learning_rate_schedule)
   elif config.opt_type == "muon":
+    # Patch optax's Newton-Schulz to use unroll=False for reduced compile-time HBM
+    from optax.contrib import _muon
+    from megatext.optimizers.muon import orthogonalize_via_newton_schulz
+    _muon.orthogonalize_via_newton_schulz = orthogonalize_via_newton_schulz
     # extract muon dimension number from model structure
     if model is not None:
       muon_weight_dimension_numbers = get_muon_weight_dimension_numbers(model, config)

@@ -23,10 +23,11 @@ from megatext.common import checkpointing
 from megatext.common.data_loader import create_dataloader
 from megatext.common.goodput import GoodputEvent, maybe_record_goodput
 from megatext.optimizers import optimizers
-from megatext.utils import max_logging
+from megatext.schedulers import create_learning_rate_schedule
+from megatext.utils import logging as max_logging
 from megatext.utils import max_utils
 from megatext.utils import megatext_utils
-from megatext.utils import model_creation_utils
+from megatext.utils import model_factory as model_creation_utils
 from megatext.utils import sharding
 from megatext.utils.rampup_batch import create_rampup_manager
 from megatext.trainers.diloco import diloco
@@ -35,7 +36,7 @@ from megatext.trainers.diloco import diloco
 def create_training_tools(config, model, mesh):
   """Creates the init_rng, optimizer, learning rate schedule, and checkpoint manager."""
   init_rng = jax.random.PRNGKey(config.init_weights_seed)
-  learning_rate_schedule = megatext_utils.create_learning_rate_schedule(config)
+  learning_rate_schedule = create_learning_rate_schedule(config)
   # pass in model for muon
   tx = optimizers.get_optimizer(config, learning_rate_schedule, model)
   logger = checkpointing.setup_checkpoint_logger(config)
@@ -289,3 +290,551 @@ def validate_train_config(config):
         "WARNING: Sequence packing is essentially ignored for synthetic data. "
         "Please use a real dataset to use sequence packing."
     )
+
+
+def get_functional_train_with_signature(
+    train_step, data_sharding, state_mesh_shardings, model, config, params_shardings=None
+):
+  """Get the shardings (both state and data) for `train_step`."""
+  functional_train = functools.partial(train_step, model, config, state_mesh_shardings, params_shardings)
+  functional_train.__name__ = "train_step"
+  in_shardings = (state_mesh_shardings, data_sharding, None)  # State, batch, rng
+  out_shardings = (state_mesh_shardings, None)  # State, metrics
+  static_argnums = ()  # We partial out the static argnums of model and config
+  donate_argnums = 0  # This is the index of the state - we allow the compiler to make use of this memory.
+  return functional_train, in_shardings, out_shardings, static_argnums, donate_argnums
+
+
+def get_functional_eval_with_signature(eval_step, data_sharding, state_mesh_shardings, model, config):
+  """Get the shardings (both state and data) for `eval_step`."""
+  functional_eval = functools.partial(eval_step, model, config)
+  functional_eval.__name__ = "eval_step"
+  in_shardings = (state_mesh_shardings, data_sharding, None)  # State, batch, rng
+  out_shardings = None  # metrics
+  static_argnums = ()  # We partial out the static argnums of model, config
+  donate_argnums = ()  # state will be kept instead of being donated in eval_step
+  return functional_eval, in_shardings, out_shardings, static_argnums, donate_argnums
+
+
+def get_shaped_batch(config):
+  """Return the shape of the batch - this is what eval_shape would return for the
+  output of create_data_iterator, but eval_shape doesn't work, see b/306901078."""
+  import jax.numpy as jnp
+
+  from megatext.multimodal import processor as mm_processor
+
+  if config.enable_diloco:
+    batch_shape = (
+        config.num_diloco_replicas,
+        config.global_batch_size_to_load // config.num_diloco_replicas,
+        config.max_target_length,
+    )
+  else:
+    batch_shape = (config.global_batch_size_to_load, config.max_target_length)
+  shaped_batch = {}
+  shaped_batch["inputs"] = jax.ShapeDtypeStruct(batch_shape, jnp.int32)
+  shaped_batch["inputs_position"] = jax.ShapeDtypeStruct(batch_shape, jnp.int32)
+  shaped_batch["inputs_segmentation"] = jax.ShapeDtypeStruct(batch_shape, jnp.int32)
+  shaped_batch["targets"] = jax.ShapeDtypeStruct(batch_shape, jnp.int32)
+  shaped_batch["targets_position"] = jax.ShapeDtypeStruct(batch_shape, jnp.int32)
+  shaped_batch["targets_segmentation"] = jax.ShapeDtypeStruct(batch_shape, jnp.int32)
+  if config.use_multimodal:
+    image_shape = mm_processor.get_dummy_image_shape_for_init(
+        config.decoder_block, batch_size=config.micro_batch_size_to_train_on
+    )
+    shaped_batch["images"] = jax.ShapeDtypeStruct(image_shape, jnp.int32)
+    shaped_batch["image_masks"] = jax.ShapeDtypeStruct(image_shape[:2], jnp.int32)
+  if config.use_audio:
+    audio_shape = mm_processor.get_dummy_audio_shape_for_init(config)
+    shaped_batch["audios"] = jax.ShapeDtypeStruct(audio_shape, jnp.float32)
+  return shaped_batch
+
+
+def should_prevent_cse_in_remat(config):
+  """Determines whether to prevent common subexpression elimination (CSE) in remat.
+
+  CSE should not be prevented when:
+  1. Layers are being scanned (scan_layers=True), OR
+  2. Gradient accumulation is enabled (gradient_accumulation_steps > 1) on GPU hardware
+
+  Args:
+    config: Configuration object with scan_layers, gradient_accumulation_steps, and hardware
+
+  Returns:
+    bool: True if CSE should be prevented, False otherwise
+  """
+  if config.scan_layers:
+    return False
+
+  if config.gradient_accumulation_steps > 1 and config.hardware in ("gpu", "gpu_multiprocess"):
+    return False
+
+  return True
+
+
+def load_compiled(config, partial_train, state, execution_devices):
+  """# Loading a serialized compiled train step function."""
+  import pickle
+
+  from jax.experimental.serialize_executable import deserialize_and_load
+
+  # Currently partial_train and state  are needed to reconstruct
+  # input/output shapes to construct the in_trees and out_trees for load API
+  # Parker is working on a serializing these
+  def load_serialized_compiled(save_name):
+    with open(save_name, "rb") as f:
+      serialized_compiled = pickle.load(f)
+    return serialized_compiled
+
+  def get_train_input_output_trees(func, input_args, input_kwargs):
+    _, in_tree_recreated = jax.tree_util.tree_flatten((input_args, input_kwargs))
+    out_shaped = jax.eval_shape(func, *input_args, **input_kwargs)
+    _, out_tree_recreated = jax.tree_util.tree_flatten(out_shaped)
+    return in_tree_recreated, out_tree_recreated
+
+  serialized_compiled = load_serialized_compiled(config.compiled_trainstep_file)
+  shaped_batch = get_shaped_batch(config)
+  example_rng = jax.random.PRNGKey(0)
+  shaped_input_args = (state, shaped_batch, example_rng)
+  shaped_input_kwargs = {}
+  in_tree, out_tree = get_train_input_output_trees(partial_train, shaped_input_args, shaped_input_kwargs)
+  p_train_step = deserialize_and_load(serialized_compiled, in_tree, out_tree, execution_devices=execution_devices)
+  return p_train_step
+
+
+def apply_gradient_clipping(raw_grads, state, clipping_threshold):
+  """Applies gradient clipping to raw gradients, with special handing for FLAX fp8 stats.
+
+  Args:
+    raw_grads: A pytree of raw gradients.
+    state: The current optimizer state.
+    clipping_threshold: The gradient clipping threshold.
+
+  Returns:
+    A pytree of clipped gradients.
+  """
+  import optax
+
+  from megatext.utils.training import OVERWRITE_WITH_GRADIENT
+
+  gradient_clip_transformation = optax.clip_by_global_norm(clipping_threshold)
+  if OVERWRITE_WITH_GRADIENT in raw_grads:
+    # Scales + Amax History for Delayed Tensor Scaling SHOULD NOT be clipped or affect clipping
+    fp8_stats = raw_grads.pop(OVERWRITE_WITH_GRADIENT)
+    grads, _ = gradient_clip_transformation.update(raw_grads, state, None)
+    grads[OVERWRITE_WITH_GRADIENT] = fp8_stats  # pytype: disable=unsupported-operands
+    raw_grads[OVERWRITE_WITH_GRADIENT] = fp8_stats  # pytype: disable=unsupported-operands
+  else:
+    grads, _ = gradient_clip_transformation.update(raw_grads, state, None)
+
+  return grads
+
+
+def update_state_param(state, target_path, value):
+  """
+  Updates a specific parameter in state.params at the given path.
+
+  Args:
+      state: The current TrainState.
+      target_path: A tuple of keys matching the structure inside state.params.
+      value: The value to apply.
+  """
+
+  def create_jax_path(target_path):
+    path = []
+    for k in target_path:
+      path.append(jax.tree_util.DictKey(key=k))
+    return tuple(path)
+
+  def _apply_update(path, param):
+    if path == updated_target_path:
+      return param + value
+    return param
+
+  updated_target_path = create_jax_path(target_path)
+  new_params = jax.tree_util.tree_map_with_path(_apply_update, state.params)
+  return state.replace(params=new_params)
+
+
+def init_decode_state(apply_fn, params):
+  """Init train state with null opt state for decode."""
+  from flax.training import train_state
+
+  state = train_state.TrainState(step=0, apply_fn=apply_fn, params=params, tx=None, opt_state={})  # type: ignore
+  return state
+
+
+def init_training_state(apply_fn, params, tx):
+  """Init train state with null opt state for decode."""
+  from flax.training import train_state
+
+  state = train_state.TrainState.create(apply_fn=apply_fn, params=params, tx=tx)
+  return state
+
+
+def init_initial_state(model, tx, config, is_training, key):
+  """
+  We pass in "static" objects like model, tx, config as JAX compares them by
+  object hash, and instantiating them inside causes pjit top-level annotations
+  to fail to match as pytree prefixes if we re-instantiate.
+
+  Args: model, tx, config, is_training, key
+  """
+  import numpy as np
+  import jax.numpy as jnp
+
+  from megatext.multimodal import processor as mm_processor
+
+  input_shape = (config.micro_batch_size_to_train_on, config.max_target_length)
+  image_shape = mm_processor.get_dummy_image_shape_for_init(
+      config.decoder_block, batch_size=config.micro_batch_size_to_train_on
+  )
+  audio_shape = mm_processor.get_dummy_audio_shape_for_init(config)
+  # Split the master key into independent keys for each RNG collection
+  # Reference: https://flax-linen.readthedocs.io/en/latest/guides/flax_fundamentals/rng_guide.html
+  params_key, dropout_key, aqt_key = jax.random.split(key, 3)
+
+  model_vars = model.init(
+      {"params": params_key, "dropout": dropout_key, "aqt": aqt_key},
+      np.ones(input_shape, dtype=jnp.int32),
+      np.ones(input_shape, dtype=jnp.int32),
+      encoder_images=np.ones(image_shape, dtype=jnp.int32) if config.use_multimodal else None,
+      encoder_audios=np.ones(audio_shape, dtype=jnp.float32) if config.use_audio else None,
+      # nnx_method="no_op",
+  )
+  if is_training:
+    return init_training_state(model.apply, model_vars, tx)
+  return init_decode_state(model.apply, model_vars)
+
+
+def get_abstract_param(model, config):
+  """Get abstract model structure (name, shape) without materializing the weights to save memory"""
+  import numpy as np
+  import jax.numpy as jnp
+
+  from flax.linen import partitioning as nn_partitioning
+
+  from megatext.multimodal import processor as mm_processor
+
+  with model.mesh, nn_partitioning.axis_rules(config.logical_axis_rules):
+    key = jax.random.PRNGKey(0)
+    input_shape = (config.micro_batch_size_to_train_on, config.max_target_length)
+    image_shape = mm_processor.get_dummy_image_shape_for_init(
+        config.decoder_block, batch_size=config.micro_batch_size_to_train_on
+    )
+    audio_shape = mm_processor.get_dummy_audio_shape_for_init(config)
+  abstract_vars = jax.eval_shape(
+      model.init,
+      {"params": key, "dropout": key, "aqt": key},
+      jnp.ones(input_shape, dtype=jnp.int32),
+      jnp.ones(input_shape, dtype=jnp.int32),
+      encoder_images=np.ones(image_shape, dtype=jnp.int32) if config.use_multimodal else None,
+      encoder_audios=np.ones(audio_shape, dtype=jnp.float32) if config.use_audio else None,
+  )
+  return abstract_vars
+
+
+def setup_decode_state(model, config, rng, mesh, checkpoint_manager):
+  """Setup decode state by loading params from a checkpoint.
+  Args:
+    model: the flax model to initialize
+    config: config object
+    rng: jax.prng key
+    mesh: jax.devices() mesh
+    checkpoint_manager: Checkpoint manager
+
+  Returns:
+    state: state with decode params loaded from the checkpoint
+    state_mesh_annotations: the mesh annotations for the state
+  """
+  from flax.linen import partitioning as nn_partitioning
+
+  from megatext.common import checkpointing
+  from megatext.utils import max_utils
+
+  if not config.load_parameters_path:
+    # generate random params
+    max_logging.log("No decode checkpoint specified - generating random weights.")
+    state, state_mesh_annotations, _, _ = setup_initial_state(
+        model, None, None, config, rng, mesh, checkpoint_manager, False
+    )
+  else:
+    # Load params from checkpoint
+    max_logging.log(f"Loading decode params from {config.load_parameters_path}")
+    unboxed_abstract_state, state_mesh_annotations, _ = get_abstract_state(model, None, config, rng, mesh, False)
+    with nn_partitioning.axis_rules(config.logical_axis_rules):
+      params = checkpointing.load_params_from_path(
+          config.load_parameters_path,
+          unboxed_abstract_state.params,
+          config.checkpoint_storage_concurrent_gb,
+          config.checkpoint_storage_use_ocdbt,
+          config.checkpoint_storage_use_zarr3,
+      )
+    state = init_decode_state(None, params)
+
+  state = max_utils.unbox_logicallypartioned(state)
+  return state, state_mesh_annotations
+
+
+def setup_training_state(model, data_iterator, tx, config, rng, mesh, checkpoint_manager):
+  is_training = True
+  return setup_initial_state(
+      model,
+      data_iterator,
+      tx,
+      config,
+      rng,
+      mesh,
+      checkpoint_manager,
+      is_training,
+  )
+
+
+def setup_initial_state(
+    model,
+    data_iterator,
+    tx,
+    config,
+    rng,
+    mesh,
+    checkpoint_manager,
+    is_training=True,
+):
+  """We initialize the model and optimizer state, and optionally load from a
+  checkpoint as necessary.
+
+  Args:
+    model: the flax model to initialize
+    tx: the optax.GradientTransformation
+    config: config object
+    rng: jax.prng key
+    mesh: jax.devices() mesh
+    checkpoint_manager: an Orbax checkpointing.CheckpointManager object
+    is_training: True to initialize training state, False for decode state
+
+  Returns:
+    state: the initialized train state
+    state_mesh_annotations: the mesh annotations for the train state
+  """
+  import functools as _functools
+
+  from flax.linen import partitioning as nn_partitioning
+
+  import orbax.checkpoint.experimental.emergency.checkpoint_manager as emergency_checkpoint_manager
+  import orbax.checkpoint.experimental.emergency.replicator_checkpoint_manager as emergency_replicator_checkpoint_manager
+
+  from megatext.common import checkpointing
+  from megatext.utils import max_utils
+
+  unboxed_abstract_state, state_mesh_annotations, state_mesh_shardings = get_abstract_state(
+      model, tx, config, rng, mesh, is_training
+  )
+
+  # Initialization
+  with nn_partitioning.axis_rules(config.logical_axis_rules):
+    restored, raw_params = checkpointing.load_state_if_possible(
+        checkpoint_manager,
+        data_iterator,
+        config.load_parameters_path,
+        config.load_full_state_path,
+        config.checkpoint_storage_concurrent_gb,
+        unboxed_abstract_state,
+        config.enable_single_replica_ckpt_restoring,
+        config.dataset_type,
+        use_ocdbt=config.checkpoint_storage_use_ocdbt,
+        use_zarr3=config.checkpoint_storage_use_zarr3,
+        enable_orbax_v1=config.enable_orbax_v1,
+        checkpoint_conversion_fn=config.checkpoint_conversion_fn,
+        source_checkpoint_layout=config.source_checkpoint_layout,
+        expansion_factor_real_data=config.expansion_factor_real_data,
+    )
+
+    if restored:
+      if isinstance(
+          checkpoint_manager,
+          (
+              emergency_checkpoint_manager.CheckpointManager,
+              emergency_replicator_checkpoint_manager.ReplicatorCheckpointManager,
+          ),
+      ):
+        state = restored
+      else:
+        # The update of data_iterator state happens in place, no need to assign explicitly
+        state = restored["items"]
+    else:
+      init_state_partial = _functools.partial(init_initial_state, model, tx, config, is_training)
+      init_state_partial.__name__ = "initialize_state"
+      # pylint: disable=not-callable
+      state = jax.jit(
+          init_state_partial,
+          in_shardings=None,
+          out_shardings=state_mesh_shardings,
+      )(rng)
+      if raw_params:  # If we loaded a partial state, we need to merge it.
+        state = state.replace(params=raw_params)
+
+  state = max_utils.unbox_logicallypartioned(state)
+
+  return state, state_mesh_annotations, state_mesh_shardings, data_iterator
+
+
+def get_logical_annotations(model, tx, config, rng, mesh, is_training=True):
+  import functools as _functools
+
+  from flax import linen as nn
+  from flax.linen import partitioning as nn_partitioning
+
+  init_state_partial = _functools.partial(init_initial_state, model, tx, config, is_training, rng)
+
+  with jax.set_mesh(mesh), nn_partitioning.axis_rules(config.logical_axis_rules):
+    abstract_state = jax.eval_shape(init_state_partial)
+    logical_annotations = nn.get_partition_spec(abstract_state)
+  return logical_annotations
+
+
+def get_abstract_state(model, tx, config, rng, mesh, is_training=True):
+  """Get a shaped abstraction of the state (including optimizer)"""
+  import functools as _functools
+
+  from flax import linen as nn
+  from flax.linen import partitioning as nn_partitioning
+
+  from megatext.utils import max_utils
+  from megatext.utils import sharding as _sharding
+
+  init_state_partial = _functools.partial(init_initial_state, model, tx, config, is_training, rng)
+
+  with nn_partitioning.axis_rules(config.logical_axis_rules):
+    abstract_state = jax.eval_shape(init_state_partial)
+
+  state_logical_annotations = nn.get_partition_spec(abstract_state)
+
+  state_mesh_shardings = nn.logical_to_mesh_sharding(state_logical_annotations, mesh, config.logical_axis_rules)
+  if is_training and config.shard_optimizer_over_data:
+    # Add data to sharding for optimizer state
+    state_mesh_shardings = state_mesh_shardings.replace(
+        opt_state=jax.tree.map_with_path(
+            _functools.partial(_sharding.add_data_to_sharding, mesh),
+            max_utils.unbox_logicallypartioned(abstract_state).opt_state,
+            state_mesh_shardings.opt_state,
+        )
+    )
+  if is_training and config.optimizer_memory_host_offload:
+    opt_state = jax.tree_util.tree_map(lambda x: x.with_memory_kind(kind="pinned_host"), state_mesh_shardings.opt_state)
+    state_mesh_shardings = state_mesh_shardings.replace(opt_state=opt_state)
+  if is_training and config.parameter_memory_host_offload:
+    assert config.param_scan_axis == 0, "You must set the scan axis 0 to enable parameter offloading."
+
+    def move(path, x):
+      max_logging.log(f"max_utils.py: Moving {path} to host")
+      return x.with_memory_kind(kind="pinned_host")
+
+    params = jax.tree_util.tree_map_with_path(move, state_mesh_shardings.params)
+    state_mesh_shardings = state_mesh_shardings.replace(params=params)
+
+  abstract_sharded_state = jax.jit(init_state_partial, in_shardings=None, out_shardings=state_mesh_shardings).eval_shape()
+
+  unboxed_abstract_sharded_state = max_utils.unbox_logicallypartioned(abstract_sharded_state)
+  # Initialization
+  with jax.set_mesh(mesh), nn_partitioning.axis_rules(config.logical_axis_rules):
+    state_mesh_annotations = nn.logical_to_mesh(state_logical_annotations)
+  return (
+      unboxed_abstract_sharded_state,
+      state_mesh_annotations,
+      state_mesh_shardings,
+  )
+
+
+def get_prefill_kv_cache_annotations(model, config, rng, mesh, page_state=None):
+  """Get a shaped abstraction of the state (including optimizer)"""
+  import jax.numpy as jnp
+
+  from flax import linen as nn
+  from flax.linen import partitioning as nn_partitioning
+
+  from megatext.common.common_types import MODEL_MODE_PREFILL
+  from megatext.multimodal import processor as mm_processor
+
+  def init_kv_cache(model, config):
+    input_shape = (
+        config.micro_batch_size_to_train_on,
+        config.max_prefill_predict_length,
+    )
+    image_shape = mm_processor.get_dummy_image_shape_for_init(
+        config.decoder_block, batch_size=config.micro_batch_size_to_train_on
+    )
+    audio_shape = mm_processor.get_dummy_audio_shape_for_init(config)
+
+    model_vars = model.init(
+        {"params": rng, "dropout": rng, "aqt": rng},
+        jnp.ones(input_shape),
+        jnp.ones(input_shape),
+        encoder_images=jnp.ones(image_shape) if config.use_multimodal else None,
+        encoder_audios=jnp.ones(audio_shape) if config.use_audio else None,
+        model_mode=MODEL_MODE_PREFILL,
+        slot=0,
+        page_state=page_state,
+    )
+    return model_vars["cache"]
+
+  with nn_partitioning.axis_rules(config.logical_axis_rules):
+    init_kv_cache_partial = functools.partial(init_kv_cache, model, config)
+    abstract_state = jax.eval_shape(init_kv_cache_partial)
+  state_logical_annotations = nn.get_partition_spec(abstract_state)
+  with jax.set_mesh(mesh), nn_partitioning.axis_rules(config.logical_axis_rules):
+    state_mesh_annotations = nn.logical_to_mesh(state_logical_annotations)
+  return state_mesh_annotations
+
+
+def get_kv_cache_annotations(model, config, rng, mesh, page_state=None):
+  """Get a shaped abstraction of the state (including optimizer)"""
+  import jax.numpy as jnp
+
+  from flax import linen as nn
+  from flax.linen import partitioning as nn_partitioning
+
+  from megatext.common.common_types import MODEL_MODE_AUTOREGRESSIVE
+  from megatext.multimodal import processor as mm_processor
+
+  def init_kv_cache(model, config):
+    input_shape = (config.micro_batch_size_to_train_on, 1)
+    image_shape = mm_processor.get_dummy_image_shape_for_init(
+        config.decoder_block, batch_size=config.micro_batch_size_to_train_on
+    )
+    audio_shape = mm_processor.get_dummy_audio_shape_for_init(config)
+
+    model_vars = model.init(
+        {"params": rng, "dropout": rng, "aqt": rng},
+        jnp.ones(input_shape),
+        jnp.ones(input_shape),
+        encoder_images=jnp.ones(image_shape) if config.use_multimodal else None,
+        encoder_audios=jnp.ones(audio_shape) if config.use_audio else None,
+        model_mode=MODEL_MODE_AUTOREGRESSIVE,
+        slot=0,
+        page_state=page_state,
+    )
+    return model_vars["cache"]
+
+  with nn_partitioning.axis_rules(config.logical_axis_rules):
+    init_kv_cache_partial = functools.partial(init_kv_cache, model, config)
+    abstract_state = jax.eval_shape(init_kv_cache_partial)
+  state_logical_annotations = nn.get_partition_spec(abstract_state)
+  with jax.set_mesh(mesh), nn_partitioning.axis_rules(config.logical_axis_rules):
+    state_mesh_annotations = nn.logical_to_mesh(state_logical_annotations)
+  return state_mesh_annotations
+
+
+def save_quantized_checkpoint_if_configured(config, params):
+  """Save quantized checkpoint if configured"""
+  from megatext.common import checkpointing
+
+  assert config.quantization, "quantization must be configured"
+  if config.save_quantized_params_path:
+    checkpointing.save_params_to_path(
+        checkpoint_dir=config.save_quantized_params_path,
+        params=params,
+        use_ocdbt=config.checkpoint_storage_use_ocdbt,
+        use_zarr3=config.checkpoint_storage_use_zarr3,
+    )
+  else:
+    max_logging.log("Skipping saving quantized checkpoint as save_quantized_params_path is null.")

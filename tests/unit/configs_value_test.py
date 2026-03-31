@@ -23,7 +23,7 @@ import pydantic
 from megatext.configs import pyconfig
 from megatext.configs.pyconfig import initialize_pydantic
 from megatext.configs import types
-from megatext.utils.globals import MAXTEXT_REPO_ROOT
+from megatext.utils.constants import MAXTEXT_REPO_ROOT
 
 # Path to the base.yml config. This assumes that `pytest` is run from the project root.
 _BASE_CONFIG_PATH = os.path.join(MAXTEXT_REPO_ROOT, "src", "maxtext", "configs", "base.yml")

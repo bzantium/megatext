@@ -45,12 +45,11 @@ from google.cloud import storage
 import jax
 import jax.numpy as jnp
 from megatext.configs import pyconfig
-from megatext.utils.globals import MAXTEXT_TEST_ASSETS_ROOT
-from megatext.checkpoint_conversion.utils.hf_utils import convert_jax_weight_to_torch
+from megatext.utils.constants import MAXTEXT_TEST_ASSETS_ROOT
 from megatext.common.common_types import DECODING_ACTIVE_SEQUENCE_INDICATOR, MODEL_MODE_TRAIN
 from megatext.layers import quantizations
 from megatext.models import models
-from megatext.utils import max_logging
+from megatext.utils import logging as max_logging
 from megatext.utils import megatext_utils
 import numpy as np
 import torch
@@ -469,7 +468,9 @@ def main(config, test_args):  # pylint: disable=W0621
           rngs={"aqt": init_rng},
       )
       mt_logits_jax_sliced = mt_logits_jax[:, :actual_seq_len, :]
-      mt_logits_torch = convert_jax_weight_to_torch(mt_logits_jax_sliced)
+      import torch
+      mt_logits_np = np.array(mt_logits_jax_sliced, dtype=np.float32)
+      mt_logits_torch = torch.from_numpy(mt_logits_np)
 
       # --- Compare logits for the last token prediction ---
       hf_last_token_logits = hf_logits_torch[:, -1, :]

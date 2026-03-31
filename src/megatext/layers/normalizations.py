@@ -26,7 +26,7 @@ from jax.sharding import NamedSharding
 from megatext.common.common_types import Array, DType, ShardMode
 from megatext.layers import nnx_wrappers
 from megatext.layers.initializers import Initializer, variable_to_logically_partitioned
-from megatext.utils import max_logging
+from megatext.utils import logging as max_logging
 from megatext.utils import max_utils
 
 

@@ -30,9 +30,9 @@ from typing import Any, Literal, NewType, Optional
 
 import jax
 from megatext.common.common_types import AttentionType, DecoderBlockType, ShardMode
-from megatext.utils import gcs_utils
+from megatext.utils import storage as gcs_utils
 from megatext.utils import max_utils
-from megatext.utils.globals import MEGATEXT_ASSETS_ROOT
+from megatext.utils.constants import MEGATEXT_ASSETS_ROOT
 from megatext.utils import accelerator_to_spec_map
 from pydantic.config import ConfigDict
 from pydantic.fields import Field
@@ -176,15 +176,6 @@ class DatasetType(str, Enum):
   ARECORD = "arecord"
   FIXED_ARECORD = "fixed_arecord"
 
-
-class SamplingStrategy(str, Enum):
-  """Supported decoding and sampling strategies."""
-
-  GREEDY = "greedy"
-  WEIGHTED = "weighted"
-  NUCLEUS = "nucleus"
-  TOPK = "topk"
-  COMPOSITE = "composite"
 
 
 class ProfilerType(str, Enum):
@@ -1128,17 +1119,12 @@ class Optimizer(BaseModel):
       0.1,
       description="Final LR as a fraction of peak LR (applies to both cosine and WSD schedules).",
   )
-  wsd_decay_steps_fraction: float = Field(
-      0.1,
-      ge=0.0,
-      le=1.0,
-      description="Fraction of total steps for decay phase in WSD schedule.",
-  )
+  warmup_steps: int = Field(0, ge=0, description="Number of steps for LR warmup. 0 disables warmup.")
+  wsd_decay_steps: int = Field(0, ge=0, description="Number of steps for decay phase in WSD schedule.")
   wsd_decay_style: WsdDecayStyle = Field(
       WsdDecayStyle.LINEAR,
       description="The decay style for WSD schedule ('linear' or 'cosine').",
   )
-  warmup_steps_fraction: float = Field(0.1, ge=0.0, le=1.0, description="Fraction of total steps for LR warmup.")
   learning_rate_schedule_steps: int = Field(
       -1,
       ge=-1,
@@ -1249,29 +1235,9 @@ class InferenceGeneral(BaseModel):
 
   max_target_length: int = Field(2048, description="Maximum sequence length for the model.")
   max_prefill_predict_length: int = Field(64, description="Maximum length for the prefill stage in decoding.")
-  prompt: str = Field("I love to", description="The default prompt for sampling.")
-  load_from_prefill_dir: bool = Field(False, description="Reads prefill cache from directory instead of computing it.")
-  prefill_cache_dir: PathStr = Field("", description="Directory for the prefill cache.")
-  autoregressive_decode_assert: str = Field(
-      "",
-      description="Value to assert against during autoregressive decoding, for testing.",
-  )
-  model_call_mode: str = Field("", description="Mode for model call, e.g., 'inference'.")
   use_chunked_prefill: bool = Field(False, description="Use chunked prefilling for long sequences.")
   prefill_chunk_size: int = Field(256, description="The chunk size for chunked prefilling.")
-  enable_model_warmup: bool = Field(False, description="Run a warmup cycle before starting the server.")
-  enable_llm_inference_pool: bool = Field(False, description="Launch inference server for llm_inference_gateway.")
-  multi_sampling: bool = Field(False, description="Enable multiple sampling configurations.")
-  return_log_prob: bool = Field(False, description="Return log probabilities during inference.")
 
-
-class Decoding(BaseModel):
-  """Configuration for decoding and sampling strategies."""
-
-  decode_sampling_strategy: SamplingStrategy = Field(SamplingStrategy.GREEDY, description="The strategy for decoding.")
-  decode_sampling_nucleus_p: int | float = Field(-1.0, description="Nucleus (top-p) sampling probability. -1 to disable.")
-  decode_sampling_top_k: int = Field(0, description="Top-k sampling value. 0 to disable.")
-  decode_sampling_temperature: float = Field(1.0, description="Sampling temperature.")
 
 
 class InferenceLayout(BaseModel):
@@ -1283,13 +1249,6 @@ class InferenceLayout(BaseModel):
   compute_axis_order: str = Field("0,1,2,3", description="Axis order for compute operations.")
   reshape_q: bool = Field(False, description="Reshape Q tensor in attention.")
 
-
-class InferenceServer(BaseModel):
-  """Configuration for running as an inference server."""
-
-  inference_server: str = Field("MaxtextInterleavedServer", description="Inference server to start.")
-  prefill_slice: str = Field("v5e-16", description="Slice to use for prefill in disaggregation mode.")
-  generate_slice: str = Field("v5e-16", description="Slice to use for generatation in disaggregation mode.")
 
 
 class InferenceBenchmark(BaseModel):
@@ -1305,16 +1264,6 @@ class InferenceBenchmark(BaseModel):
   inference_metadata_file: PathStr = Field("", description="Path to a JSON file with inference metadata.")
   inference_benchmark_test: bool = Field(False, description="Flag to indicate a benchmark test run.")
 
-
-class PrefixCaching(BaseModel):
-  """Configuration for Prefix Caching in JetStream."""
-
-  enable_prefix_caching: bool = Field(False, description="Enable prefix caching.")
-  prefix_caching_hbm_byte: int = Field(10_000_000_000, description="HBM memory allocation for prefix caching in bytes.")
-  prefix_caching_dram_byte: int = Field(
-      100_000_000_000,
-      description="DRAM memory allocation for prefix caching in bytes.",
-  )
 
 
 class AOT(BaseModel):
@@ -1778,11 +1727,8 @@ class MaxTextConfig(
     Tokenizer,
     # Inference
     InferenceGeneral,
-    Decoding,
     InferenceLayout,
-    InferenceServer,
     InferenceBenchmark,
-    PrefixCaching,
     # Development and Debugging
     AOT,
     DevelopmentAndDebugging,
@@ -1824,7 +1770,7 @@ class MaxTextConfig(
   def set_derived_and_validate_values(self) -> "MaxTextConfig":
     """
     Computes all derived values and runs all cross-field validations after initial parsing.
-    This logic is ported from the legacy pyconfig_deprecated.py system and adapted for Pydantic.
+    Computes all derived values and runs all cross-field validations after initial parsing.
     """
     if self.custom_mesh_and_rule:
       custom_mesh_path = os.path.join(
@@ -1913,14 +1859,15 @@ class MaxTextConfig(
           "Set scan_layers=False in your config to use deepstack features."
       )
 
-    # Validate WSD learning rate schedule fractions
+    # Validate WSD learning rate schedule step counts
     if self.lr_schedule_type == LearningRateScheduleType.WSD:
-      total_fraction = self.warmup_steps_fraction + self.wsd_decay_steps_fraction
-      if total_fraction > 1.0:
+      total = self.warmup_steps + self.wsd_decay_steps
+      if total > self.learning_rate_schedule_steps:
         raise ValueError(
-            f"Invalid WSD schedule: warmup_steps_fraction ({self.warmup_steps_fraction}) + "
-            f"wsd_decay_steps_fraction ({self.wsd_decay_steps_fraction}) must not exceed 1.0. "
-            f"Current sum: {total_fraction}"
+            f"Invalid WSD schedule: warmup_steps ({self.warmup_steps}) + "
+            f"wsd_decay_steps ({self.wsd_decay_steps}) must not exceed "
+            f"learning_rate_schedule_steps ({self.learning_rate_schedule_steps}). "
+            f"Current sum: {total}"
         )
 
     # If eval_per_device_batch_size is not set, it defaults to the training per_device_batch_size.
@@ -2503,3 +2450,6 @@ class MaxTextConfig(
         self.constant_bound_config = []
 
     return self
+
+# Alias for naming consistency
+MegaTextConfig = MaxTextConfig

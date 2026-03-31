@@ -30,8 +30,8 @@ import numpy as np
 
 from megatext.configs import pyconfig
 from megatext.inference.offline_engine import OfflineEngine, InputData, CompletionOutput
-from megatext.utils import max_logging
-from megatext.utils.globals import MAXTEXT_PKG_DIR
+from megatext.utils import logging as max_logging
+from megatext.utils.constants import MAXTEXT_PKG_DIR
 
 
 def get_metrics(results: list[CompletionOutput], start_time, end_time):

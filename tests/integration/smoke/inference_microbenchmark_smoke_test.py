@@ -20,7 +20,7 @@ import unittest
 from absl.testing import absltest
 
 from megatext.configs import pyconfig
-from megatext.utils.globals import MAXTEXT_CONFIGS_DIR, MAXTEXT_ASSETS_ROOT
+from megatext.utils.constants import MAXTEXT_CONFIGS_DIR, MAXTEXT_ASSETS_ROOT
 from megatext.common.gcloud_stub import is_decoupled
 
 pytestmark = [pytest.mark.external_serving]

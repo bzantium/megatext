@@ -24,7 +24,7 @@ import jax.numpy as jnp
 from jax.sharding import Mesh
 
 from megatext.configs import pyconfig
-from megatext.utils.globals import MAXTEXT_PKG_DIR
+from megatext.utils.constants import MAXTEXT_PKG_DIR
 from megatext.common.common_types import MODEL_MODE_TRAIN
 from megatext.layers.decoders import Decoder
 from megatext.utils import megatext_utils

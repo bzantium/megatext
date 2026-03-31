@@ -20,7 +20,7 @@ import unittest
 
 from megatext.configs import pyconfig
 from megatext.configs.pyconfig import resolve_config_path, _CONFIG_FILE_MAPPING, _module_from_path
-from megatext.utils.globals import MAXTEXT_CONFIGS_DIR, MAXTEXT_PKG_DIR
+from megatext.utils.constants import MAXTEXT_CONFIGS_DIR, MAXTEXT_PKG_DIR
 from tests.utils.test_helpers import get_test_config_path, get_post_train_test_config_path
 
 
@@ -121,10 +121,10 @@ class PyconfigTest(unittest.TestCase):
       self.assertTrue(os.path.isfile(full_path), f"Default config for '{module}' not found at {full_path}")
 
   def test_module_from_path(self):
-    import megatext.trainers.pre_train.train as train_module
+    import megatext.trainers.pretrain as train_module
     module_file = train_module.__file__
     result = _module_from_path(module_file)
-    self.assertEqual(result, "megatext.trainers.pre_train.train")
+    self.assertEqual(result, "megatext.trainers.pretrain")
 
   def test_unknown_module_raises(self):
     with self.assertRaises(ValueError):

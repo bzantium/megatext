@@ -32,7 +32,7 @@ from typing import Optional, Tuple
 import flax.linen as nn
 import jax
 from megatext.configs import pyconfig
-from megatext.utils.globals import MEGATEXT_PKG_DIR
+from megatext.utils.constants import MEGATEXT_PKG_DIR
 from megatext.layers import quantizations
 from megatext.models import models
 from megatext.utils import megatext_utils

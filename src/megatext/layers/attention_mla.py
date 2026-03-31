@@ -73,7 +73,7 @@ from megatext.inference import page_manager
 from megatext.inference import paged_attention
 from megatext.inference.kvcache import KVQuant
 from megatext.utils.sharding import create_sharding
-from megatext.utils.globals import EPS
+from megatext.utils.constants import EPS
 
 
 class Indexer(nnx.Module):

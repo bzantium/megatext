@@ -16,10 +16,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# --- Dependency layer (cached unless pyproject.toml changes) ---
-COPY pyproject.toml .
-RUN uv pip install --system --no-cache ".[tpu]"
+# --- Dependency layer (cached unless requirements.txt changes) ---
+COPY requirements.txt .
+RUN uv pip install --system --no-cache \
+    --extra-index-url https://download.pytorch.org/whl/cpu \
+    --index-strategy unsafe-best-match \
+    -r requirements.txt
 
 # --- Source layer ---
 COPY . .
-RUN uv pip install --system --no-cache .
+RUN uv pip install --system --no-cache --no-deps .

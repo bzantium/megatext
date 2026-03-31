@@ -27,7 +27,7 @@ import jax.numpy as jnp
 from jax.sharding import Mesh
 from megatext.configs import pyconfig
 from megatext.common import common_types
-from megatext.utils.globals import MAXTEXT_REPO_ROOT
+from megatext.utils.constants import MAXTEXT_REPO_ROOT
 from megatext.inference.maxengine import maxengine
 from megatext.layers.attentions import Attention
 from megatext.layers.embeddings import (

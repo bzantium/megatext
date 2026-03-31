@@ -26,7 +26,7 @@ import grain.python as grain
 import jax
 import numpy as np
 
-from megatext.utils import max_logging
+from megatext.utils import logging as max_logging
 from megatext.data.data_sources import (
     BlendedDataSource,
     DocumentDataSource,

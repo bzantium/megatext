@@ -794,10 +794,8 @@ class TestLearningRateSchedules(unittest.TestCase):
     learning_rate = 1e-3
     learning_rate_schedule_steps = 1000
     steps = 1200
-    warmup_steps_fraction = 0.1
+    warmup_steps = 100
     learning_rate_final_fraction = 0.1
-
-    warmup_steps = int(learning_rate_schedule_steps * warmup_steps_fraction)
 
     config = pyconfig.initialize(
         [None, get_test_config_path()],
@@ -805,7 +803,7 @@ class TestLearningRateSchedules(unittest.TestCase):
         learning_rate=learning_rate,
         learning_rate_schedule_steps=learning_rate_schedule_steps,
         steps=steps,
-        warmup_steps_fraction=warmup_steps_fraction,
+        warmup_steps=warmup_steps,
         lr_schedule_type="cosine",
         learning_rate_final_fraction=learning_rate_final_fraction,
     )
@@ -835,12 +833,10 @@ class TestLearningRateSchedules(unittest.TestCase):
     learning_rate = 1e-3
     learning_rate_schedule_steps = 1000
     steps = 1200
-    warmup_steps_fraction = 0.1
+    warmup_steps = 100
     learning_rate_final_fraction = 0.1
-    wsd_decay_steps_fraction = 0.1
+    decay_steps = 100
 
-    warmup_steps = int(learning_rate_schedule_steps * warmup_steps_fraction)
-    decay_steps = int(learning_rate_schedule_steps * wsd_decay_steps_fraction)
     stable_steps = learning_rate_schedule_steps - warmup_steps - decay_steps
     decay_start = warmup_steps + stable_steps
 
@@ -852,10 +848,10 @@ class TestLearningRateSchedules(unittest.TestCase):
           learning_rate=learning_rate,
           learning_rate_schedule_steps=learning_rate_schedule_steps,
           steps=steps,
-          warmup_steps_fraction=warmup_steps_fraction,
+          warmup_steps=warmup_steps,
           lr_schedule_type="wsd",
           learning_rate_final_fraction=learning_rate_final_fraction,
-          wsd_decay_steps_fraction=wsd_decay_steps_fraction,
+          wsd_decay_steps=decay_steps,
           wsd_decay_style=decay_style,
       )
       schedule_fn = megatext_utils.create_learning_rate_schedule(config)
@@ -891,7 +887,7 @@ class TestLearningRateSchedules(unittest.TestCase):
       # Zero phase
       self.assertAlmostEqual(float(schedule_fn(steps - 1)), 0.0, places=6)
 
-    # Test invalid fractions - should raise during config initialization
+    # Test invalid step counts - should raise during config initialization
     with self.assertRaises(ValueError) as cm:
       pyconfig.initialize(
           [None, get_test_config_path()],
@@ -899,13 +895,13 @@ class TestLearningRateSchedules(unittest.TestCase):
           learning_rate=learning_rate,
           learning_rate_schedule_steps=learning_rate_schedule_steps,
           steps=steps,
-          warmup_steps_fraction=0.6,
+          warmup_steps=600,
           lr_schedule_type="wsd",
           learning_rate_final_fraction=learning_rate_final_fraction,
-          wsd_decay_steps_fraction=0.5,  # Sum > 1.0
+          wsd_decay_steps=500,  # Sum > learning_rate_schedule_steps
       )
-    self.assertIn("warmup_steps_fraction", str(cm.exception))
-    self.assertIn("wsd_decay_steps_fraction", str(cm.exception))
+    self.assertIn("warmup_steps", str(cm.exception))
+    self.assertIn("wsd_decay_steps", str(cm.exception))
 
 
 class TestGetAbstractState(unittest.TestCase):

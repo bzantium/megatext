@@ -21,9 +21,9 @@ import os
 import pytest
 
 from megatext.inference.decode import main as decode_main
-from megatext.trainers.pre_train.train import main as train_main
-from megatext.utils.globals import MAXTEXT_ASSETS_ROOT
-from megatext.utils.generate_param_only_checkpoint import main as generate_param_only_ckpt_main
+from megatext.trainers.pretrain import main as train_main
+from megatext.utils.constants import MAXTEXT_ASSETS_ROOT
+from tools.generate_param_only_checkpoint import main as generate_param_only_ckpt_main
 from tests.integration.checkpointing_test import get_checkpointing_command
 from tests.utils.test_helpers import get_test_config_path, get_test_dataset_path, get_test_base_output_directory
 

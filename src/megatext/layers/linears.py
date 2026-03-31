@@ -35,7 +35,7 @@ from megatext.layers import nnx_wrappers, quantizations
 from megatext.layers import normalizations
 from megatext.layers.initializers import NdInitializer, nd_dense_init, default_bias_init, variable_to_logically_partitioned
 from megatext.layers.quantizations import AqtQuantization as Quant
-from megatext.utils import max_logging
+from megatext.utils import logging as max_logging
 from megatext.utils import max_utils
 from megatext.utils.sharding import maybe_shard_with_logical
 

@@ -28,7 +28,7 @@ from pathlib import Path
 import grain.python as grain
 import numpy as np
 
-from megatext.utils import max_logging
+from megatext.utils import logging as max_logging
 from megatext.data.indexed_dataset import make_arecord_dataset, make_mmap_dataset
 from megatext.data.bin_packing import build_packed_sample_index
 

@@ -26,7 +26,7 @@ from megatext.layers import embeddings
 from megatext.common.common_types import MODEL_MODE_TRAIN
 from megatext.common.common_types import Config
 from megatext.layers.nnx_decoders import NNXDecoderLayer
-from megatext.utils import max_logging
+from megatext.utils import logging as max_logging
 from megatext.utils import megatext_utils
 
 from tests.utils.test_helpers import get_test_config_path, get_decoupled_parallelism_overrides

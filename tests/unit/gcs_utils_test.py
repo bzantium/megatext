@@ -21,7 +21,7 @@ import tempfile
 import pytest
 
 # Module to be tested
-from megatext.utils import gcs_utils
+from megatext.utils import storage as gcs_utils
 
 
 @pytest.mark.cpu_only

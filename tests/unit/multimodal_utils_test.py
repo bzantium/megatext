@@ -18,7 +18,7 @@ import unittest
 import numpy as np
 
 from megatext.configs import pyconfig
-from megatext.utils.globals import MAXTEXT_REPO_ROOT
+from megatext.utils.constants import MAXTEXT_REPO_ROOT
 from megatext.multimodal import processor as mm_processor
 from megatext.multimodal import utils as mm_utils
 from megatext.multimodal import processor_gemma3

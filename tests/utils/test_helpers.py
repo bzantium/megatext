@@ -21,7 +21,7 @@ of Google Cloud Storage paths.
 
 import os
 from megatext.common.gcloud_stub import is_decoupled
-from megatext.utils.globals import MAXTEXT_CONFIGS_DIR
+from megatext.utils.constants import MAXTEXT_CONFIGS_DIR
 
 
 def get_test_config_path(relative_path: str = "base.yml"):

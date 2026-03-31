@@ -29,8 +29,8 @@ from datetime import datetime
 import json
 import os
 import pytest
-from megatext.trainers.pre_train.train import main as train_main
-from megatext.utils.globals import MAXTEXT_REPO_ROOT
+from megatext.trainers.pretrain import main as train_main
+from megatext.utils.constants import MAXTEXT_REPO_ROOT
 from tests.integration.checkpointing_test import get_checkpointing_command
 
 

@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from megatext.utils import max_logging
+from megatext.utils import logging as max_logging
 
 
 def build_packed_sample_index(

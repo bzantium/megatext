@@ -26,12 +26,12 @@ import numpy as np
 
 import jax
 
-from megatext.utils.globals import EPS
+from megatext.utils.constants import EPS
 from megatext.common.gcloud_stub import mldiagnostics_modules
 from megatext.common.gcloud_stub import workload_monitor
 from megatext.common.managed_mldiagnostics import ManagedMLDiagnostics
-from megatext.utils import gcs_utils
-from megatext.utils import max_logging
+from megatext.utils import storage as gcs_utils
+from megatext.utils import logging as max_logging
 from megatext.utils import max_utils
 from megatext.utils import megatext_utils
 from collections import defaultdict

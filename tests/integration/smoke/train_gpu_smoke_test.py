@@ -19,8 +19,8 @@ import unittest
 from absl.testing import absltest
 
 from megatext.common.gcloud_stub import is_decoupled
-from megatext.trainers.pre_train.train import main as train_main
-from megatext.utils.globals import MAXTEXT_ASSETS_ROOT
+from megatext.trainers.pretrain import main as train_main
+from megatext.utils.constants import MAXTEXT_ASSETS_ROOT
 from tests.utils.test_helpers import get_test_dataset_path, get_test_base_output_directory, get_test_config_path
 
 

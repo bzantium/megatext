@@ -61,7 +61,7 @@ from megatext.models import (
     simple_layer,
 )
 from megatext.multimodal import utils as mm_utils
-from megatext.utils import max_logging, max_utils, megatext_utils, sharding
+from megatext.utils import logging as max_logging, max_utils, megatext_utils, sharding
 from megatext.utils.sharding import create_sharding
 
 # ------------------------------------------------------------------------------

@@ -28,14 +28,13 @@ import jax.numpy as jnp
 
 import omegaconf
 
-from megatext.configs import pyconfig_deprecated
-from megatext.utils.globals import MEGATEXT_CONFIGS_DIR, MEGATEXT_ASSETS_ROOT, HF_IDS, MEGATEXT_PKG_DIR
+from megatext.utils.constants import MEGATEXT_CONFIGS_DIR, MEGATEXT_ASSETS_ROOT, HF_IDS, MEGATEXT_PKG_DIR
 from megatext.common.common_types import DecoderBlockType, ShardMode
 from megatext.configs import types
 from megatext.configs.types import MegaTextConfig
-from megatext.inference.inference_utils import str2bool
+from megatext.utils.max_utils import str2bool
 from megatext.utils import max_utils
-from megatext.utils import max_logging
+from megatext.utils import logging as max_logging
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("LOGLEVEL", "INFO"))
@@ -49,17 +48,7 @@ KEYS_NO_LOGGING = ("hf_access_token",)
 
 # Module paths to their default config file (relative to MEGATEXT_CONFIGS_DIR).
 _CONFIG_FILE_MAPPING: dict[str, str] = {
-    "megatext.trainers.pre_train.train": "base.yml",
-    "megatext.trainers.pre_train.train_compile": "base.yml",
-    "megatext.inference.decode": "base.yml",
-    "megatext.inference.decode_multi": "base.yml",
-    "megatext.inference.inference_microbenchmark": "base.yml",
-    "megatext.inference.inference_microbenchmark_sweep": "base.yml",
-    "megatext.inference.maxengine.maxengine_server": "base.yml",
-    "megatext.inference.mlperf.microbenchmarks.benchmark_chunked_prefill": "base.yml",
-    "megatext.inference.vllm_decode": "base.yml",
-    "megatext.checkpoint_conversion.to_megatext": "base.yml",
-    "megatext.checkpoint_conversion.to_huggingface": "base.yml",
+    "megatext.trainers.pretrain": "base.yml",
 }
 
 
@@ -184,12 +173,7 @@ def _prepare_for_pydantic(raw_keys: dict[str, Any]) -> dict[str, Any]:
     if (
         key
         in (
-            "hf_train_files",
-            "hf_eval_files",
             "hf_access_token",
-            "hf_name",
-            "hf_data_dir",
-            "hf_eval_split",
             "tokenizer_path",
         )
         and new_value == ""
@@ -411,6 +395,4 @@ def initialize_pydantic(argv: list[str], **kwargs) -> MegaTextConfig:
   return pydantic_config
 
 
-# Shim for backward compatibility with pyconfig_deprecated_test.py
-validate_and_update_keys = pyconfig_deprecated.validate_and_update_keys
 __all__ = ["initialize", "initialize_pydantic"]
