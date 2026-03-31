@@ -1052,6 +1052,15 @@ class MMapArecordDataset(BaseModel):
 
 
 
+class Distillation(BaseModel):
+  """Configuration for knowledge distillation."""
+
+  distill_alpha: float = Field(0.5, description="Weight for the distillation loss (KL divergence).")
+  distill_temperature: float = Field(1.0, description="Temperature for softmax in distillation.")
+  distill_beta: float = Field(0.0, description="Weight for cosine similarity loss on intermediate activations. 0 disables.")
+  distill_layer_indices: None | list[int] = Field(None, description="Layer indices for intermediate distillation loss.")
+
+
 class TrainingLoop(BaseModel):
   """Configuration for the main training loop, evaluation, and reproducibility."""
 
@@ -1713,6 +1722,7 @@ class MaxTextConfig(
     PipelineParallelism,
     # Training, Optimization, and Fine-Tuning
     RematAndOffload,
+    Distillation,
     TrainingLoop,
     ManifoldConstrainedHyperConnections,
     DilocoParams,

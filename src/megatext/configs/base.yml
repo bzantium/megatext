@@ -1111,3 +1111,7 @@ engram_seed: 0
 ##### Distillation parameters
 # distill_beta is used for cosine similarity loss between intermediate activataitions of out_proj in teacher/student models.
 # 0.0 value disables this feature.
+distill_alpha: 0.5
+distill_temperature: 1.0
+distill_beta: 0.0
+distill_layer_indices: None

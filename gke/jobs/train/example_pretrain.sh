@@ -7,7 +7,7 @@ MOUNT_PATH=/mnt/bucket
 bash gke/setup/setup_gcsfuse.sh BUCKET=lmt-tpu-datasets MOUNT_PATH=${MOUNT_PATH}
 
 python -m megatext.trainers.pretrain \
-  model_name=qwen3 \
+  model=qwen3-8b \
   dataset_type=synthetic \
   steps=10 \
   max_target_length=4096 \
