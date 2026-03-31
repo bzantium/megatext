@@ -48,7 +48,7 @@ KEYS_NO_LOGGING = ("hf_access_token",)
 
 # Module paths to their default config file (relative to MEGATEXT_CONFIGS_DIR).
 _CONFIG_FILE_MAPPING: dict[str, str] = {
-    "megatext.trainers.pretrain": "base.yml",
+    "megatext.trainers.pretrain": "base.yaml",
 }
 
 
@@ -64,7 +64,7 @@ def _module_from_path(path: str) -> str | None:
 
 def _resolve_or_infer_config(argv: list[str]) -> tuple[str, list[str]]:
   """Resolves or infers config file path from module."""
-  if len(argv) >= 2 and argv[1].endswith(".yml"):
+  if len(argv) >= 2 and argv[1].endswith((".yaml", ".yml")):
     return resolve_config_path(argv[1]), argv[2:]
   module = _module_from_path(argv[0])
   if module not in _CONFIG_FILE_MAPPING:
@@ -82,6 +82,11 @@ def yaml_key_to_env_key(s: str) -> str:
 
 def resolve_config_path(param: str) -> str:
   """Resolve config path to auto rewrite to use new src folder."""
+  # Accept legacy .yml extension by trying the .yaml equivalent.
+  if param.endswith(".yml") and not os.path.isfile(param):
+    yaml_variant = param[:-4] + ".yaml"
+    if os.path.isfile(yaml_variant):
+      return yaml_variant
   if os.path.isfile(param):
     return param
   elif "MegaText" in param:
@@ -91,7 +96,10 @@ def resolve_config_path(param: str) -> str:
   # For pip-installed packages, strip the src prefix and resolve against
   # the installed configs directory (MEGATEXT_CONFIGS_DIR).
   if param.startswith("src/megatext/configs/"):
-    candidate = os.path.join(MEGATEXT_CONFIGS_DIR, param[len("src/megatext/configs/") :])
+    relative = param[len("src/megatext/configs/"):]
+    if relative.endswith(".yml"):
+      relative = relative[:-4] + ".yaml"
+    candidate = os.path.join(MEGATEXT_CONFIGS_DIR, relative)
     if os.path.isfile(candidate):
       return candidate
   return os.path.join("src", param)
@@ -288,19 +296,19 @@ def initialize_pydantic(argv: list[str], **kwargs) -> MegaTextConfig:
   model_cfg = {}
   if model != "default":
     # First try relative to base config path
-    model_config_path = os.path.join(os.path.dirname(config_path), "models", f"{model}.yml")
+    model_config_path = os.path.join(os.path.dirname(config_path), "models", f"{model}.yaml")
     # Try looking for "models" under "src/megatext/configs/"
     if not os.path.isfile(model_config_path):
       model_config_path = os.path.join(
           os.path.dirname(os.path.dirname(config_path)),
           "models",
-          f"{model}.yml",
+          f"{model}.yaml",
       )
 
     if not os.path.isfile(model_config_path):
       # Fallback to the default location within package
       dir_path = os.path.dirname(os.path.realpath(__file__))
-      model_config_path = os.path.join(dir_path, "configs", "models", f"{model}.yml")
+      model_config_path = os.path.join(dir_path, "configs", "models", f"{model}.yaml")
 
     if os.path.exists(model_config_path):
       model_loaded_cfg = omegaconf.OmegaConf.load(model_config_path)

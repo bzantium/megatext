@@ -39,8 +39,8 @@ def _run(config_overrides: dict, candidate_dict: dict, num_steps: int, warmup_st
     from megatext.configs import pyconfig
 
     # Build argv for pyconfig.initialize:
-    #   ["script_name", "base.yml", "key1=val1", "key2=val2", ...]
-    config_path = os.path.join(MEGATEXT_PKG_DIR, "configs", "base.yml")
+    #   ["script_name", "base.yaml", "key1=val1", "key2=val2", ...]
+    config_path = os.path.join(MEGATEXT_PKG_DIR, "configs", "base.yaml")
     argv = ["megatext.autotune.profiler_worker", config_path]
     for k, v in config_overrides.items():
         argv.append(f"{k}={v}")

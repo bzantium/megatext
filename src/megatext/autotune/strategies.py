@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 # Ordered by HBM usage ascending (least memory first, slowest first).
-# From maxtext base.yml: "trade-off between speed (fastest to slowest) and HBM usage (highest to lowest)"
+# From maxtext base.yaml: "trade-off between speed (fastest to slowest) and HBM usage (highest to lowest)"
 # Ordered by HBM usage ascending (least memory first).
 # NOTE: offloaded policies (minimal_offloaded, qkv_proj_offloaded) are excluded
 # because they offload activations to host RAM, causing extreme host memory usage

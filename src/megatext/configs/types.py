@@ -201,7 +201,7 @@ class RunInfo(BaseModel):
       "",
       description="The name of the run. Checkpoints will be stored under this name.",
   )
-  model: str = Field("default", description="Architecture template to use (e.g. 'qwen3', 'llama3', 'deepseek'). Loads models/{model}.yml.")
+  model: str = Field("default", description="Architecture template to use (e.g. 'qwen3', 'llama3', 'deepseek'). Loads models/{model}.yaml.")
   override_model_config: bool = Field(False, description="If True, allows overriding model parameters via CLI.")
   override_logical_axis_rules: bool = Field(
       False,
@@ -1720,7 +1720,7 @@ class MaxTextConfig(
       custom_mesh_path = os.path.join(
           os.path.dirname(os.path.abspath(__file__)),
           "custom_mesh_and_rule",
-          f"{self.custom_mesh_and_rule}.yml",
+          f"{self.custom_mesh_and_rule}.yaml",
       )
       if os.path.exists(custom_mesh_path):
         with open(custom_mesh_path, "r") as f:  # pylint: disable=unspecified-encoding
