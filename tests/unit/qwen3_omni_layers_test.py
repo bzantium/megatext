@@ -27,7 +27,7 @@ import jax.numpy as jnp
 from jax.sharding import Mesh
 from megatext.configs import pyconfig
 from megatext.common import common_types
-from megatext.utils.globals import MAXTEXT_REPO_ROOT
+from megatext.utils.constants import MAXTEXT_REPO_ROOT
 from megatext.inference.maxengine import maxengine
 from megatext.layers.attentions import Attention
 from megatext.layers.embeddings import (
@@ -83,7 +83,7 @@ from transformers.models.qwen3_omni_moe.modeling_qwen3_omni_moe import (
 )
 
 # Initialize config once for all tests
-base_config_path = os.path.join(MAXTEXT_REPO_ROOT, "src", "maxtext", "configs", "base.yml")
+base_config_path = os.path.join(MAXTEXT_REPO_ROOT, "src", "maxtext", "configs", "base.yaml")
 jax_config = pyconfig.initialize(
     ["", base_config_path],
     model="qwen3-omni-30b-a3b",
@@ -664,7 +664,7 @@ class TestQwen3OmniPreprocessing(unittest.TestCase):
   """Test MaxText Qwen3 Omni preprocessor against HuggingFace reference."""
 
   def setUp(self):
-    self.base_config_path = os.path.join(MAXTEXT_REPO_ROOT, "src", "maxtext", "configs", "base.yml")
+    self.base_config_path = os.path.join(MAXTEXT_REPO_ROOT, "src", "maxtext", "configs", "base.yaml")
     self.image_path = os.path.join(MAXTEXT_REPO_ROOT, "tests", "assets", "test_image.jpg")
     self.video_path = os.path.join(MAXTEXT_REPO_ROOT, "tests", "assets", "test_video.mp4")
     self.prompt = "What can you see and hear? Answer in one short sentence."

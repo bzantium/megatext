@@ -26,7 +26,7 @@ import jax
 
 from urllib3.util.retry import Retry
 
-from megatext.utils import max_logging
+from megatext.utils import logging as max_logging
 from megatext.common.gcloud_stub import monitoring_modules
 
 monitoring_v3, metric_pb2, monitored_resource_pb2, GoogleAPIError, _MONITORING_STUB = monitoring_modules()
@@ -42,7 +42,7 @@ class GCPWorkloadMonitor:
 
   def __init__(self, run_name: str):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d-%f")
-    self.workload_id = f"{run_name if run_name else 'maxtext-unnamed'}-{timestamp}"
+    self.workload_id = f"{run_name if run_name else 'megatext-unnamed'}-{timestamp}"
     self.zone = get_node_zone()
     self.project_id = get_gcp_project_id()
     self.client = monitoring_v3.MetricServiceClient() if _GCLOUD_AVAILABLE else None

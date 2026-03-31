@@ -7,7 +7,7 @@
 # Example Usage:
 #
 # # (Required) Path to the converted MaxText checkpoint
-# export MAXTEXT_CHECKPOINT_PATH=gs://path/to/converted_ckpt/0/items/
+# export MEGATEXT_CHECKPOINT_PATH=gs://path/to/converted_ckpt/0/items/
 #
 # # (Optional) Override the default HF model
 # export HF_MODEL_PATH=MyCustom/Qwen3-variant
@@ -19,8 +19,8 @@ set -ex
 
 # --- Configuration & Input Validation ---
 
-if [ -z "${MAXTEXT_CHECKPOINT_PATH}" ]; then
-    echo "ERROR: The MAXTEXT_CHECKPOINT_PATH environment variable is not set."
+if [ -z "${MEGATEXT_CHECKPOINT_PATH}" ]; then
+    echo "ERROR: The MEGATEXT_CHECKPOINT_PATH environment variable is not set."
     echo "Please set it to the full GCS path of the pre-converted MaxText checkpoint weights."
     exit 1
 fi
@@ -36,16 +36,16 @@ python3 -m pip install torch --index-url https://download.pytorch.org/whl/cpu
 
 # --- Run the Forward Pass Logit Checker ---
 
-echo "Validating MaxText checkpoint at ${MAXTEXT_CHECKPOINT_PATH}"
+echo "Validating MaxText checkpoint at ${MEGATEXT_CHECKPOINT_PATH}"
 echo "Against original HF model: ${HF_MODEL_PATH}"
 
 # This command runs the core validation logic.
-JAX_PLATFORMS=cpu python3 -m tests.utils.forward_pass_logit_checker "${MAXTEXT_CONFIGS_DIR:-${MAXTEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}"/base.yml \
+JAX_PLATFORMS=cpu python3 -m tests.utils.forward_pass_logit_checker "${MEGATEXT_CONFIGS_DIR:-${MEGATEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}"/base.yaml \
   tokenizer_type=huggingface \
-  tokenizer_path="${MAXTEXT_ASSETS_ROOT:-${MAXTEXT_PKG_DIR:-${MAXTEXT_REPO_ROOT:-$PWD}/src/maxtext/assets/tokenizers}}"/qwen3-tokenizer \
+  tokenizer_path="${MEGATEXT_ASSETS_ROOT:-${MEGATEXT_PKG_DIR:-${MEGATEXT_REPO_ROOT:-$PWD}/src/maxtext/assets/tokenizers}}"/qwen3-tokenizer \
   megablox=False \
   sparse_matmul=False \
-  load_parameters_path=${MAXTEXT_CHECKPOINT_PATH} \
+  load_parameters_path=${MEGATEXT_CHECKPOINT_PATH} \
   model_name=qwen3-480b-a35b \
   checkpoint_storage_concurrent_gb=1024 \
   skip_jax_distributed_system=True \

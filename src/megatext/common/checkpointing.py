@@ -22,13 +22,13 @@ import datetime
 from etils import epath
 from flax.training import train_state
 import jax
-from megatext.utils.globals import DEFAULT_OCDBT_TARGET_DATA_FILE_SIZE
+from megatext.utils.constants import DEFAULT_OCDBT_TARGET_DATA_FILE_SIZE
 from megatext.data.multihost_dataloading import MultiHostDataLoadIterator
 from megatext.data.multihost_dataloading import RemoteIterator
 from megatext.data.synthetic_data_processing import PlaceHolderDataIterator
 from megatext.utils import exceptions
-from megatext.utils import max_logging
-from megatext.utils import gcs_utils
+from megatext.utils import logging as max_logging
+from megatext.utils import storage as gcs_utils
 import numpy as np
 import orbax.checkpoint as ocp
 from orbax.checkpoint import v1 as ocp_v1
@@ -52,6 +52,9 @@ EmergencyCheckpointManager = emergency_checkpoint_manager.CheckpointManager
 LocalCheckpointOptions = emergency_checkpoint_manager.LocalCheckpointOptions
 PersistentCheckpointOptions = emergency_checkpoint_manager.PersistentCheckpointOptions
 EmergencyReplicatorCheckpointManager = emergency_replicator_checkpoint_manager.ReplicatorCheckpointManager
+
+# Dataset types that use grain iterators and support checkpoint save/restore
+_GRAIN_DATASET_TYPES = ("mmap", "arecord", "fixed_arecord")
 
 
 class GrainCheckpointHandler(PyGrainCheckpointHandler, ocp.CheckpointHandler):
@@ -158,7 +161,7 @@ def _load_full_state_from_path(
       against.
     enable_orbax_v1: whether to use orbax v1 or the previously supported v0.
     checkpoint_conversion_fn: user-provided function to convert checkpoint to
-      maxtext-supported state.
+      megatext-supported state.
     source_checkpoint_layout: String representation of the checkpoint layout of
       the source checkpoint.
     checkpoint_storage_concurrent_gb: concurrent GB for checkpoint byte I/O.
@@ -211,7 +214,7 @@ def create_orbax_checkpoint_manager(
     enable_checkpointing: bool,
     use_async: bool,
     save_interval_steps: int,
-    dataset_type: None | str = "tfds",
+    dataset_type: None | str = None,
     orbax_logger: Any = None,  # pytype: disable=attribute-error
     use_ocdbt: bool = True,
     use_zarr3: bool = True,
@@ -241,7 +244,7 @@ def create_orbax_checkpoint_manager(
       )
   }
 
-  if dataset_type == "grain":
+  if dataset_type in _GRAIN_DATASET_TYPES:
     item_names += ("iter",)
     item_handlers["iter"] = GrainCheckpointHandler()
 
@@ -506,7 +509,7 @@ def _restore_grain_iterator(
         f"The number of stored checkpoint files ({process_count_stored}) "
         f"is incompatible with the number of JAX processes ({process_count_jax}). "
         "If you are resuming training with a different number of chips, see instructions in "
-        "https://github.com/AI-Hypercomputer/maxtext/blob/main/docs/guides/data_input_pipeline/"
+        "https://github.com/AI-Hypercomputer/megatext/blob/main/docs/guides/data_input_pipeline/"
         "data_input_grain.md#using-grain"
     )
 
@@ -523,7 +526,7 @@ def load_state_if_possible(
     checkpoint_storage_concurrent_gb: int,
     abstract_unboxed_pre_state: train_state.TrainState,
     enable_single_replica_ckpt_restoring: bool | None = False,
-    dataset_type: str | None = "tfds",
+    dataset_type: str | None = None,
     step: int = -1,  # -1 means latest
     use_ocdbt=True,
     use_zarr3=True,
@@ -603,14 +606,13 @@ def load_state_if_possible(
               checkpoint_manager.restore(step, args=Composite(state=checkpoint_args)).state,
               None,
           )
-        # Case 2: Matches if dataset type is "grain" and the data iterator is not a
-        # PlaceHolderDataIterator or RemoteIterator and a specific checkpoint file exists for the iterator
+        # Case 2: Matches if dataset type uses grain iterators and a checkpoint exists for the iterator
         case (
             checkpoint_manager,
             dataset_type,
             data_iterator,
         ) if (
-            dataset_type == "grain"
+            dataset_type in _GRAIN_DATASET_TYPES
             and data_iterator
             and not isinstance(data_iterator, PlaceHolderDataIterator)
             and not _is_remote_iterator(data_iterator)
@@ -711,22 +713,13 @@ def save_params_to_path(checkpoint_dir, params, use_ocdbt=True, use_zarr3=True):
   print(f"Quantized params checkpoint saved at: {checkpoint_dir}")
 
 
-def maybe_save_checkpoint(checkpoint_manager, state, config, data_iterator, step=None):
+def maybe_save_checkpoint(checkpoint_manager, state, config, data_iterator, force=False):
   """Save checkpoint if checkpointing is enabled."""
   if checkpoint_manager is None:
     return
 
-  # Determine the effective step for saving a checkpoint.
-  # If 'step' is not provided, this call is for a potential final checkpoint
-  # and use the last completed step from the state.
-  actual_step = (int(state.step) - 1) if step is None else int(step)
-
-  # Determine if a checkpoint save should be forced, overriding the usual `config.checkpoint_period` logic.
-  # This occurs if this function was called:
-  # without an explicit 'step' (implying it's a checkpoint save for final step),
-  # AND the 'actual_step' is a valid step,
-  # AND it's not a step that would normally trigger a checkpoint save.
-  force_ckpt_save = step is None and actual_step != -1 and (actual_step % config.checkpoint_period != 0)
+  actual_step = int(state.step)
+  force_ckpt_save = force and actual_step > 0 and (actual_step % config.checkpoint_period != 0)
 
   try:
     checkpoint_saved = save_checkpoint(checkpoint_manager, actual_step, state, config, data_iterator, force_ckpt_save)
@@ -775,9 +768,10 @@ def save_checkpoint(checkpoint_manager, step, state, config=None, data_iterator=
   )
   save_args_composite = {"items": checkpoint_args}
 
+  _GRAIN_DATASET_TYPES = ("mmap", "arecord", "fixed_arecord")
   if (
       config
-      and config.dataset_type == "grain"
+      and config.dataset_type in _GRAIN_DATASET_TYPES
       and not isinstance(data_iterator, PlaceHolderDataIterator)
       and not _is_remote_iterator(data_iterator)
   ):

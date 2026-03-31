@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-Test suite for validating MaxText YAML configurations against Pydantic models.
+Test suite for validating Megatext YAML configurations against Pydantic models.
 
 This test suite uses explicit, hardcoded lists of configuration files grouped
-by model family (e.g., gemma, llama) to test them directly against the Pydantic
-`MaxTextConfig` model. It avoids programmatic file discovery and the complex
+by architecture family to test them directly against the Pydantic
+`MegatextConfig` model. It avoids programmatic file discovery and the complex
 `pyconfig.initialize` function to provide fast, targeted feedback on validation
 errors like "Extra inputs are not permitted."
 """
@@ -33,10 +33,9 @@ from pydantic import ValidationError
 from yaml import YAMLError
 
 from megatext.configs import types as pydantic_types
-from megatext.utils.globals import MAXTEXT_REPO_ROOT
+from megatext.utils.constants import MEGATEXT_CONFIGS_DIR
 
-# Define the root directory where configuration files are located.
-CONFIGS_DIR = os.path.join(MAXTEXT_REPO_ROOT, "src", "maxtext", "configs")
+CONFIGS_DIR = MEGATEXT_CONFIGS_DIR
 
 
 @functools.lru_cache(maxsize=None)
@@ -45,7 +44,7 @@ def load_and_merge_yamls(yaml_path: str) -> dict:
   Recursively loads a YAML file and merges it with its base configurations.
 
   A cache is used to avoid re-reading and re-parsing the same base files
-  multiple times (e.g., base.yml).
+  multiple times (e.g., base.yaml).
 
   Args:
       yaml_path: The absolute path to the YAML file to load.
@@ -93,7 +92,7 @@ def run_config_validation(config_file_path: str):
     # Step 2: Attempt to instantiate the Pydantic model.
     # This is where validation happens. If there are extra fields,
     # missing fields, or type mismatches, a ValidationError is raised.
-    pydantic_instance = pydantic_types.MaxTextConfig(**config_dict)
+    pydantic_instance = pydantic_types.MegatextConfig(**config_dict)
 
     # Step 3: Test the "emit" part by dumping the model back to a dict.
     dumped_config = pydantic_instance.model_dump()
@@ -109,18 +108,10 @@ def run_config_validation(config_file_path: str):
 # Begin Test Functions
 # ==============================================================================
 
-# --- Test Group 1: Base and Top-Level Configs ---
+# --- Test Group 1: Base Config ---
 
 BASE_CONFIGS = [
-    os.path.join(CONFIGS_DIR, "base.yml"),
-    os.path.join(CONFIGS_DIR, "post_train", "dpo.yml"),
-    os.path.join(CONFIGS_DIR, "gpu/gpu_smoke_test.yml"),
-    os.path.join(CONFIGS_DIR, "post_train", "rl.yml"),
-    os.path.join(CONFIGS_DIR, "post_train", "rl_mt_jt.yml"),
-    os.path.join(CONFIGS_DIR, "post_train", "sft.yml"),
-    os.path.join(CONFIGS_DIR, "post_train", "sft-vision-chartqa.yml"),
-    os.path.join(CONFIGS_DIR, "post_train", "sft-vision-slidevqa.yml"),
-    os.path.join(CONFIGS_DIR, "tpu/tpu_smoke_test.yml"),
+    os.path.join(CONFIGS_DIR, "base.yaml"),
 ]
 
 
@@ -129,169 +120,21 @@ def test_base_configs(config_file):
   run_config_validation(config_file)
 
 
-# --- Test Group 2: Gemma Model Family ---
+# --- Test Group 2: Architecture Template Configs (models/) ---
 
-GEMMA_CONFIGS = [
-    os.path.join(CONFIGS_DIR, "models", "gemma-2b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "gemma-7b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "gemma2-2b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "gemma2-9b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "gemma2-27b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "gemma3-4b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "gemma3-12b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "gemma3-27b.yml"),
+MODEL_CONFIGS = [
+    os.path.join(CONFIGS_DIR, "models", "deepseek.yaml"),
+    os.path.join(CONFIGS_DIR, "models", "gemma3.yaml"),
+    os.path.join(CONFIGS_DIR, "models", "gpt_oss.yaml"),
+    os.path.join(CONFIGS_DIR, "models", "llama3.yaml"),
+    os.path.join(CONFIGS_DIR, "models", "qwen3.yaml"),
+    os.path.join(CONFIGS_DIR, "models", "qwen3-moe.yaml"),
+    os.path.join(CONFIGS_DIR, "models", "qwen3-swa.yaml"),
+    os.path.join(CONFIGS_DIR, "models", "qwen3-next-dense.yaml"),
+    os.path.join(CONFIGS_DIR, "models", "qwen3-next-moe.yaml"),
 ]
 
 
-@pytest.mark.parametrize("config_file", GEMMA_CONFIGS)
-def test_gemma_configs(config_file):
-  run_config_validation(config_file)
-
-
-# --- Test Group 3: Llama Model Family ---
-
-LLAMA_CONFIGS = [
-    os.path.join(CONFIGS_DIR, "gpu", "models", "llama2_7b.yml"),
-    os.path.join(CONFIGS_DIR, "gpu", "models", "llama2_70b.yml"),
-    os.path.join(CONFIGS_DIR, "gpu", "models", "llama3_8b.yml"),
-    os.path.join(CONFIGS_DIR, "gpu", "models", "llama3_70b.yml"),
-    os.path.join(CONFIGS_DIR, "gpu", "models", "llama3.1_405b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "llama2-7b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "llama2-13b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "llama2-70b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "llama3-8b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "llama3-70b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "llama3-405b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "llama3.1-8b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "llama3.1-70b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "llama3.1-405b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "llama3.3-70b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "llama4-17b-16e.yml"),
-    os.path.join(CONFIGS_DIR, "models", "llama4-17b-128e.yml"),
-]
-
-
-@pytest.mark.parametrize("config_file", LLAMA_CONFIGS)
-def test_llama_configs(config_file):
-  run_config_validation(config_file)
-
-
-# --- Test Group 4: GPT Model Family ---
-
-GPT_CONFIGS = [
-    os.path.join(CONFIGS_DIR, "models", "gpt3-52k.yml"),
-    os.path.join(CONFIGS_DIR, "models", "gpt3-6b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "gpt3-22b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "gpt3-175b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "gpt-oss-20b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "gpt-oss-120b.yml"),
-]
-
-
-@pytest.mark.parametrize("config_file", GPT_CONFIGS)
-def test_gpt_configs(config_file):
-  run_config_validation(config_file)
-
-
-# --- Test Group 5: DeepSeek Model Family ---
-
-DEEPSEEK_CONFIGS = [
-    os.path.join(CONFIGS_DIR, "models", "deepseek2-16b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "deepseek2-236b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "deepseek3-test.yml"),
-    os.path.join(CONFIGS_DIR, "models", "deepseek3-671b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "deepseek3-671b-2dfsdp.yml"),
-    os.path.join(CONFIGS_DIR, "models", "deepseek3-671b-batchsplit.yml"),
-]
-
-
-@pytest.mark.parametrize("config_file", DEEPSEEK_CONFIGS)
-def test_deepseek_configs(config_file):
-  run_config_validation(config_file)
-
-
-# --- Test Group 6: Mistral & Mixtral Model Family ---
-
-MISTRAL_CONFIGS = [
-    os.path.join(CONFIGS_DIR, "models", "mistral-7b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "mixtral-8x7b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "mixtral-8x22b.yml"),
-    os.path.join(CONFIGS_DIR, "gpu", "models", "mixtral_8x1b.yml"),
-    os.path.join(CONFIGS_DIR, "gpu", "models", "mixtral_8x2b.yml"),
-    os.path.join(CONFIGS_DIR, "gpu", "models", "mixtral_8x7b.yml"),
-]
-
-
-@pytest.mark.parametrize("config_file", MISTRAL_CONFIGS)
-def test_mistral_configs(config_file):
-  run_config_validation(config_file)
-
-
-# --- Test Group 7: Qwen Model Family ---
-
-QWEN_CONFIGS = [
-    os.path.join(CONFIGS_DIR, "models", "qwen3-0.6b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "qwen3-4b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "qwen3-4b-thinking-2507.yml"),
-    os.path.join(CONFIGS_DIR, "models", "qwen3-8b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "qwen3-14b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "qwen3-32b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "qwen3-235b-a22b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "qwen3-30b-a3b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "qwen3-480b-a35b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "qwen3-next-80b-a3b.yml"),
-    os.path.join(CONFIGS_DIR, "models", "qwen3-omni-30b-a3b.yml"),
-]
-
-
-@pytest.mark.parametrize("config_file", QWEN_CONFIGS)
-def test_qwen_configs(config_file):
-  run_config_validation(config_file)
-
-
-# --- Test Group 8: Kimi Model Family ---
-
-KIMI_CONFIGS = [
-    os.path.join(CONFIGS_DIR, "models", "kimi-k2-1t.yml"),
-]
-
-
-@pytest.mark.parametrize("config_file", KIMI_CONFIGS)
-def test_kimi_configs(config_file):
-  run_config_validation(config_file)
-
-
-# --- Test Group 9: Inference-specific Configs ---
-
-INFERENCE_CONFIGS = [
-    os.path.join(CONFIGS_DIR, "inference", "inference.yml"),
-    os.path.join(CONFIGS_DIR, "inference", "inference_jetstream.yml"),
-    os.path.join(CONFIGS_DIR, "tpu", "v5e", "llama2_70b_v5e-16.yml"),
-    os.path.join(CONFIGS_DIR, "tpu", "v5e", "llama3_70b_v5e-16.yml"),
-    os.path.join(CONFIGS_DIR, "tpu", "v5e", "llama3_405b_v5e-64.yml"),
-    os.path.join(CONFIGS_DIR, "tpu", "v6e", "inference", "llama4_maverick_v6e-64.yml"),
-    os.path.join(
-        MAXTEXT_REPO_ROOT,
-        "src",
-        "maxtext",
-        "configs",
-        "inference",
-        "multihost",
-        "disaggregation",
-        "llama3_405b_v6e-16-16.yml",
-    ),
-    os.path.join(
-        MAXTEXT_REPO_ROOT, "src", "maxtext", "configs", "inference", "multihost", "interleaved", "llama2_70b_v5e-16.yml"
-    ),
-    os.path.join(
-        MAXTEXT_REPO_ROOT, "src", "maxtext", "configs", "inference", "multihost", "interleaved", "llama3_70b_v5e-16.yml"
-    ),
-    os.path.join(
-        MAXTEXT_REPO_ROOT, "src", "maxtext", "configs", "inference", "multihost", "interleaved", "llama3_405b_v5e-64.yml"
-    ),
-]
-
-
-@pytest.mark.parametrize("config_file", INFERENCE_CONFIGS)
-def test_inference_configs(config_file):
+@pytest.mark.parametrize("config_file", MODEL_CONFIGS)
+def test_model_configs(config_file):
   run_config_validation(config_file)

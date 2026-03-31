@@ -136,13 +136,13 @@ class TestFixedArecordGrainPipeline:
     def test_map_dataset_pipeline(self, fixed_arecord_dir):
         """Full pipeline: source -> shard -> repeat -> transform -> batch."""
         from megatext.data.data_sources import FixedArecordDataSource
-        from megatext.data.data_processing import FormatForMaxText
+        from megatext.data.data_processing import FormatForMegatext
 
         data_path, seq_len, _ = fixed_arecord_dir
         ds = FixedArecordDataSource(data_path=data_path, seq_len=seq_len)
 
         dataset = grain.MapDataset.source(ds)
-        dataset = dataset.map(FormatForMaxText(seq_len=seq_len, add_extra_token=True))
+        dataset = dataset.map(FormatForMegatext(seq_len=seq_len, add_extra_token=True))
         dataset = dataset.batch(4, drop_remainder=True)
 
         batch = dataset[0]
@@ -156,12 +156,12 @@ class TestFixedArecordGrainPipeline:
     def test_format_input_target_shift(self, fixed_arecord_dir):
         """Verify inputs = tokens[:seq_len], targets = tokens[1:seq_len+1]."""
         from megatext.data.data_sources import FixedArecordDataSource
-        from megatext.data.data_processing import FormatForMaxText
+        from megatext.data.data_processing import FormatForMegatext
 
         data_path, seq_len, all_tokens = fixed_arecord_dir
         ds = FixedArecordDataSource(data_path=data_path, seq_len=seq_len)
 
-        fmt = FormatForMaxText(seq_len=seq_len, add_extra_token=True)
+        fmt = FormatForMegatext(seq_len=seq_len, add_extra_token=True)
         sample = ds[0]
         formatted = fmt.map(sample)
 
@@ -171,12 +171,12 @@ class TestFixedArecordGrainPipeline:
     def test_segmentation_all_ones(self, fixed_arecord_dir):
         """Without packing, segmentation should be all ones."""
         from megatext.data.data_sources import FixedArecordDataSource
-        from megatext.data.data_processing import FormatForMaxText
+        from megatext.data.data_processing import FormatForMegatext
 
         data_path, seq_len, _ = fixed_arecord_dir
         ds = FixedArecordDataSource(data_path=data_path, seq_len=seq_len)
 
-        fmt = FormatForMaxText(seq_len=seq_len, add_extra_token=True)
+        fmt = FormatForMegatext(seq_len=seq_len, add_extra_token=True)
         formatted = fmt.map(ds[0])
 
         np.testing.assert_array_equal(
@@ -189,12 +189,12 @@ class TestFixedArecordGrainPipeline:
     def test_positions_sequential(self, fixed_arecord_dir):
         """Without packing, positions should be 0, 1, 2, ..., seq_len-1."""
         from megatext.data.data_sources import FixedArecordDataSource
-        from megatext.data.data_processing import FormatForMaxText
+        from megatext.data.data_processing import FormatForMegatext
 
         data_path, seq_len, _ = fixed_arecord_dir
         ds = FixedArecordDataSource(data_path=data_path, seq_len=seq_len)
 
-        fmt = FormatForMaxText(seq_len=seq_len, add_extra_token=True)
+        fmt = FormatForMegatext(seq_len=seq_len, add_extra_token=True)
         formatted = fmt.map(ds[0])
 
         expected_pos = np.arange(seq_len, dtype=np.int32)
@@ -255,7 +255,7 @@ class TestFixedArecordMultiHostSharding:
     def test_sharded_batching(self, fixed_arecord_dir):
         """Each process shard should produce correct batch shapes."""
         from megatext.data.data_sources import FixedArecordDataSource
-        from megatext.data.data_processing import FormatForMaxText
+        from megatext.data.data_processing import FormatForMegatext
 
         data_path, seq_len, _ = fixed_arecord_dir
         ds = FixedArecordDataSource(data_path=data_path, seq_len=seq_len)
@@ -266,7 +266,7 @@ class TestFixedArecordMultiHostSharding:
         for proc_idx in range(num_processes):
             dataset = grain.MapDataset.source(ds)
             dataset = dataset[proc_idx::num_processes]
-            dataset = dataset.map(FormatForMaxText(seq_len=seq_len, add_extra_token=True))
+            dataset = dataset.map(FormatForMegatext(seq_len=seq_len, add_extra_token=True))
             dataset = dataset.batch(batch_size, drop_remainder=True)
 
             batch = dataset[0]

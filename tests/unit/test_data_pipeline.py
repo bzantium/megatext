@@ -1,14 +1,14 @@
-"""Tests for the data pipeline (FormatForMaxText transform)."""
+"""Tests for the data pipeline (FormatForMegatext transform)."""
 
 import numpy as np
 import pytest
 
 
-class TestFormatForMaxText:
+class TestFormatForMegatext:
     def test_basic_format(self):
-        from megatext.data.data_processing import FormatForMaxText
+        from megatext.data.data_processing import FormatForMegatext
 
-        transform = FormatForMaxText(seq_len=8, add_extra_token=True)
+        transform = FormatForMegatext(seq_len=8, add_extra_token=True)
         element = {"tokens": np.arange(9, dtype=np.int32)}  # 8 + 1
 
         result = transform.map(element)
@@ -25,9 +25,9 @@ class TestFormatForMaxText:
         np.testing.assert_array_equal(result["targets"], np.arange(1, 9))
 
     def test_positions_sequential(self):
-        from megatext.data.data_processing import FormatForMaxText
+        from megatext.data.data_processing import FormatForMegatext
 
-        transform = FormatForMaxText(seq_len=8)
+        transform = FormatForMegatext(seq_len=8)
         element = {"tokens": np.arange(9, dtype=np.int32)}
 
         result = transform.map(element)
@@ -36,9 +36,9 @@ class TestFormatForMaxText:
         )
 
     def test_segmentation_no_packing(self):
-        from megatext.data.data_processing import FormatForMaxText
+        from megatext.data.data_processing import FormatForMegatext
 
-        transform = FormatForMaxText(seq_len=8)
+        transform = FormatForMegatext(seq_len=8)
         element = {"tokens": np.arange(9, dtype=np.int32)}
 
         result = transform.map(element)
@@ -47,9 +47,9 @@ class TestFormatForMaxText:
         )
 
     def test_with_packing_segment_ids(self):
-        from megatext.data.data_processing import FormatForMaxText
+        from megatext.data.data_processing import FormatForMegatext
 
-        transform = FormatForMaxText(seq_len=8)
+        transform = FormatForMegatext(seq_len=8)
         segment_ids = np.array([1, 1, 1, 2, 2, 2, 2, 0, 0], dtype=np.int32)
         element = {
             "tokens": np.arange(9, dtype=np.int32),
@@ -63,9 +63,9 @@ class TestFormatForMaxText:
         )
 
     def test_with_loss_mask(self):
-        from megatext.data.data_processing import FormatForMaxText
+        from megatext.data.data_processing import FormatForMegatext
 
-        transform = FormatForMaxText(seq_len=4)
+        transform = FormatForMegatext(seq_len=4)
         loss_mask = np.array([1.0, 0.0, 1.0, 1.0], dtype=np.float32)
         element = {
             "tokens": np.arange(5, dtype=np.int32),

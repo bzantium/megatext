@@ -69,7 +69,7 @@ def setUpModule():
 
 @dataclass
 class Config:
-  """MaxText config"""
+  """MegaText config"""
 
   base_emb_dim: int = 1024
   tokenizer_path: str = "deepseek-ai/DeepSeek-V3"
@@ -467,7 +467,7 @@ def init_torch_weights(module, std=1):
 
 
 def get_cfg_and_mesh(config):
-  """Returns MaxText configuration and mesh."""
+  """Returns MegaText configuration and mesh."""
   cfg = pyconfig.initialize(
       [None, get_test_config_path()],
       run_name="",

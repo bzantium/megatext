@@ -34,7 +34,7 @@ from megatext.common.common_types import ShardMode
 from megatext.layers import attentions, linears, nnx_wrappers, quantizations
 from megatext.layers.initializers import NdInitializer, default_bias_init, nd_dense_init, variable_to_logically_partitioned
 from megatext.kernels import megablox as mblx
-from megatext.utils import max_logging
+from megatext.utils import logging as max_logging
 from megatext.utils import max_utils
 from megatext.utils.sharding import maybe_shard_with_logical, create_sharding
 from megatext.utils.sharding import logical_to_mesh_axes

@@ -46,7 +46,7 @@ Example:
 
 from typing import Sequence
 
-from megatext.utils.globals import MAXTEXT_REPO_ROOT
+from megatext.utils.constants import MEGATEXT_REPO_ROOT
 from tests.utils.sharding_dump import TEST_CASES
 from tests.utils.test_helpers import get_test_config_path
 import subprocess
@@ -98,7 +98,7 @@ def main(argv: Sequence[str]) -> None:
   for i, (model, topology, num_slice) in enumerate(cases_to_run):
     print(f"\n[{i+1}/{total}] Processing: {model} | {topology} | Slice {num_slice}")
 
-    base_path = Path(f"{MAXTEXT_REPO_ROOT}/tests/utils/sharding_info/{model}/" f"{topology}/slice_{num_slice}/")
+    base_path = Path(f"{MEGATEXT_REPO_ROOT}/tests/utils/sharding_info/{model}/" f"{topology}/slice_{num_slice}/")
     json_path_named = base_path / "named_shardings.json"
     json_path_logical = base_path / "logical_shardings.json"
 

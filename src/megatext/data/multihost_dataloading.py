@@ -18,12 +18,20 @@
 Adapted from Sholto's:
 https://github.com/sholtodouglas/multihost_dataloading
 """
+from __future__ import annotations
+
 from functools import partial
-from typing import Union, Sequence
+from typing import Union, Sequence, TYPE_CHECKING
 from collections.abc import Iterator, Iterable
 import time
 
-import tensorflow as tf  # pylint: disable=g-import-not-at-top
+try:
+  import tensorflow as tf  # pylint: disable=g-import-not-at-top
+except ImportError:
+  tf = None
+
+if TYPE_CHECKING:
+  import tensorflow as tf
 
 import numpy as np
 
@@ -35,7 +43,7 @@ from jax.sharding import Mesh
 from jax.experimental import colocated_python
 import jax.numpy as jnp
 
-from megatext.utils import max_logging
+from megatext.utils import logging as max_logging
 
 
 def _build_global_shape_and_sharding(
@@ -79,7 +87,7 @@ class MultiHostDataLoadIterator:
   ):
     self.global_mesh = global_mesh
     self.dataloader = dataloader
-    if isinstance(self.dataloader, tf.data.Dataset):
+    if tf is not None and isinstance(self.dataloader, tf.data.Dataset):
       self.local_iterator = self.dataloader.as_numpy_iterator()
     elif isinstance(self.dataloader, Iterable):
       self.local_iterator = iter(self.dataloader)
@@ -91,7 +99,7 @@ class MultiHostDataLoadIterator:
     self.expansion_loading_factor_for_grain = expansion_loading_factor_for_grain
 
   def reset(self):
-    if isinstance(self.dataloader, tf.data.Dataset):
+    if tf is not None and isinstance(self.dataloader, tf.data.Dataset):
       self.local_iterator = self.dataloader.as_numpy_iterator()
     elif isinstance(self.dataloader, Iterable):
       self.local_iterator = iter(self.dataloader)
@@ -99,6 +107,19 @@ class MultiHostDataLoadIterator:
       raise ValueError("Type error: dataloader should be either tf.data.Dataset or Iterable.")
     self.out_of_data = False
     self.last_local_data = None
+
+  def get_state(self):
+    """Get checkpoint state from the underlying grain iterator."""
+    if hasattr(self.local_iterator, "get_state"):
+      return self.local_iterator.get_state()
+    raise NotImplementedError(f"{type(self.local_iterator)} does not support get_state()")
+
+  def set_state(self, state):
+    """Restore checkpoint state to the underlying grain iterator."""
+    if hasattr(self.local_iterator, "set_state"):
+      self.local_iterator.set_state(state)
+    else:
+      raise NotImplementedError(f"{type(self.local_iterator)} does not support set_state()")
 
   def __iter__(self):
     self.reset()
@@ -121,18 +142,12 @@ class MultiHostDataLoadIterator:
         try:
           local_data = next(self.local_iterator)
           if self.expansion_loading_factor_for_grain > 1:
-            # Since grain checkpoint requires fixed batch_size, we run the dataIterator for
-            # expansion_loading_factor_for_grain times to get the
-            # right batch_size for the host that is loading real data.
             local_data_list = [local_data]
             for _ in range(1, int(self.expansion_loading_factor_for_grain)):
               next_batch = next(self.local_iterator)
               local_data_list.append(next_batch)
             local_data = jtu.tree_map(lambda *xs: np.concatenate(xs, axis=0), *local_data_list)
           break  # exit the loop on success
-        except tf.errors.FailedPreconditionError as e:
-          max_logging.log(f"Failed to get next data batch due to {e}, retrying")
-          time.sleep(SLEEP_TIME)
         except StopIteration as e:
           if self.generate_padding_batch:
             max_logging.log(

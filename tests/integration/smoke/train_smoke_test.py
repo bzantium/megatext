@@ -20,8 +20,8 @@ from absl.testing import absltest
 from tests.utils.test_helpers import get_test_config_path, get_test_dataset_path, get_test_base_output_directory
 
 from megatext.common.gcloud_stub import is_decoupled
-from megatext.trainers.pre_train.train import main as train_main
-from megatext.utils.globals import MAXTEXT_ASSETS_ROOT
+from megatext.trainers.pretrain import main as train_main
+from megatext.utils.constants import MEGATEXT_ASSETS_ROOT
 
 
 class Train(unittest.TestCase):
@@ -58,7 +58,7 @@ class Train(unittest.TestCase):
             "dataset_type=synthetic",
             "steps=10",
             "enable_checkpointing=False",
-            rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+            rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
             "enable_goodput_recording=False",
             "enable_checkpoint_cloud_logger=False",
             "monitor_goodput=False",
@@ -86,7 +86,7 @@ class Train(unittest.TestCase):
             "dataset_type=synthetic",
             "steps=10",
             "enable_checkpointing=False",
-            rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+            rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
             "enable_goodput_recording=False",
             "enable_checkpoint_cloud_logger=False",
             "monitor_goodput=False",
@@ -116,7 +116,7 @@ class Train(unittest.TestCase):
             "steps=10",
             "shard_mode=explicit",
             "enable_checkpointing=False",
-            rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+            rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
             "enable_goodput_recording=False",
             "enable_checkpoint_cloud_logger=False",
             "monitor_goodput=False",

@@ -35,7 +35,7 @@ from megatext.layers import linears
 from megatext.layers.attentions import AttentionOp, KVQuant
 from megatext.layers.initializers import Initializer, NdInitializer, nd_dense_init
 from megatext.layers.quantizations import AqtQuantization as Quant
-from megatext.utils import max_logging
+from megatext.utils import logging as max_logging
 from megatext.utils import max_utils
 
 # -----------------------------------------

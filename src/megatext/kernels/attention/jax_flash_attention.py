@@ -243,7 +243,7 @@ def flash_attention_block_masked(
   output = output.squeeze(axis=2)
   if not save_residuals:
     # To avoid remat of the output, we can use context=hbm remat policy as in
-    # maxtext/configs/types.py
+    # megatext/configs/types.py
     return output
 
   l = l.squeeze(axis=2)

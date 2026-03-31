@@ -535,7 +535,7 @@ class Qwen3NextGatedDeltaNet_PT(nn.Module):
     """Initializes the Gated Delta Net layers and parameters."""
     super().__init__()
     self.hidden_size = config.hidden_size
-    # Use gdn_* names from MaxText config perspective for consistency in PT model setup
+    # Use gdn_* names from MegaText config perspective for consistency in PT model setup
     self.num_v_heads = config.gdn_num_value_heads
     self.num_k_heads = config.gdn_num_key_heads
     self.head_k_dim = config.gdn_key_head_dim
@@ -1233,7 +1233,7 @@ class TestQwen3Next(unittest.TestCase):
     pt_config = self.pt_internal_cfg
 
     pt_model = Qwen3NextGatedDeltaNet_PT(pt_config).eval()
-    # Add MaxText config ref to PT model instance for internal use
+    # Add MegaText config ref to PT model instance for internal use
     pt_model.config = self.cfg
 
     hidden_states_pt = torch.randn(

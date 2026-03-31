@@ -21,19 +21,19 @@ of Google Cloud Storage paths.
 
 import os
 from megatext.common.gcloud_stub import is_decoupled
-from megatext.utils.globals import MAXTEXT_CONFIGS_DIR
+from megatext.utils.constants import MEGATEXT_CONFIGS_DIR
 
 
-def get_test_config_path(relative_path: str = "base.yml"):
+def get_test_config_path(relative_path: str = "base.yaml"):
   """Returns the absolute path for a test config.
 
-  If `relative_path` is `base.yml`, applies the decoupled-mode logic and returns
-  `decoupled_base_test.yml` when decoupled, otherwise `base.yml`.
+  If `relative_path` is `base.yaml`, applies the decoupled-mode logic and returns
+  `decoupled_base_test.yaml` when decoupled, otherwise `base.yaml`.
   """
-  if relative_path == "base.yml":
-    base_cfg = "decoupled_base_test.yml" if is_decoupled() else "base.yml"
-    return os.path.join(MAXTEXT_CONFIGS_DIR, base_cfg)
-  return os.path.join(MAXTEXT_CONFIGS_DIR, relative_path)
+  if relative_path == "base.yaml":
+    base_cfg = "decoupled_base_test.yaml" if is_decoupled() else "base.yaml"
+    return os.path.join(MEGATEXT_CONFIGS_DIR, base_cfg)
+  return os.path.join(MEGATEXT_CONFIGS_DIR, relative_path)
 
 
 def get_decoupled_parallelism_overrides(
@@ -84,10 +84,10 @@ def is_rocm_backend() -> bool:
 def get_post_train_test_config_path(sub_type="sft"):
   """Return absolute path to the chosen test config file.
 
-  Returns `decoupled_base_test.yml` when decoupled, otherwise `base.yml`.
+  Returns `decoupled_base_test.yaml` when decoupled, otherwise `base.yaml`.
   """
-  base_cfg = "rl.yml" if sub_type == "rl" else "sft.yml"
-  return os.path.join(MAXTEXT_CONFIGS_DIR, "post_train", base_cfg)
+  base_cfg = "rl.yaml" if sub_type == "rl" else "sft.yaml"
+  return os.path.join(MEGATEXT_CONFIGS_DIR, "post_train", base_cfg)
 
 
 def get_test_dataset_path(cloud_path=None):

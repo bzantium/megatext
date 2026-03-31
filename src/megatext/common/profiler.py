@@ -26,7 +26,7 @@ from megatext.common.gcloud_stub import mldiagnostics_modules
 mldiag, _ = mldiagnostics_modules()
 
 from megatext.common.managed_mldiagnostics import ManagedMLDiagnostics
-from megatext.utils import max_logging
+from megatext.utils import logging as max_logging
 
 
 class Profiler:

@@ -27,12 +27,12 @@ from jax import lax
 from jax import numpy as jnp
 from jax.sharding import Mesh
 from megatext.configs import pyconfig
-from megatext.utils.globals import MAXTEXT_CONFIGS_DIR
+from megatext.utils.constants import MEGATEXT_CONFIGS_DIR
 from megatext.common.common_types import DECODING_ACTIVE_SEQUENCE_INDICATOR
 from megatext.kernels.megablox import gmm
 from megatext.layers import nnx_wrappers, quantizations
 from megatext.utils import megatext_utils
-from megatext.utils import model_creation_utils
+from megatext.utils import model_factory as model_creation_utils
 from tests.utils.test_helpers import get_test_config_path, get_decoupled_parallelism_overrides
 import numpy as np
 import pytest
@@ -173,7 +173,7 @@ class QuantizationTest(unittest.TestCase):
   def test_mixed_precision_config_int8w(self):
     quant = _configure_quantization(
         quant_str="intmp",
-        quant_cfg_path=os.path.join(MAXTEXT_CONFIGS_DIR, "quantization", "int8_weight_only.json"),
+        quant_cfg_path=os.path.join(MEGATEXT_CONFIGS_DIR, "quantization", "int8_weight_only.json"),
     )
     self.assertTrue(isinstance(quant.quant_dg, dict) and len(quant.quant_dg) == 1)
     # pylint: disable=unsupported-membership-test
@@ -186,7 +186,7 @@ class QuantizationTest(unittest.TestCase):
     quant = _configure_quantization(
         quant_str="intmp",
         quant_cfg_path=os.path.join(
-            MAXTEXT_CONFIGS_DIR,
+            MEGATEXT_CONFIGS_DIR,
             "quantization",
             "dense_llm_weight_only_scale.json",
         ),
@@ -205,7 +205,7 @@ class QuantizationTest(unittest.TestCase):
     quant = _configure_quantization(
         quant_str="intmp",
         quant_cfg_path=os.path.join(
-            MAXTEXT_CONFIGS_DIR,
+            MEGATEXT_CONFIGS_DIR,
             "quantization",
             "dense_llm_subchannel.json",
         ),
@@ -335,7 +335,7 @@ class QuantTest(unittest.TestCase):
     self.atol = 5e-1
 
   def init_pyconfig(self, **kwargs):
-    """Initialize MaxText pyconfig."""
+    """Initialize Megatext pyconfig."""
     # Conditionally set ici_fsdp_parallelism to match device count in decoupled mode
     extra_args = get_decoupled_parallelism_overrides()
     init_kwargs = (

@@ -24,7 +24,7 @@ else
     cmd=''
 fi
 
-export TOKENIZER_PATH="${MAXTEXT_ASSETS_ROOT:-${MAXTEXT_PKG_DIR:-${MAXTEXT_REPO_ROOT:-$PWD}/src/maxtext/assets/tokenizers}}"/tokenizer.llama2
+export TOKENIZER_PATH="${MEGATEXT_ASSETS_ROOT:-${MEGATEXT_PKG_DIR:-${MEGATEXT_REPO_ROOT:-$PWD}/src/maxtext/assets/tokenizers}}"/tokenizer.llama2
 export MAX_PREFILL_PREDICT_LENGTH=128
 export MAX_TARGET_LENGTH=256
 export MODEL_NAME=${model}
@@ -44,7 +44,7 @@ mkdir -p $OUTDIR
 echo
 # Run script
 ${cmd} python3 -m MaxText.${script_name} \
-  "${MAXTEXT_CONFIGS_DIR:-${MAXTEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}"/base.yml \
+  "${MEGATEXT_CONFIGS_DIR:-${MEGATEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}"/base.yaml \
   tokenizer_path=${TOKENIZER_PATH} \
   load_parameters_path=${LOAD_PARAMETERS_PATH} \
   checkpoint_is_quantized=True \

@@ -1085,7 +1085,7 @@ class AttentionOp(nnx.Module):
 
     local_out, local_max, local_sum = wrap_ragged_attention(q_for_gqa, k, v, lengths, block_size)
 
-    # Reshape local_out, local_max and local_sum to match Maxtext requirements
+    # Reshape local_out, local_max and local_sum to match Megatext requirements
     local_out = local_out.reshape(batch_size, q_length, q_heads, head_dim)
     local_max = local_max.reshape(batch_size, q_length, q_heads, 1)
     local_sum = local_sum.reshape(batch_size, q_length, q_heads, 1)

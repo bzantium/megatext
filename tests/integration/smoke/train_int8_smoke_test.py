@@ -19,8 +19,8 @@ import unittest
 from absl.testing import absltest
 
 from megatext.common.gcloud_stub import is_decoupled
-from megatext.trainers.pre_train.train import main as train_main
-from megatext.utils.globals import MAXTEXT_ASSETS_ROOT
+from megatext.trainers.pretrain import main as train_main
+from megatext.utils.constants import MEGATEXT_ASSETS_ROOT
 from tests.utils.test_helpers import get_test_config_path, get_test_dataset_path, get_test_base_output_directory
 
 
@@ -59,7 +59,7 @@ class Train(unittest.TestCase):
             "steps=10",
             "enable_checkpointing=False",
             "quantization=int8",
-            rf"tokenizer_path={os.path.join(MAXTEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
+            rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.llama2')}",
             "enable_goodput_recording=False",
             "monitor_goodput=False",
             "enable_checkpoint_cloud_logger=False",

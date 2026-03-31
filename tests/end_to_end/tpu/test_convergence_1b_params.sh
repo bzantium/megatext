@@ -5,9 +5,9 @@ echo "Running test_convergence_1b_params.sh"
 # Run this on 64 chips to achieve a loss value of ~2.5 after 20400 steps, or ~2.7 after 10200 steps (v4-128)
 #
 # Command Flags:
-# OUTPUT_PATH (Required, unless base_output_directory is already set in base.yml)
-# DATASET_PATH (Required, unless dataset_path is already set in base.yml)
-# RUN_NAME (Required, unless run_name is already set in base.yml or running with XPK/GKE)
+# OUTPUT_PATH (Required, unless base_output_directory is already set in base.yaml)
+# DATASET_PATH (Required, unless dataset_path is already set in base.yaml)
+# RUN_NAME (Required, unless run_name is already set in base.yaml or running with XPK/GKE)
 # LOSS_THRESHOLD (Optional, default is 100.0 )
 #
 # Example to invoke this script:
@@ -49,14 +49,14 @@ if [ "$DATASET_TYPE" == "hf" ]
 then
     # We use a local copy of tokenizer from https://huggingface.co/meta-llama/Llama-2-7b-hf
     # Alternatively, you can set tokenizer_path="meta-llama/Llama-2-7b-hf" and hf_access_token="<your-token>" after gaining access through HF website.
-    gcloud storage cp -r gs://maxtext-dataset/hf/llama2-tokenizer "${MAXTEXT_ASSETS_ROOT:-${MAXTEXT_PKG_DIR:-${MAXTEXT_REPO_ROOT:-$PWD}/src/maxtext/assets/tokenizers}}"
-    CMD_DATA=" hf_path=parquet tokenizer_path=${MAXTEXT_ASSETS_ROOT:-${MAXTEXT_PKG_DIR:-${MAXTEXT_REPO_ROOT:-$PWD}/src/maxtext/assets/tokenizers}}/llama2-tokenizer \
+    gcloud storage cp -r gs://maxtext-dataset/hf/llama2-tokenizer "${MEGATEXT_ASSETS_ROOT:-${MEGATEXT_PKG_DIR:-${MEGATEXT_REPO_ROOT:-$PWD}/src/maxtext/assets/tokenizers}}"
+    CMD_DATA=" hf_path=parquet tokenizer_path=${MEGATEXT_ASSETS_ROOT:-${MEGATEXT_PKG_DIR:-${MEGATEXT_REPO_ROOT:-$PWD}/src/maxtext/assets/tokenizers}}/llama2-tokenizer \
         hf_train_files=$DATASET_PATH/hf/c4/c4-train-*.parquet \
         hf_eval_split=train \
         hf_eval_files=$DATASET_PATH/hf/c4/c4-validation-*.parquet "
 fi
 
-TRAIN_CMD="python3 -m maxtext.trainers.pre_train.train ${MAXTEXT_CONFIGS_DIR:-${MAXTEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}/base.yml \
+TRAIN_CMD="python3 -m megatext.trainers.pre_train.train ${MEGATEXT_CONFIGS_DIR:-${MEGATEXT_REPO_ROOT:-$PWD}/src/maxtext/configs}/base.yaml \
         steps=$STEPS eval_steps=$EVAL_STEPS eval_interval=$EVAL_INTERVAL \
         per_device_batch_size=$PER_DEVICE_BATCH_SIZE learning_rate=3e-4 enable_checkpointing=false \
         max_target_length=2048 global_parameter_scale=1 \

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Decoupling unit tests for MaxText GCloud stubs.
+"""Decoupling unit tests for Megatext GCloud stubs.
 
 These tests are written to pass whether optional deps (JetStream, cloud_tpu_diagnostics)
 are installed or not, and they focus only on decoupling behavior.
@@ -26,7 +26,7 @@ from unittest import mock
 import pytest
 
 from megatext.common import gcloud_stub
-from megatext.utils import gcs_utils
+from megatext.utils import storage as gcs_utils
 
 
 @pytest.mark.cpu_only

@@ -84,7 +84,7 @@ fi
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-MAXTEXT_DIR="$(realpath "$SCRIPT_DIR/../../../")"
+MEGATEXT_DIR="$(realpath "$SCRIPT_DIR/../../../")"
 OUTPUT_DIR="${SCRIPT_DIR}/output/${MODEL}${NUM_DECODER_LAYERS:+_${NUM_DECODER_LAYERS}_layers}${OUTPUT_DIR_TAG:+_$OUTPUT_DIR_TAG}_${TIMESTAMP}"
 mkdir -p "$OUTPUT_DIR"
 
@@ -154,7 +154,7 @@ if [[ "$TRACE" == "true" ]]; then
 fi
 # Updating the model config file as we can't pass base_num_decoder_layers=1 in additional-args
 if [ -n "$NUM_DECODER_LAYERS" ]; then
-  MODEL_CONFIG="$MAXTEXT_DIR/maxtext/configs/models/$MODEL.yml"
+  MODEL_CONFIG="$MEGATEXT_DIR/maxtext/configs/models/$MODEL.yaml"
   original_num_decoder_layers=$(grep "base_num_decoder_layers" "$MODEL_CONFIG" | awk -F': ' '{print $2}')
   sed -i "s/base_num_decoder_layers: .*/base_num_decoder_layers: $NUM_DECODER_LAYERS/" "$MODEL_CONFIG"
   echo "=== Setting base_num_decoder_layers=$NUM_DECODER_LAYERS in $MODEL_CONFIG"
@@ -200,7 +200,7 @@ for ((i = start_index; i < ${#experiments[@]}; i++)); do
   for recipe in "${TRAINING_RECIPES[@]}"; do
     test="${recipe}"
     run_and_parse "$test" "$dp" "$tpsp" "$fsdp" \
-      "MAXTEXT_DIR=${MAXTEXT_DIR} bash test-maxtext.sh $args --quantization=${recipe} $BASE_ARGS ${OTHER_ARGS}"
+      "MEGATEXT_DIR=${MEGATEXT_DIR} bash test-maxtext.sh $args --quantization=${recipe} $BASE_ARGS ${OTHER_ARGS}"
   done
 done
 

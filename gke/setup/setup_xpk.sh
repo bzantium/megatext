@@ -46,12 +46,26 @@ else
     gcloud auth login
 fi
 
-# --- 2. Configure Docker credential helpers ---
+# --- 2. Configure Docker credentials and Artifact Registry ---
 echo ""
 echo "==> Step 2: Configure Docker credentials for Artifact Registry and GCR"
 gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
 gcloud auth configure-docker gcr.io --quiet
 echo "Docker credential helpers configured."
+
+echo ""
+echo "==> Step 2b: Ensure Artifact Registry repository exists"
+if gcloud artifacts repositories describe megatext --location="$REGION" --project="$PROJECT" >/dev/null 2>&1; then
+    echo "Artifact Registry repo 'megatext' already exists."
+else
+    echo "Creating Artifact Registry repo 'megatext'..."
+    gcloud artifacts repositories create megatext \
+        --repository-format=docker \
+        --location="$REGION" \
+        --project="$PROJECT" \
+        --description="Megatext Docker images"
+    echo "Created."
+fi
 
 # --- 3. Install kubectl and gke-gcloud-auth-plugin ---
 echo ""

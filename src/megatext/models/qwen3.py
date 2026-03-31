@@ -384,7 +384,7 @@ class Qwen3NextGatedDeltaNet(nnx.Module):
   def __init__(self, config: Config, dtype: DType = jnp.float32, model_mode: str = MODEL_MODE_TRAIN, *, rngs: nnx.Rngs):
     """
     Args:
-      config: MaxText configuration object.
+      config: MegaText configuration object.
       rngs: The random number generators for initialization, passed by the nnx.to_linen wrapper.
     """
     self.config = config
@@ -688,7 +688,7 @@ class Qwen3NextFullAttention(nnx.Module):
       - Partial ROPE is applied to the first 25% of head dimensions
 
   Attributes:
-    config: MaxText configuration object.
+    config: MegaText configuration object.
     mesh: The device mesh for sharding.
     model_mode: The operational mode (e.g., 'train', 'prefill').
     layer_idx: The index of the current layer.

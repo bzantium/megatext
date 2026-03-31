@@ -238,7 +238,7 @@ class MuonDimensionTest(parameterized.TestCase):
   @pytest.mark.tpu_only
   def test_model_integration(self, model, expected_output):
     """
-    Initializes the specified MaxText model and asserts that the generated
+    Initializes the specified MegaText model and asserts that the generated
     Muon dimension numbers match the hardcoded reference.
     """
     actual_output = get_model_mdn(model, scan_layers=True)

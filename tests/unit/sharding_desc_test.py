@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for _get_sharding_desc and maybe_shard_with_name in MaxText sharding module."""
+"""Unit tests for _get_sharding_desc and maybe_shard_with_name in Megatext sharding module."""
 
 import os
 import unittest

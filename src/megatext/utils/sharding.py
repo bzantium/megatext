@@ -13,24 +13,38 @@
 # limitations under the License.
 
 # pylint: disable=line-too-long, disable=bare-except, consider-using-generator
-""" Utils that are only interesting to MaxText and sharding related. """
+""" Utils that are only interesting to Megatext and sharding related. """
 
+import collections
+from collections.abc import Iterable, Sequence
+import os
+import socket
+import time
+from typing import Any
+
+from etils import epath
 from flax import linen as nn
-
-from collections.abc import Iterable
 
 import jax
 from jax.core import Tracer
+from jax.experimental import mesh_utils
 from jax.sharding import PartitionSpec as P, NamedSharding, reshard
 
+import numpy as np
 import optax
+import orbax.checkpoint as ocp
+from orbax.checkpoint.experimental.emergency.multi_tier_checkpointing import initialization
 
 from megatext.common.common_types import ShardMode
-from megatext.utils import max_logging
+from megatext.utils import logging as max_logging
 from megatext.utils import max_utils
 
 import inspect  # for debugging only
 from pathlib import Path
+
+initialize_multi_tier_checkpointing = initialization.initialize_multi_tier_checkpointing
+HYBRID_RING_64X4 = "hybrid_ring_64x4"
+HYBRID_RING_32X8 = "hybrid_ring_32x8"
 
 _LOGGED_ACTIVATION_SHARDINGS = set()
 _ACTIVATION_SHARDINGS_DUMP = []
@@ -44,13 +58,7 @@ def clear_input_shardings_dump():
 
 def get_input_data_sharding(config, mesh):
   """Get the input data sharding for the model"""
-  if config.enable_diloco:
-    data_sharding = create_sharding(
-        mesh, ["diloco"] + config.input_data_sharding_logical_axes, rules=config.logical_axis_rules
-    )
-  else:
-    data_sharding = create_sharding(mesh, config.input_data_sharding_logical_axes, rules=config.logical_axis_rules)
-  return data_sharding
+  return create_sharding(mesh, config.input_data_sharding_logical_axes, rules=config.logical_axis_rules)
 
 
 def _get_sharding_desc(inputs, extra_stack_level):
@@ -655,3 +663,442 @@ def all_gather_over_fsdp(variables, sharding_info, mesh, logical_axis_rules, sha
   # Apply the constraint to the model's current variables. This tells JAX to
   # gather the weights into this layout.
   return maybe_shard_with_name(variables, physical_constraint_no_fsdp, shard_mode=shard_mode)
+
+
+def create_device_mesh(config, devices=None):
+  """Creates a device mesh with each slice in its own data parallel group. If there is only one slice, uses two replicas"""
+  from jax.experimental import mesh_utils
+
+  import numpy as np
+
+  if devices is None:
+    devices = jax.devices()
+  if config.subslice_shape and config.enable_single_controller and config.num_slices == 1:
+    max_logging.log(f"Trying to create a subslice with shape: {config.subslice_shape}")
+    subslice_shape = tuple(int(x) for x in config.subslice_shape.split(","))
+    device_coords = [device.coords for device in devices]
+    device_coords_np = np.array(device_coords)
+
+    # Find the minimum coordinates to start the subslice
+    min_coords = device_coords_np.min(axis=0)
+
+    subslice_devices = []
+    for device in devices:
+      coords = device.coords
+      if all(min_coords[i] <= coords[i] < min_coords[i] + subslice_shape[i] for i in range(len(subslice_shape))):
+        subslice_devices.append(device)
+    devices = subslice_devices
+
+  num_devices = len(devices)
+  num_slices = 1 if config.inference_benchmark_test else config.num_slices
+  num_devices_per_slice = num_devices // num_slices
+
+  multi_slice_env = num_slices > 1
+
+  # Find possible unspecified parallelisms
+  ici_parallelism = max_utils.fill_unspecified_mesh_axes(config.ici_parallelism.copy(), num_devices_per_slice, "ICI")
+
+  allow_split_physical_axes = config.allow_split_physical_axes if config.allow_split_physical_axes else False
+
+  if multi_slice_env:
+    dcn_parallelism = max_utils.fill_unspecified_mesh_axes(config.dcn_parallelism.copy(), num_slices, "DCN")
+    if max_utils.is_valid_custom_mesh(ici_parallelism, config.custom_mesh):
+      mesh = max_utils.create_custom_device_mesh(ici_parallelism, dcn_parallelism, devices, config.custom_mesh)
+    else:
+      mesh = mesh_utils.create_hybrid_device_mesh(
+          ici_parallelism,
+          dcn_parallelism,
+          devices,
+          allow_split_physical_axes=allow_split_physical_axes,
+      )
+  else:
+    if allow_split_physical_axes:
+      if max_utils.is_valid_custom_mesh(ici_parallelism, config.custom_mesh):
+        mesh = mesh_utils.create_device_mesh(
+            [16, 16],
+            devices,
+            contiguous_submeshes=False,
+            allow_split_physical_axes=False,
+        )
+        mesh = max_utils.reshape_mesh_to_rings(mesh, config.custom_mesh)
+        mesh = np.reshape(mesh, ici_parallelism)
+      else:
+        mesh = mesh_utils.create_device_mesh(
+            ici_parallelism,
+            devices,
+            contiguous_submeshes=False,
+            allow_split_physical_axes=allow_split_physical_axes,
+        )
+    else:
+      mesh = mesh_utils.create_device_mesh(
+          ici_parallelism,
+          devices,
+      )
+      if config.optimize_mesh_for_tpu_v6e:
+        mesh = max_utils.optimize_mesh_for_tpu_v6e(mesh, devices)
+
+  max_logging.log(f"Num_devices: {num_devices}, shape {mesh.shape}")
+
+  return mesh
+
+
+def shard_reorder_causal_load_balanced(batch, cp_size, shard_mode):
+  """Shard the output of the reordered sequence."""
+  reordered = max_utils.reorder_causal_load_balanced(batch, cp_size)
+  for _, v in batch.items():
+    if isinstance(v, jax.Array):
+      reordered = maybe_shard_with_name(reordered, v.sharding, shard_mode)
+      break
+  return reordered
+
+
+def get_reorder_callable(cp_size, shard_mode):
+  """Creates a callable that can be used with map() to reorder batches."""
+  import functools
+
+  return functools.partial(shard_reorder_causal_load_balanced, cp_size=cp_size, shard_mode=shard_mode)
+
+
+# ---------------------------------------------------------------------------
+# Functions moved from max_utils.py
+# ---------------------------------------------------------------------------
+
+
+def maybe_initialize_jax_distributed_system(raw_keys):
+  """The best recipe to initialize the Jax Distributed System has varied over time. We keep a layer of
+  indirection in Megatext to avoid breaking the call sites unnecessarily.
+
+  Currently jax.distributed.initialize() fully works as expected!
+
+  For CPUs, we call jax.distributed.initialize() explicitly, with the specified arguments.
+  """
+  if raw_keys["skip_jax_distributed_system"]:
+    max_logging.log("Skipping jax distributed system due to skip_jax_distributed_system=True flag.")
+    return
+  if raw_keys["enable_single_controller"]:
+    max_logging.log("Skipping jax distributed system since its not needed for single controller.")
+    return
+  if jax.distributed.is_initialized():
+    max_logging.log("Jax distributed system is already initialized.")
+    return
+  if raw_keys["inference_benchmark_test"]:
+    # Disable initialization for inference benmark test.
+    return
+  if raw_keys["compile_topology"]:
+    # Don't initialize jax distributed with AOT compilation
+    return
+  if is_gpu_backend(raw_keys):
+    max_logging.log("Attempting to initialize the jax distributed system for GPU backend...")
+    initialize_jax_for_gpu(raw_keys)
+    max_logging.log("Jax distributed system initialized on GPU!")
+  elif is_cpu_backend(raw_keys):
+    max_logging.log("Attempting to initialize the jax distributed system for CPU backend...")
+    initialize_jax_for_cpu(raw_keys)
+    max_logging.log("Jax distributed system initialized on CPUs!")
+  elif raw_keys["enable_multi_tier_checkpointing"]:
+    max_logging.log("Attempting to initialize the jax distributed system for multi-tier " "checkpointing...")
+    initialize_multi_tier_checkpointing(
+        local_checkpoint_directory=raw_keys["local_checkpoint_directory"],
+        backup_interval_minutes=raw_keys["multi_tier_checkpointing_backup_interval_minutes"],
+        run_name=raw_keys["run_name"],
+        jax_initialization_timeout_seconds=raw_keys["jax_distributed_initialization_timeout"],
+        data_parallelism=raw_keys["mtc_data_parallelism"],
+    )
+    max_logging.log("Jax distributed system initialized for multi-tier checkpointing!")
+  elif (raw_keys["enable_checkpointing"] and raw_keys["compile_topology_num_slices"] == -1) or raw_keys[
+      "hardware"
+  ] == "gpu_multiprocess":
+    max_logging.log("Attempting to initialize the jax distributed system...")
+    if not raw_keys["enable_emergency_checkpoint"]:
+      jax.distributed.initialize(initialization_timeout=raw_keys["jax_distributed_initialization_timeout"])
+    else:
+      if raw_keys["hardware"] == "gpu_multiprocess":
+        max_logging.log("Initializing jax distribtued to support local checkpointing with" " GPUs...")
+        jax.distributed.initialize(initialization_timeout=raw_keys["jax_distributed_initialization_timeout"])
+        ocp.multihost.initialize_runtime_to_distributed_ids()
+        ocp.multihost.initialize_distributed_to_device_ids()
+      else:
+        initialize_jax_for_tpu_with_emergency_checkpointing(raw_keys)
+    max_logging.log("Jax distributed system initialized!")
+
+
+def initialize_jax_for_gpu(raw_keys):
+  """Jax distributed initialize for GPUs."""
+  if os.environ.get("JAX_COORDINATOR_IP") is not None:
+    coordinator_ip = str(os.getenv("JAX_COORDINATOR_IP"))
+    coordinator_port = str(os.getenv("JAX_COORDINATOR_PORT"))
+    devices = os.getenv("CUDA_VISIBLE_DEVICES")
+    if devices is not None:
+      try:
+        devices = [int(x) for x in devices.split(",")]
+      except (ValueError, TypeError) as e:
+        max_logging.log(f"Error parsing CUDA_VISIBLE_DEVICES: {e}")
+        devices = None
+
+    jax.distributed.initialize(
+        coordinator_address=f"{coordinator_ip}:{coordinator_port}",
+        num_processes=int(os.getenv("NNODES")),
+        process_id=int(os.getenv("NODE_RANK")),
+        initialization_timeout=raw_keys["jax_distributed_initialization_timeout"],
+        local_device_ids=devices,
+    )
+    max_logging.log(f"JAX global devices: {jax.devices()}")
+
+
+def initialize_jax_for_cpu(raw_keys):
+  """Jax distributed initialize for CPUs. Includes retries until the coordinator is ready."""
+  coordinator_ip_address = get_coordinator_ip_address()
+  coordinator_address = coordinator_ip_address + ":1234"  # JAX coordinator port used in XPK
+  # Env variables to be set in XPK or otherwise
+  job_index = int(os.environ.get("JOB_INDEX"))
+  job_completion_index = int(os.environ.get("JOB_COMPLETION_INDEX"))
+  processes_in_job = int(os.environ.get("PROCESSES_IN_JOB"))
+  pid = job_index * processes_in_job + job_completion_index
+  max_logging.log(f" Jax process id is {pid} ")
+  # Explicit initialize is needed only for CPUs
+  jax.distributed.initialize(
+      coordinator_address=coordinator_address,
+      process_id=pid,
+      num_processes=int(os.environ.get("JAX_PROCESS_COUNT")),
+      initialization_timeout=raw_keys["jax_distributed_initialization_timeout"],
+  )
+
+
+def initialize_jax_for_tpu_with_emergency_checkpointing(raw_keys):
+  """Initialize JAX distributed runtime for TPUs when emergency checkpointing is used.
+  The information required to initialize JAX distributed runtime will be written by GKE to
+  the local checkpoint directory. This function retrieves that information and initializes
+  JAX distributed runtime.
+  """
+  process_id, coordinator_address = _retrieve_jax_init_info(raw_keys)
+
+  if process_id != "" and coordinator_address != "":
+    max_logging.log(
+        f"Using {process_id} as the process_id and {coordinator_address} as the"
+        " coordinator_address to initialize JAX distributed runtime..."
+    )
+    jax.distributed.initialize(
+        coordinator_address=coordinator_address,
+        process_id=int(process_id),
+        initialization_timeout=raw_keys["jax_distributed_initialization_timeout"],
+    )
+
+    ocp.multihost.initialize_runtime_to_distributed_ids()
+    ocp.multihost.initialize_distributed_to_device_ids()
+
+
+def _retrieve_jax_init_info(raw_keys):
+  """Retrieve JAX init info from a local file."""
+  JAX_INIT_INFO_FILE = "jax-init-info.txt"
+  local_jax_init_info_file = epath.Path(raw_keys["local_checkpoint_directory"]) / JAX_INIT_INFO_FILE
+  # Allow time for the JAX init info file to be populated by GKE. This is needed because the file is
+  # only populated when the worker with process id of 0 is determined. After a disruption, although some
+  # workers might be up and running, the init info file won't be populated until the node with process id
+  # of 0 is known and this could take time. Using 900 seconds for now and it needs to be increased if the
+  # "repair" time is longer.
+  for i in range(900):
+    if local_jax_init_info_file.exists():
+      return local_jax_init_info_file.read_text().split("\n")[:2]
+    max_logging.log(f"Unable to locate {JAX_INIT_INFO_FILE} after {i} seconds, sleeping for 1 second before retrying...")
+    time.sleep(1)
+  max_logging.log(
+      f"Unable to locate {JAX_INIT_INFO_FILE} after 900 seconds," "returning empty process id and coordinator address."
+  )
+  return "", ""
+
+
+def get_num_slices(raw_keys):
+  """Calculate num_slices based on number of devices."""
+  if raw_keys.get("num_slices", -1) != -1:
+    max_logging.log(f"Using num_slices={raw_keys['num_slices']} per user request.")
+    return raw_keys["num_slices"]
+  if raw_keys["hardware"] == "cpu":
+    max_logging.log(" Setting num_slices=1 for CPU hardware type")
+    return 1
+  if int(raw_keys["compile_topology_num_slices"]) > 0:
+    return raw_keys["compile_topology_num_slices"]
+  else:
+    devices = jax.devices()
+    try:
+      return 1 + max(d.slice_index for d in devices)
+    except (ValueError, AttributeError):
+      return 1
+
+
+def is_cpu_backend(raw_keys):
+  """Determine whether Megatext is intended to run on a CPU backend."""
+  return raw_keys["hardware"] == "cpu"
+
+
+def is_gpu_backend(raw_keys):
+  """Determine whether Megatext is intended to run on a GPU backend."""
+  return raw_keys["hardware"] == "gpu"
+
+
+def get_coordinator_ip_address():
+  """Get coordinator IP Address with retries"""
+  coordinator_address = ""
+  coordinator_ip_address = ""
+  if os.environ.get("JAX_COORDINATOR_ADDRESS") is not None:
+    coordinator_address = os.environ.get("JAX_COORDINATOR_ADDRESS")
+    coordinator_found = False
+    lookup_attempt = 1
+    max_coordinator_lookups = 50
+    while not coordinator_found and lookup_attempt <= max_coordinator_lookups:
+      try:
+        coordinator_ip_address = socket.gethostbyname(coordinator_address)
+        coordinator_found = True
+      except socket.gaierror:
+        max_logging.log(
+            f"Failed to recognize coordinator address {coordinator_address} on attempt {lookup_attempt}, retrying..."
+        )
+        lookup_attempt += 1
+        time.sleep(5)
+  max_logging.log(f"Coordinator IP address: {coordinator_ip_address}")
+  return coordinator_ip_address
+
+
+def fill_unspecified_mesh_axes(parallelism_vals, target_product, parallelism_type):
+  """Evaluates unspecified DCN/ICI parallelism values"""
+  if -1 in parallelism_vals:
+    assert (
+        parallelism_vals.count(-1) == 1
+    ), f"Found unspecified values (-1) for more than one {parallelism_type}\
+      parallelism axis. At most one axis can be unspecified."
+
+    determined_val = target_product / np.prod(parallelism_vals) * -1
+
+    assert (
+        determined_val >= 1 and determined_val.is_integer
+    ), f"Unspecified value unable to be determined with the given\
+      {parallelism_type} parallelism values"
+
+    parallelism_vals[parallelism_vals.index(-1)] = int(determined_val)
+
+  target_type = "slices" if parallelism_type == "DCN" else "devices per slice"
+  assert np.prod(parallelism_vals) == target_product, (
+      f"Number of {target_type} {target_product} does not match"
+      f" the product of the {parallelism_type} parallelism {np.prod(parallelism_vals)}"
+  )
+
+  return parallelism_vals
+
+
+def reshape_mesh_to_rings(a, strategy):
+  """Reshape device mesh to rings for 64x4 or 32x8 mesh shape"""
+  b = []
+  if strategy == HYBRID_RING_64X4:
+    for i in range(8):
+      b.append([])
+      for j in range(8):
+        a_i = i * 2
+        a_j = j * 2
+        # forms a ring of size 4
+        b[i].append([a[a_i, a_j], a[a_i, a_j + 1], a[a_i + 1, a_j + 1], a[a_i + 1, a_j]])
+    b = np.array(b)
+    b = np.reshape(b, (64, 4))
+  elif strategy == HYBRID_RING_32X8:
+    for i in range(8):
+      b.append([])
+      for j in range(4):
+        a_i = i * 2
+        a_j = j * 4
+        # forms a ring of size 8
+        b[i].append(
+            [
+                a[a_i, a_j],
+                a[a_i, a_j + 1],
+                a[a_i, a_j + 2],
+                a[a_i, a_j + 3],
+                a[a_i + 1, a_j + 3],
+                a[a_i + 1, a_j + 2],
+                a[a_i + 1, a_j + 1],
+                a[a_i + 1, a_j],
+            ]
+        )
+    b = np.array(b)
+    b = np.reshape(b, (32, 8))
+  else:
+    raise ValueError(f"The strategy {strategy} to reshape the mesh is not implemented.")
+  return b
+
+
+def create_custom_device_mesh(
+    mesh_shape: Sequence[int],
+    dcn_mesh_shape: Sequence[int],
+    devices: Sequence[Any],
+    custom_strategy: str,
+    process_is_granule: bool = False,
+    should_sort_granules_by_key: bool = True,
+) -> np.ndarray:
+  """Custom device mesh for 64x4 ici parallelism"""
+  assert len(devices) % 256 == 0, f"This custom mesh is not valid for {len(devices)} devices"
+  attr = "process_index" if process_is_granule else "slice_index"
+  if not hasattr(devices[0], attr):
+    raise ValueError(f"Device {devices[0]} does not have attribute {attr}. See" " `process_is_granule` option.")
+  granule_dict = collections.defaultdict(list)
+  for dev in devices:
+    granule_dict[getattr(dev, attr)].append(dev)
+  granules = (
+      [granule_dict[key] for key in sorted(granule_dict.keys())] if should_sort_granules_by_key else granule_dict.values()
+  )
+  if np.prod(dcn_mesh_shape) != len(granules):
+    raise ValueError(f"Number of slices {len(granules)} must equal the product of " f"dcn_mesh_shape {dcn_mesh_shape}")
+  per_granule_meshes = [
+      mesh_utils.create_device_mesh(
+          [16, 16],
+          granule,
+          allow_split_physical_axes=False,
+      )
+      for granule in granules
+  ]
+
+  per_granule_meshes = [np.reshape(reshape_mesh_to_rings(x, custom_strategy), mesh_shape) for x in per_granule_meshes]
+  # TODO(jekbradbury): handle non-uniform DCN topologies
+  granule_mesh = np.arange(len(granules)).reshape(dcn_mesh_shape)
+  blocks = np.vectorize(lambda i: per_granule_meshes[i], otypes=[object])(granule_mesh)
+  device_mesh = np.block(blocks.tolist())
+  return device_mesh
+
+
+def is_valid_custom_mesh(ici_parallelism, strategy):
+  """Checks if the given strategy and ICI parallelism are valid."""
+  if not strategy:
+    return False
+
+  valid_strategies = {
+      HYBRID_RING_64X4: [1, 4, 64],
+      HYBRID_RING_32X8: [1, 8, 32],
+  }
+
+  if strategy in valid_strategies:
+    if sorted(set(ici_parallelism)) == valid_strategies[strategy]:
+      return True
+    else:
+      raise ValueError(f"Invalid custom_mesh:{strategy} chosen for ICI mesh shape {ici_parallelism}")
+  else:
+    raise ValueError(f"The strategy {strategy} to reshape the mesh is invalid.")
+
+
+def optimize_mesh_for_tpu_v6e(mesh, devices):
+  """Apply transformations to the mesh to optimize for TPU v6e"""
+  if devices[0].device_kind != "TPU v6 lite":
+    return mesh
+  num_devices = len(devices)
+  mesh_is_1d_ring = num_devices in mesh.shape
+  if not mesh_is_1d_ring:
+    return mesh
+  # check that the physical topology is 2x4
+  device_coords = [d.coords for d in devices]
+  coord_size = len(device_coords[0])
+  max_coords = tuple(max(dc[i] for dc in device_coords) for i in range(coord_size))
+  min_coords = tuple(min(dc[i] for dc in device_coords) for i in range(coord_size))
+  dims = tuple(h - l + 1 for (h, l) in zip(max_coords, min_coords))
+  if dims != (2, 4, 1):
+    return mesh
+  axis_idx = mesh.shape.index(num_devices)
+  new_mesh = np.moveaxis(mesh, axis_idx, 0)
+  new_mesh[4:] = new_mesh[-1:3:-1]
+  new_mesh = np.moveaxis(new_mesh, 0, axis_idx)
+  max_logging.log("Optimized the mesh for TPU v6e")
+  return new_mesh

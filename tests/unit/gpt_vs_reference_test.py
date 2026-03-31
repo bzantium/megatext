@@ -182,7 +182,7 @@ def eager_attention_forward(
   """PyTorch reference implementation for eager attention.
 
   This function computes attention, including support for attention sinks,
-  and is used as a reference to validate the MaxText implementation.
+  and is used as a reference to validate the Megatext implementation.
 
   Args:
     module: A module-like object containing configuration (e.g., sinks).
@@ -262,10 +262,10 @@ class Config:
 
 
 class GptOssMLPTest(unittest.TestCase):
-  """Tests for the MaxText GPT-OSS MLP implementation against a PyTorch reference."""
+  """Tests for the Megatext GPT-OSS MLP implementation against a PyTorch reference."""
 
   def test_mlp_block(self):
-    """Validates the MaxText MoE MLP block against the PyTorch reference."""
+    """Validates the Megatext MoE MLP block against the PyTorch reference."""
     torch.set_default_dtype(torch.float32)
     torch.manual_seed(42)
     config = Config()
@@ -292,7 +292,7 @@ class GptOssMLPTest(unittest.TestCase):
     with torch.no_grad():
       expected_output, _ = model(hidden_states)
 
-    # MaxText model
+    # MegaText model
     cfg = pyconfig.initialize(
         [None, get_test_config_path()],
         run_name="gpt_oss_mlp_test",
@@ -356,7 +356,7 @@ class GptOssMLPTest(unittest.TestCase):
 
 
 class GptOssAttentionTest(unittest.TestCase):
-  """Tests for the MaxText GPT-OSS attention implementation."""
+  """Tests for the Megatext GPT-OSS attention implementation."""
 
   def setUp(self):
     """Sets up the test environment, preparing tensors and configurations."""
@@ -691,7 +691,7 @@ def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
 
 
 class GptOssYarnTest(unittest.TestCase):
-  """Tests for the MaxText GPT-OSS Yarn RoPE implementation."""
+  """Tests for the Megatext GPT-OSS Yarn RoPE implementation."""
 
   def setUp(self):
     """Sets up the test environment for Yarn RoPE validation."""
