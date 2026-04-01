@@ -196,13 +196,13 @@ def _prepare_for_pydantic(raw_keys: dict[str, Any]) -> dict[str, Any]:
 
     # Preprocess muon_consistent_rms to be None or float
     if key == "muon_consistent_rms":
-      if value in ["None", "none"]:
+      if value is None or (isinstance(value, str) and value.lower() == "none"):
         new_value = None
       else:
         try:
           new_value = float(value)
-        except ValueError as e:
-          raise ValueError("muon_consistent_rms should be None or float") from e
+        except (ValueError, TypeError) as e:
+          raise ValueError("muon_consistent_rms should be null or float") from e
 
     pydantic_kwargs[key] = new_value
 

@@ -1,0 +1,22 @@
+workload_name: test-pretrain-qwen3-swa-muon
+
+bucket: lmt-tpu-datasets
+mount_path: /mnt/bucket
+
+config:
+  model: qwen3-swa
+  dataset_type: synthetic
+  steps: 10
+  max_target_length: 4096
+  per_device_batch_size: 4
+  learning_rate: 3e-4
+  scan_layers: true
+  remat_policy: full
+  ici_fsdp_parallelism: -1
+  enable_checkpointing: false
+  log_period: 1
+  opt_type: muon
+  muon_weight_decay: 0.1
+  muon_consistent_rms: 0.2
+  run_name: test-pretrain-qwen3-swa-muon
+  base_output_directory: gs://lmt-tpu-datasets/experiments/ryan

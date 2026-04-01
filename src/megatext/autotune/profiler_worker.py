@@ -29,7 +29,7 @@ def _run(config_overrides: dict, candidate_dict: dict, num_steps: int, warmup_st
     overrides["enable_checkpointing"] = False
     overrides["dataset_type"] = "synthetic"
     overrides["allow_split_physical_axes"] = True
-    overrides["gradient_accumulation_steps"] = 1
+    overrides["global_batch_size"] = "None"  # ensures ga_steps=1 in profiling
     overrides["log_config"] = False
 
     # Merge candidate overrides into a new dict (don't mutate caller's dict)
@@ -85,6 +85,7 @@ def _run(config_overrides: dict, candidate_dict: dict, num_steps: int, warmup_st
         with jax.set_mesh(mesh), nn_partitioning.axis_rules(megatext_config.logical_axis_rules):
             state, metrics = p_train_step(state, example_batch, nextrng)
         jax.block_until_ready(state)
+        jax.block_until_ready(metrics)
         elapsed = time.monotonic() - start
 
         if step >= warmup_steps:
@@ -121,8 +122,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config-json", required=True)
     parser.add_argument("--candidate-json", required=True)
-    parser.add_argument("--num-steps", type=int, default=5)
-    parser.add_argument("--warmup-steps", type=int, default=2)
+    parser.add_argument("--num-steps", type=int, default=3)
+    parser.add_argument("--warmup-steps", type=int, default=3)
     parser.add_argument("--result-file", required=True)
     args = parser.parse_args()
 

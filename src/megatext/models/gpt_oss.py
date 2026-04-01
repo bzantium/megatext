@@ -31,6 +31,7 @@ from megatext.layers import initializers
 from megatext.layers import moe
 from megatext.layers import nnx_wrappers
 from megatext.layers import quantizations
+from megatext.layers.scannable_block import ScannableBlock
 from megatext.layers.attentions import Attention
 from megatext.layers.normalizations import RMSNorm
 from megatext.layers.quantizations import AqtQuantization as Quant
@@ -212,18 +213,17 @@ GptOssDecoderLayerToLinen = nnx_wrappers.to_linen_class(
 )
 
 
-class GptOssScannableBlock(nnx.Module):
+def _gpt_oss_layer_kwargs(i, config):
+  """Return per-layer kwargs for GPT OSS: attention type from pattern table."""
+  return {"attention_type": get_attention_type(i)}
+
+
+class GptOssScannableBlock(ScannableBlock):
   """A repeatable block of GPT OSS decoder layers.
 
     This block applies multiple decoder layers sequentially, using the attention
     pattern defined by GPT_OSS_ATTENTION_PATTERN. It's designed to be
     used with `nn.scan` for efficient compilation.
-
-  Attributes:
-    config: Config, MegaText model config
-    mesh: Mesh, JAX device mesh (used for sharding)
-    num_of_layers: int, number of decoder layers in the block
-    quant: Optional[Quant], quantization config
   """
 
   def __init__(
@@ -234,52 +234,12 @@ class GptOssScannableBlock(nnx.Module):
       quant: Optional[Quant] = None,
       rngs: nnx.Rngs = None,
   ):
-    self.config = config
-    self.mesh = mesh
-    self.model_mode = model_mode
-    self.quant = quant
-    for layer_id in range(config.inhomogeneous_layer_cycle_interval):
-      attention_type = get_attention_type(layer_id)
-      layer_name = f"layers_{layer_id}"
-      layer = GptOssDecoderLayer(
-          config=config,
-          mesh=mesh,
-          model_mode=model_mode,
-          attention_type=attention_type,
-          quant=self.quant,
-          rngs=rngs,
-      )
-      setattr(self, layer_name, layer)
-
-  def __call__(
-      self,
-      inputs,
-      decoder_segment_ids,
-      decoder_positions,
-      deterministic,
-      model_mode,
-  ):
-    cfg = self.config
-
-    inputs = nn.with_logical_constraint(inputs, ("activation_batch", "activation_norm_length", "activation_embed"))
-    inputs = checkpoint_name(inputs, "decoder_layer_input")
-    y = inputs
-    for layer_id in range(cfg.inhomogeneous_layer_cycle_interval):
-      layer_name = f"layers_{layer_id}"
-      layer = getattr(self, layer_name)
-      y = layer(
-          y,
-          decoder_segment_ids,
-          decoder_positions,
-          deterministic,
-          model_mode,
-      )
-      if cfg.scan_layers:
-        y = y[0]
-    if cfg.scan_layers:
-      return y, None
-    else:
-      return y
+    super().__init__(
+        config, mesh, model_mode, quant,
+        layer_cls=GptOssDecoderLayer,
+        layer_kwargs_fn=_gpt_oss_layer_kwargs,
+        rngs=rngs,
+    )
 
 
 GptOssScannableBlockToLinen = nnx_wrappers.to_linen_class(

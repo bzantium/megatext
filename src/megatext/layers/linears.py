@@ -463,27 +463,15 @@ class MlpBlock(nnx.Module):
     )
 
   def get_norm_layer(self, num_features: int):
-    """get normalization layer."""
-    if self.config.decoder_block in (
-        DecoderBlockType.DEFAULT,
-        DecoderBlockType.LLAMA2,
-        DecoderBlockType.MISTRAL,
-        DecoderBlockType.MIXTRAL,
-        DecoderBlockType.GEMMA,
-        DecoderBlockType.GEMMA2,
-        DecoderBlockType.GEMMA3,
-        DecoderBlockType.QWEN3,
-        DecoderBlockType.DEEPSEEK,
-        DecoderBlockType.LLAMA4,
-    ):
-      return functools.partial(normalizations.RMSNorm, num_features=num_features)
-    elif self.config.decoder_block == DecoderBlockType.GPT3:
+    """Get normalization layer from decoder block registry."""
+    from megatext.common.decoder_registry import get_spec
+    norm_type = get_spec(self.config.decoder_block).norm_type
+    if norm_type == "gpt3_layernorm":
       from megatext.models import gpt3  # pylint: disable=import-outside-toplevel
       return functools.partial(
           gpt3.Gpt3LayerNorm, num_features=num_features, reductions_in_fp32=False, use_bias=self.use_bias
       )
-    else:
-      raise ValueError(f"Incorrect decoder_block name {self.config.decoder_block.value=}")
+    return functools.partial(normalizations.RMSNorm, num_features=num_features)
 
   def __call__(
       self,

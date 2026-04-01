@@ -487,42 +487,9 @@ class NNXDecoder(nnx.Module):
     return final_carry, nnx.merge(graphdef, scanned_state)
 
   def get_decoder_layers(self):
-    """Retrieves decoder layer classes based on config using a dictionary lookup."""
-    cfg = self.config
-
-    def get_scannable(normal_cls, scannable_cls):
-      return [scannable_cls] if cfg.scan_layers else [normal_cls]
-
-    def get_deepseek():
-      if cfg.use_batch_split_schedule:
-        return [deepseek_batchsplit.DeepSeekDenseLayer, deepseek_batchsplit.DeepSeekMoELayer]
-      return [deepseek.DeepSeekDenseLayer, deepseek.DeepSeekMoELayer]
-
-    layer_map = {
-        DecoderBlockType.DEFAULT: [NNXDecoderLayer],
-        DecoderBlockType.LLAMA2: [llama2.LlamaDecoderLayer],
-        DecoderBlockType.MISTRAL: [mistral.MistralDecoderLayer],
-        DecoderBlockType.MIXTRAL: [mixtral.MixtralDecoderLayer],
-        DecoderBlockType.GEMMA: [gemma.GemmaDecoderLayer],
-        DecoderBlockType.GEMMA2: [gemma2.Gemma2DecoderLayer],
-        DecoderBlockType.GEMMA3: [gemma3.Gemma3DecoderLayer],
-        DecoderBlockType.GPT3: [gpt3.Gpt3DecoderLayer],
-        DecoderBlockType.QWEN3: [qwen3.Qwen3DecoderLayer],
-        DecoderBlockType.QWEN3_MOE: [qwen3.Qwen3MoeDecoderLayer],
-        DecoderBlockType.SIMPLE: [simple_layer.SimpleDecoderLayer],
-        DecoderBlockType.SIMPLE_MLP: [simple_layer.SimpleMlpDecoderLayer],
-        DecoderBlockType.DEEPSEEK: get_deepseek(),
-        DecoderBlockType.GPT_OSS: get_scannable(gpt_oss.GptOssDecoderLayer, gpt_oss.GptOssScannableBlock),
-        DecoderBlockType.QWEN3_NEXT: get_scannable(qwen3.Qwen3NextDecoderLayer, qwen3.Qwen3NextScannableBlock),
-        DecoderBlockType.LLAMA4: get_scannable(llama4.Llama4DecoderLayer, llama4.Llama4ScannableBlock),
-        DecoderBlockType.OLMO3: get_scannable(olmo3.Olmo3DecoderLayer, olmo3.Olmo3ScannableBlock),
-        DecoderBlockType.QWEN3_SWA: get_scannable(qwen3_swa.Qwen3SWADecoderLayer, qwen3_swa.Qwen3SWAScannableBlock),
-    }
-
-    if cfg.decoder_block not in layer_map:
-      raise ValueError(f"Incorrect decoder_block name {cfg.decoder_block.value=}")
-
-    return layer_map[cfg.decoder_block]
+    """Retrieves decoder layer classes from the decoder block registry."""
+    from megatext.common.decoder_registry import get_nnx_layers
+    return get_nnx_layers(self.config.decoder_block, self.config)
 
   def minimal_policy(self, with_context=False, with_quantization=False):
     """Helper for creating minimal checkpoint policies."""
@@ -647,35 +614,18 @@ class NNXDecoder(nnx.Module):
     return policy
 
   def get_norm_layer(self, num_features: int, rngs: nnx.Rngs):
-    """get normalization layer (return type inherits from nn.Module)"""
-    if self.config.decoder_block in (
-        DecoderBlockType.DEFAULT,
-        DecoderBlockType.LLAMA2,
-        DecoderBlockType.MISTRAL,
-        DecoderBlockType.MIXTRAL,
-        DecoderBlockType.DEEPSEEK,
-        DecoderBlockType.GEMMA,
-        DecoderBlockType.GEMMA2,
-        DecoderBlockType.GEMMA3,
-        DecoderBlockType.QWEN3,
-        DecoderBlockType.QWEN3_MOE,
-        DecoderBlockType.GPT_OSS,
-        DecoderBlockType.SIMPLE,
-        DecoderBlockType.SIMPLE_MLP,
-        DecoderBlockType.LLAMA4,
-        DecoderBlockType.OLMO3,
-    ):
-      return functools.partial(RMSNorm, num_features=num_features, shard_mode=self.config.shard_mode, rngs=rngs)
-    elif self.config.decoder_block == DecoderBlockType.GPT3:
+    """Get normalization layer from decoder block registry."""
+    from megatext.common.decoder_registry import get_spec
+    norm_type = get_spec(self.config.decoder_block).norm_type
+    if norm_type == "gpt3_layernorm":
       return functools.partial(
           gpt3.Gpt3LayerNorm, num_features=num_features, reductions_in_fp32=False, use_bias=True, rngs=rngs
       )
-    elif self.config.decoder_block == DecoderBlockType.QWEN3_NEXT:
+    if norm_type == "qwen3_next_rmsnorm":
       return functools.partial(
           normalizations.Qwen3NextRMSNorm, num_features=num_features, shard_mode=self.config.shard_mode, rngs=rngs
       )
-    else:
-      raise ValueError(f"Incorrect decoder_block name {self.config.decoder_block.value=}")
+    return functools.partial(RMSNorm, num_features=num_features, shard_mode=self.config.shard_mode, rngs=rngs)
 
   def _apply_embedding(
       self,

@@ -1,0 +1,33 @@
+# Test: checkpoint save + resume with Qwen3-SWA + Muon
+workload_name: test-ckpt-resume
+
+bucket: lmt-tpu-datasets
+mount_path: /mnt/bucket
+
+vars:
+  BUCKET_PREFIX: gs://lmt-tpu-datasets
+  DATA_ROOT: /mnt/bucket/datasets/kanana-2-corpus/mmap
+
+config:
+  model: qwen3-swa
+  dataset_type: mmap
+  dataset_path: >-
+    10 ${DATA_ROOT}/nemotron-cc-v2-high-synthetic-sampled
+    10 ${DATA_ROOT}/opc-annealing-synthetic
+  data_cache_dir: ${BUCKET_PREFIX}/cache/indices
+  steps: 20
+  max_target_length: 4096
+  per_device_batch_size: 4
+  lr_schedule_type: constant
+  learning_rate: 3e-4
+  scan_layers: true
+  remat_policy: full
+  ici_fsdp_parallelism: -1
+  enable_checkpointing: true
+  checkpoint_period: 10
+  log_period: 1
+  opt_type: muon
+  muon_weight_decay: 0.1
+  muon_consistent_rms: 0.2
+  run_name: test-ckpt-resume
+  base_output_directory: ${BUCKET_PREFIX}/experiments/ryan

@@ -141,6 +141,7 @@ class OptimizerType(str, Enum):
 class LearningRateScheduleType(str, Enum):
   """Supported learning rate schedule types."""
 
+  CONSTANT = "constant"
   COSINE = "cosine"
   WSD = "wsd"
 
@@ -436,7 +437,6 @@ class Attention(BaseModel):
       description="Whether to use the Tokamax library for GMM kernel implementation.",
   )
   ragged_block_size: int = Field(256, description="Block size for ragged attention.")
-  enable_padding_causal_mask: bool = Field(True, description="Temporary flag for TE padding.")
   use_tokamax_splash: bool = Field(False, description="Whether to use tokamax splash attention.")
   use_jax_splash: bool = Field(False, description="Whether to use jax splash attention.")
   force_q_layout: bool = Field(False, description="Force the Q layout")
@@ -813,7 +813,6 @@ class RematAndOffload(BaseModel):
       RematPolicy.FULL.value,
       description="The rematerialization policy, trading off speed and memory.",
   )
-  remat_policy_for_vit: str = Field("minimal", description="Remat policy for multimodal model's vision encoder.")
   decoder_layer_input: RematLocation = Field(
       RematLocation.DEVICE, description="Remat policy for the decoder layer's input."
   )
@@ -889,19 +888,11 @@ class Tokenizer(BaseModel):
       description="Path to the tokenizer model file.",
   )
   tokenizer_type: TokenizerType = Field(TokenizerType.SENTENCEPIECE, description="The type of tokenizer.")
-  use_chat_template: bool = Field(False, description="Whether to use the chat template for tokenization.")
-  chat_template_path: str = Field("", description="Path to chat template json file.")
   chat_template: str = Field(
       "", description="Chat template to use with HF tokenizers. It should be a valid Jinja2-formatted template."
   )
-  tokenize_train_data: bool = Field(True, description="If False, assumes the training dataset is pre-tokenized.")
-  tokenize_eval_data: bool = Field(True, description="If False, assumes the evaluation dataset is pre-tokenized.")
   add_bos: bool = Field(True, description="Whether to add a beginning-of-sentence token.")
   add_eos: bool = Field(True, description="Whether to add an end-of-sentence token.")
-  use_truncation: bool = Field(
-      True,
-      description="If False, use chunking for long sequences instead of truncation.",
-  )
   num_vocab_tiling: int = Field(
       1,
       description="Enables memory-saving optimization by tiling cross-entropy loss computation. >1 to enable.",
@@ -919,11 +910,6 @@ class DatasetGeneral(BaseModel):
       0.0,
       description="The batch size per device for evaluation. Defaults to per_device_batch_size.",
   )
-  max_corpus_chars: int = Field(10_000_000, description="Maximum number of characters to use from the corpus.")
-  train_data_columns: list[str] = Field(["text"], description="Column(s) to use from the training data.")
-  train_image_column: str | list[str] = Field("image", description="Column name(s) for images in the training data.")
-  eval_data_columns: list[str] = Field(["text"], description="Column(s) to use from the evaluation data.")
-  eval_image_column: str | list[str] = Field("image", description="Column name(s) for images in evaluation data.")
   packing: bool = Field(
       True,
       description="Whether to pack multiple short examples into a single sequence.",
@@ -936,13 +922,8 @@ class DatasetGeneral(BaseModel):
       -1,
       description="Maximum number of segments that can be packed into a single sequence. -1 or None for no limit.",
   )
-  num_epoch: int = Field(1, description="Number of epochs to train for.")
   expansion_factor_real_data: float = Field(-1.0, description="Factor for partial data loading on hosts.")
   reuse_example_batch: int = Field(0, description="For performance testing, repeatedly uses the same batch.")
-  generate_padding_batch_train: bool = Field(
-      False,
-      description="Whether to generate a padding batch for training to ensure divisibility.",
-  )
   generate_padding_batch_eval: bool = Field(
       False,
       description="Whether to generate a padding batch for evaluation to ensure divisibility.",
@@ -951,7 +932,6 @@ class DatasetGeneral(BaseModel):
   per_device_batch_size_start: float = Field(4.0, description="Start per device batch size for rampup.")
   per_device_batch_size_increment: float = Field(2.0, description="Increment for per device batch size for rampup.")
   global_rampup_samples: int = Field(500, description="Target number of training samples for rampup.")
-  colocated_python_data_input: bool = Field(False, description="Experimental feature for Pathways.")
 
 
 
@@ -1034,10 +1014,11 @@ class Optimizer(BaseModel):
   opt_type: OptimizerType = Field(OptimizerType.ADAMW, description="The type of optimizer to use.")
   global_batch_size: None | int = Field(
       None,
-      description="Global batch size. If set, gradient_accumulation_steps is derived automatically.",
+      description="Global batch size. Mutually exclusive with gradient_accumulation_steps.",
   )
-  gradient_accumulation_steps: PositiveInt = Field(
-      1, description="Derived from global_batch_size / (per_device_batch_size * num_devices). Do not set directly.",
+  gradient_accumulation_steps: None | int = Field(
+      None,
+      description="Number of gradient accumulation steps. Mutually exclusive with global_batch_size.",
   )
   use_tunix_gradient_accumulation: bool = Field(
       False,
@@ -1172,14 +1153,12 @@ class InferenceGeneral(BaseModel):
   max_target_length: int = Field(2048, description="Maximum sequence length for the model.")
   max_prefill_predict_length: int = Field(64, description="Maximum length for the prefill stage in decoding.")
   use_chunked_prefill: bool = Field(False, description="Use chunked prefilling for long sequences.")
-  prefill_chunk_size: int = Field(256, description="The chunk size for chunked prefilling.")
 
 
 
 class InferenceLayout(BaseModel):
   """Configuration for KV cache and compute layouts during inference."""
 
-  stack_prefill_result_cache: bool = Field(False, description="Stack prefill cache across layers to reduce latency.")
   prefill_cache_axis_order: str = Field("1,2,0,3", description="Axis order for the prefill KV cache.")
   ar_cache_axis_order: str = Field("1,2,0,3", description="Axis order for the autoregressive KV cache.")
   compute_axis_order: str = Field("0,1,2,3", description="Axis order for compute operations.")
@@ -1251,8 +1230,6 @@ class Profiling(BaseModel):
   profile_cleanly: bool = Field(True, description="Add block_until_ready to align profile for each step.")
   profile_periodically_period: int = Field(-1, description="If positive, profile every N steps.")
   hide_profiler_step_metric: bool = Field(False, description="Whether to enable profiler step metric.")
-  enable_jax_profiler: bool = Field(False, description="Enable the JAX live profiler.")
-  jax_profiler_port: int = Field(9999, description="Port for the JAX profiler.")
   xprof_tpu_power_trace_level: XProfTPUPowerTraceMode = Field(
       XProfTPUPowerTraceMode.POWER_TRACE_NONE,
       description=(
@@ -1309,7 +1286,6 @@ class Metrics(BaseModel):
   gcs_metrics: bool = Field(False, description="If True, save metrics to GCS.")
   save_config_to_gcs: bool = Field(False, description="If True, save config to GCS.")
   record_internal_nn_metrics: int = Field(0, description="Record internal neural network metrics.")
-  prometheus_port: int = Field(0, description="Port for Prometheus metrics server. 0 disables it.")
   enable_checkpoint_cloud_logger: bool = Field(False, description="Enables structured logging for checkpointing.")
   enable_tunix_perf_metrics: bool = Field(
       False,
@@ -1369,10 +1345,6 @@ class MultimodalGeneral(BaseModel):
   image_path: PathStr = Field("", description="Path to an image for decoding.")
   image_placeholder: str = Field("<|image|>", description="Placeholder string for images in text prompts.")
   posemb_type_for_vit: str = Field("learn", description="Positional embedding type for the vision encoder.")
-  max_num_images_per_example: int = Field(
-      -1,
-      description="Maximum number of images per example for training with image lists. -1 means no limit.",
-  )
   video_path: PathStr = Field("", description="Path to a video for decoding.")
   audio_path: PathStr = Field("", description="Path to an audio file for decoding.")
   video_placeholder: str = Field("<|video|>", description="Placeholder string for video in text prompts.")
@@ -1885,17 +1857,30 @@ class MegaTextConfig(
       except RuntimeError:
         self.quantization_local_shard_count = 1
 
-    # F. DERIVE GRADIENT ACCUMULATION FROM GLOBAL BATCH SIZE
+    # F. RESOLVE GLOBAL BATCH SIZE ↔ GRADIENT ACCUMULATION STEPS
+    micro_batch = int(self.num_target_devices * self.per_device_batch_size)
+    if micro_batch <= 0:
+      raise ValueError("per_device_batch_size * num_devices must be > 0")
+
+    if self.global_batch_size is not None and self.gradient_accumulation_steps is not None:
+      raise ValueError(
+          "global_batch_size and gradient_accumulation_steps are mutually exclusive. Set only one."
+      )
     if self.global_batch_size is not None:
-      micro_batch = int(self.num_target_devices * self.per_device_batch_size)
-      if micro_batch <= 0:
-        raise ValueError("per_device_batch_size * num_devices must be > 0")
+      # Derive ga_steps from global_batch_size
       if self.global_batch_size % micro_batch != 0:
         raise ValueError(
             f"global_batch_size ({self.global_batch_size}) must be divisible by "
             f"per_device_batch_size * num_devices ({micro_batch})"
         )
       self.gradient_accumulation_steps = self.global_batch_size // micro_batch
+    elif self.gradient_accumulation_steps is not None:
+      # Derive global_batch_size from ga_steps
+      self.global_batch_size = micro_batch * self.gradient_accumulation_steps
+    else:
+      # Both null → ga_steps=1, derive global_batch_size
+      self.gradient_accumulation_steps = 1
+      self.global_batch_size = micro_batch
 
     # G. CALCULATE BATCH SIZES
     def calculate_global_batch_sizes(per_device_batch_size, expansion_factor, num_devices, grad_accum_steps):

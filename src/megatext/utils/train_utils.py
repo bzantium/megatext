@@ -19,22 +19,19 @@ import os
 import jax
 import functools
 from flax.linen import partitioning as nn_partitioning
-from megatext.common import checkpointing
-from megatext.common.data_loader import create_dataloader
-from megatext.common.goodput import GoodputEvent, maybe_record_goodput
-from megatext.optimizers import optimizers
 from megatext.schedulers import create_learning_rate_schedule
 from megatext.utils import logging as max_logging
-from megatext.utils import model_factory as model_creation_utils
 from megatext.utils import sharding
 from megatext.utils.debug import print_non_trivial_mesh_axis, print_shardings_params
-from megatext.utils.rampup_batch import create_rampup_manager
 from megatext.utils.sharding import get_reorder_callable
 from megatext.utils.training import unbox_logicallypartioned
 
 
 def create_training_tools(config, model, mesh):
   """Creates the init_rng, optimizer, learning rate schedule, and checkpoint manager."""
+  from megatext.common import checkpointing
+  from megatext.optimizers import optimizers
+
   init_rng = jax.random.PRNGKey(config.init_weights_seed)
   learning_rate_schedule = create_learning_rate_schedule(config)
   # pass in model for muon
@@ -183,7 +180,11 @@ def setup_train_loop(config, recorder, devices=None):
     state: the initialized train state
   """
   # pylint: disable=import-outside-toplevel
+  from megatext.common.data_loader import create_dataloader
+  from megatext.common.goodput import GoodputEvent, maybe_record_goodput
   from megatext.data.input_pipeline_interface import create_data_iterator
+  from megatext.utils import model_factory as model_creation_utils
+  from megatext.utils.rampup_batch import create_rampup_manager
 
   with maybe_record_goodput(recorder, GoodputEvent.TPU_INIT):
     model = model_creation_utils.from_config(config, devices)

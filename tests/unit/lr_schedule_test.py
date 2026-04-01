@@ -19,6 +19,7 @@ import numpy.testing as npt
 
 from megatext.configs.types import WsdDecayStyle
 from megatext.schedulers.lr_schedule import (
+    create_constant_schedule,
     create_cosine_schedule,
     create_learning_rate_schedule,
     create_wsd_schedule,
@@ -28,6 +29,31 @@ from megatext.schedulers.lr_schedule import (
 def _eval(schedule, step):
     """Evaluate schedule at a given step, returning a plain float."""
     return float(schedule(jnp.array(step)))
+
+
+# ---------------------------------------------------------------------------
+# Constant schedule
+# ---------------------------------------------------------------------------
+
+
+def test_constant_no_warmup():
+    schedule = create_constant_schedule(lr=1e-3, warmup_steps=0, total_steps=100, steps=100)
+    npt.assert_allclose(_eval(schedule, 0), 1e-3, rtol=1e-5)
+    npt.assert_allclose(_eval(schedule, 50), 1e-3, rtol=1e-5)
+    npt.assert_allclose(_eval(schedule, 99), 1e-3, rtol=1e-5)
+
+
+def test_constant_with_warmup():
+    schedule = create_constant_schedule(lr=1e-3, warmup_steps=10, total_steps=100, steps=100)
+    npt.assert_allclose(_eval(schedule, 0), 0.0, atol=1e-7)
+    npt.assert_allclose(_eval(schedule, 10), 1e-3, rtol=1e-5)
+    npt.assert_allclose(_eval(schedule, 50), 1e-3, rtol=1e-5)
+
+
+def test_constant_zero_phase_after_schedule():
+    schedule = create_constant_schedule(lr=1e-3, warmup_steps=0, total_steps=100, steps=150)
+    npt.assert_allclose(_eval(schedule, 99), 1e-3, rtol=1e-5)
+    npt.assert_allclose(_eval(schedule, 120), 0.0, atol=1e-7)
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +131,24 @@ def test_wsd_cosine_decay_style():
 # ---------------------------------------------------------------------------
 # create_learning_rate_schedule (config dispatch)
 # ---------------------------------------------------------------------------
+
+
+def test_config_dispatch_constant():
+    from types import SimpleNamespace
+    from megatext.configs.types import LearningRateScheduleType
+
+    config = SimpleNamespace(
+        learning_rate=1e-3,
+        final_learning_rate=0.0,
+        warmup_steps=10,
+        learning_rate_schedule_steps=100,
+        steps=100,
+        lr_schedule_type=LearningRateScheduleType.CONSTANT,
+    )
+    schedule = create_learning_rate_schedule(config)
+    npt.assert_allclose(_eval(schedule, 0), 0.0, atol=1e-7)
+    npt.assert_allclose(_eval(schedule, 10), 1e-3, rtol=1e-5)
+    npt.assert_allclose(_eval(schedule, 50), 1e-3, rtol=1e-5)
 
 
 def test_config_dispatch_cosine():

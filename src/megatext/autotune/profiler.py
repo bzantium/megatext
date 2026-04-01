@@ -53,7 +53,7 @@ class ProfileResult:
 def profile_candidate(
     config_overrides: dict,
     candidate: Candidate,
-    num_steps: int = 10,
+    num_steps: int = 5,
     warmup_steps: int = 2,
     timeout: int = 600,
 ) -> ProfileResult:
@@ -87,6 +87,7 @@ def profile_candidate(
 
     env = os.environ.copy()
     env["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+    env["JAX_COMPILATION_CACHE_DIR"] = "/tmp/autotune_xla_cache"
 
     proc = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     try:

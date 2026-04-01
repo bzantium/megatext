@@ -1,12 +1,11 @@
-"""Submit a single-host job to GKE.
+"""Submit a checkpoint conversion job to GKE (single-host TPU).
 
-Generates a Kubernetes Job manifest from a bash script and applies it.
-Useful for tasks that run on a single TPU host (checkpoint conversion,
-data preprocessing, etc.) without needing xpk's multi-host coordination.
+Generates a Kubernetes Job manifest from a YAML job definition and applies it.
+Runs on a single TPU host without xpk's multi-host coordination.
 
 Usage:
-    python gke/submit_singlehost.py --infra gke/infra/v5e.yaml gke/jobs/convert/example.sh
-    python gke/submit_singlehost.py --infra gke/infra/v5e.yaml --force gke/jobs/convert/example.sh
+    python gke/submit_convert.py --infra gke/infra/v5e.yaml gke/jobs/convert/example.yaml
+    python gke/submit_convert.py --infra gke/infra/v5e.yaml --force gke/jobs/convert/example.yaml
 """
 
 from __future__ import annotations
@@ -61,15 +60,14 @@ def run_cmd(cmd: list[str], dry_run: bool = False, check: bool = True) -> None:
 def build_job_manifest(
     name: str,
     image: str,
-    script_path: str,
+    command: str,
     tpu_type: str,
     nodepool: str | None = None,
     service_account: str = "lmt-ksa",
     gcs_bucket: str = "lmt-tpu-datasets",
 ) -> dict:
     """Build a Kubernetes Job manifest for a single-host TPU job."""
-    with open(script_path) as f:
-        script_content = f.read()
+    script_content = f"set -euo pipefail && bash gke/setup/preflight.sh && {command}"
 
     chip_bounds, num_chips = _parse_tpu_topology(tpu_type)
     chip_bounds_str = ",".join(str(d) for d in chip_bounds)
@@ -147,24 +145,26 @@ def get_project_number(project: str) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Submit a single-host job to GKE")
-    parser.add_argument("script", help="Path to bash script (e.g. gke/jobs/convert/example.sh)")
+    parser.add_argument("job", help="Path to job YAML (e.g. gke/jobs/convert/example.yaml)")
     parser.add_argument("--infra", required=True, help="Path to infra YAML (e.g. gke/infra/v5e.yaml)")
     parser.add_argument("--build", action="store_true", help="Build & push Docker image before submitting")
     parser.add_argument("--force", action="store_true", help="Delete existing job before submitting")
     parser.add_argument("--dry-run", action="store_true", help="Print manifest without applying")
     parser.add_argument("--workload-name", default=None, help="Override job name")
-    parser.add_argument("--tpu-type", default=None, help="Override tpu_type from infra YAML (e.g. v5litepod-256)")
-    parser.add_argument("--nodepool", default=None, help="Target nodepool (optional, lets k8s scheduler decide if omitted)")
+    parser.add_argument("--tpu-type", default=None, help="Override tpu_type from infra YAML")
+    parser.add_argument("--nodepool", default=None, help="Target nodepool")
     parser.add_argument("--image", default=None, help="Docker image (default: derived from project)")
     parser.add_argument("--dockerfile", default=DEFAULT_DOCKERFILE, help="Dockerfile path")
     args = parser.parse_args()
 
     infra = load_infra(args.infra)
+    job = load_infra(args.job)
+
     project = infra["project_name"]
     tpu_type = args.tpu_type or infra["tpu_type"]
     image = args.image or DEFAULT_IMAGE_TEMPLATE.format(project=project, tag="latest")
     nodepool = args.nodepool or infra.get("nodepool")
-    workload_name = args.workload_name or args.script.split("/")[-1].replace(".sh", "").replace("_", "-")
+    workload_name = args.workload_name or job["workload_name"]
 
     # Build & push
     if args.build:
@@ -173,13 +173,26 @@ def main() -> None:
         print("==> Pushing Docker image")
         run_cmd(["docker", "push", image], dry_run=args.dry_run)
 
+    # Build command from args
+    job_args = job.get("args", {})
+    direction = job_args.pop("direction", "hf-to-megatext")
+    cli_parts = [f"python -m megatext.conversion.convert {direction}"]
+    for k, v in job_args.items():
+        if isinstance(v, bool):
+            if v:
+                cli_parts.append(f"--{k}")
+        else:
+            cli_parts.append(f"--{k} {v}")
+    command = " ".join(cli_parts)
+
     # Generate manifest
     manifest = build_job_manifest(
         name=workload_name,
         image=image,
-        script_path=args.script,
+        command=command,
         tpu_type=tpu_type,
         nodepool=nodepool,
+        gcs_bucket=job.get("bucket", "lmt-tpu-datasets"),
     )
 
     with tempfile.NamedTemporaryFile(

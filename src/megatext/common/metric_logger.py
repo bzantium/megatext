@@ -175,6 +175,8 @@ class MetricLogger:
         [
             f"total_weights: {scalars['learning/total_weights']}",
             f"loss: {loss:.3f}",
+            f"lr: {scalars['learning/current_learning_rate']:.3e}",
+            f"grad_norm: {scalars['learning/grad_norm']:.3e}",
         ]
     )
 
