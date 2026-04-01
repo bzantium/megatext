@@ -29,7 +29,7 @@ from megatext.common.common_types import HyperConnectionType
 from megatext.layers import attention_mla, linears, mhc, moe
 from megatext.layers.initializers import nd_dense_init
 from megatext.layers.normalizations import RMSNorm
-from megatext.utils import megatext_utils
+from megatext.utils.sharding import create_device_mesh
 from tests.utils.test_helpers import get_test_config_path, get_decoupled_parallelism_overrides
 
 
@@ -110,7 +110,7 @@ class TestMHC(unittest.TestCase):
         load_balance_loss_weight=0.02,
         engram_layers=[],
     )
-    devices_array = megatext_utils.create_device_mesh(self.config)
+    devices_array = create_device_mesh(self.config)
     self.mesh = Mesh(devices_array, self.config.mesh_axes)
 
     self.rngs = nnx.Rngs(params=jax.random.key(0), dropout=jax.random.key(42))

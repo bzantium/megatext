@@ -37,7 +37,8 @@ from megatext.experimental.rl.grpo_trainer import _merge_grpo_state, generate_co
 from megatext.experimental.rl.grpo_utils import compute_log_probs
 from megatext.inference.maxengine import maxengine
 from megatext.models import models
-from megatext.utils import megatext_utils
+from megatext.utils.sharding import create_device_mesh
+from megatext.utils.train_utils import setup_decode_state
 from tests.integration.grpo_trainer_correctness_test import prepare_maxtext_inputs
 import numpy as np
 import torch
@@ -70,18 +71,18 @@ class GRPOTest(unittest.TestCase):
         per_device_batch_size=self.cfg_no_ckpt_loading.per_device_batch_size * self.cfg_no_ckpt_loading.num_generations,
     )
     self.rng = jax.random.key(self.cfg.init_weights_seed)
-    devices_array = megatext_utils.create_device_mesh(self.cfg)
+    devices_array = create_device_mesh(self.cfg)
     mesh = Mesh(devices_array, self.cfg.mesh_axes)
     # With checkpoint
     self.model = models.transformer_as_linen(config=self.cfg, mesh=mesh, quant=None, model_mode=MODEL_MODE_TRAIN)
-    self.state, state_mesh_annotations = megatext_utils.setup_decode_state(self.model, self.cfg, self.rng, mesh, None)
+    self.state, state_mesh_annotations = setup_decode_state(self.model, self.cfg, self.rng, mesh, None)
     self.state_mesh_shardings = nn.logical_to_mesh_sharding(state_mesh_annotations, mesh, self.cfg.logical_axis_rules)
     self.data_sharding = jax.NamedSharding(mesh, jax.sharding.PartitionSpec(None))
     # Without checkpoint
     self.model_no_ckpt_loading = models.transformer_as_linen(
         config=self.cfg_no_ckpt_loading, mesh=mesh, quant=None, model_mode=MODEL_MODE_TRAIN
     )
-    self.state_no_ckpt_loading, _ = megatext_utils.setup_decode_state(
+    self.state_no_ckpt_loading, _ = setup_decode_state(
         self.model_no_ckpt_loading, self.cfg_no_ckpt_loading, self.rng, mesh, None
     )
 

@@ -19,8 +19,8 @@ import os
 import jax
 
 from megatext.utils import logging as max_logging
-from megatext.utils import max_utils
 from megatext.common.gcloud_stub import is_decoupled
+from megatext.utils.logging import get_project
 
 from cloud_accelerator_diagnostics import tensorboard
 from cloud_accelerator_diagnostics import uploader
@@ -107,7 +107,7 @@ class VertexTensorboardManager:
     if jax.process_index() == 0:
       if not os.environ.get("TENSORBOARD_PROJECT"):
         if not config.vertex_tensorboard_project:
-          os.environ["TENSORBOARD_PROJECT"] = max_utils.get_project()
+          os.environ["TENSORBOARD_PROJECT"] = get_project()
         else:
           os.environ["TENSORBOARD_PROJECT"] = config.vertex_tensorboard_project
 

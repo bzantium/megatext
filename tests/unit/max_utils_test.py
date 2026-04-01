@@ -29,23 +29,25 @@ from flax import linen as nn
 import optax
 
 from megatext.configs import pyconfig
-from megatext.utils import max_utils
 from megatext.utils.train_utils import setup_train_loop
+from megatext.utils.debug import calculate_num_params_from_pytree
+from megatext.utils.sharding import initialize_jax_for_gpu, is_valid_custom_mesh
+from megatext.utils.training import cross_entropy_with_logits, l2norm_pytree, unscan_train_state_params
 from tests.utils.test_helpers import get_test_config_path
 from unittest import mock
 
 
 class MaxUtilsSummaryStats(unittest.TestCase):
-  """Tests for the summary stats functions in max_utils.py"""
+  """Tests for the summary stats functions in megatext.utils"""
 
   def test_l2norm_pytree(self):
     x = {"a": jax.numpy.array([0, 2, 0]), "b": jax.numpy.array([0, 3, 6])}
-    pytree_l2_norm = max_utils.l2norm_pytree(x)
+    pytree_l2_norm = l2norm_pytree(x)
     self.assertTrue(jax.numpy.allclose(pytree_l2_norm, 7, rtol=1e-05, atol=1e-08, equal_nan=False))
 
 
 class MaxUtilsPytree(unittest.TestCase):
-  """Tests initialization of training and decode states in max_utils.py"""
+  """Tests initialization of training and decode states in megatext.utils"""
 
   def setUp(self):
     self.model = nn.Dense(features=5)
@@ -61,13 +63,13 @@ class MaxUtilsPytree(unittest.TestCase):
         {"a": 2, "b": (2, 3)},
         jnp.array([1, 2, 3]),
     ]
-    self.assertEqual(max_utils.calculate_num_params_from_pytree(example_tree), 17)
+    self.assertEqual(calculate_num_params_from_pytree(example_tree), 17)
     # Model params
-    self.assertEqual(max_utils.calculate_num_params_from_pytree(self.params), 55)
+    self.assertEqual(calculate_num_params_from_pytree(self.params), 55)
 
 
 class MaxUtilsT5XCrossEntropy(unittest.TestCase):
-  """Tests for the cross entropy functions in max_utils.py"""
+  """Tests for the cross entropy functions in megatext.utils"""
 
   def test_t5x_cross_entropy(self):
     # Generate random targets and logits
@@ -80,7 +82,7 @@ class MaxUtilsT5XCrossEntropy(unittest.TestCase):
 
     # Calculate xent from custom T5X implementation
     one_hot_targets = jax.nn.one_hot(targets, 4096)
-    t5x_xent, _ = max_utils.cross_entropy_with_logits(logits, one_hot_targets, 0.0)
+    t5x_xent, _ = cross_entropy_with_logits(logits, one_hot_targets, 0.0)
     t5x_xent = nn.with_logical_constraint(t5x_xent, ("activation_batch", "activation_length"))
 
     # Compare results
@@ -97,10 +99,10 @@ class MaxUtilsT5XCrossEntropy(unittest.TestCase):
     z_loss_multiplier = 1e-4
 
     # 1. Run without z-loss
-    total_loss_no_z, _ = max_utils.cross_entropy_with_logits(logits, one_hot_targets, z_loss=0.0)
+    total_loss_no_z, _ = cross_entropy_with_logits(logits, one_hot_targets, z_loss=0.0)
 
     # 2. Run with z-loss
-    total_loss_with_z, z_loss_only = max_utils.cross_entropy_with_logits(
+    total_loss_with_z, z_loss_only = cross_entropy_with_logits(
         logits, one_hot_targets, z_loss=z_loss_multiplier
     )
 
@@ -117,24 +119,24 @@ class MaxUtilsT5XCrossEntropy(unittest.TestCase):
 
 
 class MaxUtilsCustomMesh(unittest.TestCase):
-  """Tests for the is_valid_custom_mesh function in max_utils.py"""
+  """Tests for the is_valid_custom_mesh function in megatext.utils"""
 
   def test_empty_value(self):
-    self.assertFalse(max_utils.is_valid_custom_mesh([1, 1, 1, 1, 1, 64, 4, 1], ""))
+    self.assertFalse(is_valid_custom_mesh([1, 1, 1, 1, 1, 64, 4, 1], ""))
 
   def test_valid_64x4(self):
-    self.assertTrue(max_utils.is_valid_custom_mesh([1, 1, 1, 1, 1, 64, 4, 1], "hybrid_ring_64x4"))
+    self.assertTrue(is_valid_custom_mesh([1, 1, 1, 1, 1, 64, 4, 1], "hybrid_ring_64x4"))
 
   def test_valid_32x8(self):
-    self.assertTrue(max_utils.is_valid_custom_mesh([1, 1, 32, 1, 1, 8, 1, 1], "hybrid_ring_32x8"))
+    self.assertTrue(is_valid_custom_mesh([1, 1, 32, 1, 1, 8, 1, 1], "hybrid_ring_32x8"))
 
   def test_invalid_64x4(self):
     with self.assertRaises(ValueError):
-      max_utils.is_valid_custom_mesh([1, 1, 1, 1, 1, 16, 16, 1], "hybrid_ring_64x4")
+      is_valid_custom_mesh([1, 1, 1, 1, 1, 16, 16, 1], "hybrid_ring_64x4")
 
   def test_invalid_strategy(self):
     with self.assertRaises(ValueError):
-      max_utils.is_valid_custom_mesh([1, 1, 1, 1, 1, 16, 16, 1], "invalid_strategy")
+      is_valid_custom_mesh([1, 1, 1, 1, 1, 16, 16, 1], "invalid_strategy")
 
 
 class UnscanTest(unittest.TestCase):
@@ -172,7 +174,7 @@ class UnscanTest(unittest.TestCase):
 
     # Time the unscan operation.
     start_time = time.time()
-    max_utils.unscan_train_state_params(
+    unscan_train_state_params(
         params_to_unscan,
         sharding_to_unscan,
         mesh,
@@ -219,7 +221,7 @@ class TestGpuDistributedInitialization(unittest.TestCase):
   def test_initialize_jax_for_gpu_valid_devices(self, _mock_log, _mock_devices, mock_init):
     """Verifies that a comma-separated string of IDs is correctly parsed."""
     raw_keys = {"jax_distributed_initialization_timeout": 300}
-    max_utils.initialize_jax_for_gpu(raw_keys)
+    initialize_jax_for_gpu(raw_keys)
     # Check that local_device_ids was passed correctly as a list of integers
     _, kwargs = mock_init.call_args
     self.assertEqual(kwargs["local_device_ids"], [0, 2, 3])
@@ -241,7 +243,7 @@ class TestGpuDistributedInitialization(unittest.TestCase):
   def test_initialize_jax_for_gpu_invalid_devices(self, _mock_log, mock_devices, mock_init):
     """Verifies fallback behavior when parsing fails (e.g., UUIDs)."""
     raw_keys = {"jax_distributed_initialization_timeout": 300}
-    max_utils.initialize_jax_for_gpu(raw_keys)
+    initialize_jax_for_gpu(raw_keys)
     # Check that it falls back to None (JAX auto-detection default) on error
     _, kwargs = mock_init.call_args
     self.assertIsNone(kwargs.get("local_device_ids"))
@@ -262,7 +264,7 @@ class TestGpuDistributedInitialization(unittest.TestCase):
   def test_initialize_jax_for_gpu_no_devices(self, _mock_log, mock_devices, mock_init):
     """Verifies that no error occurs when CUDA_VISIBLE_DEVICES is not set"""
     raw_keys = {"jax_distributed_initialization_timeout": 300}
-    max_utils.initialize_jax_for_gpu(raw_keys)
+    initialize_jax_for_gpu(raw_keys)
     _, kwargs = mock_init.call_args
     self.assertIsNone(kwargs.get("local_device_ids"))
     self.assertEqual(kwargs["coordinator_address"], "10.0.0.1:1234")

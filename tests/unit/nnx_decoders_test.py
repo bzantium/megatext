@@ -40,7 +40,7 @@ from megatext.layers.nnx_decoders import NNXDecoder, NNXDecoderLayer, deepstack_
 from megatext.layers.normalizations import RMSNorm
 from megatext.models.gpt3 import Gpt3LayerNorm
 from megatext.models.llama2 import LlamaDecoderLayer
-from megatext.utils import megatext_utils
+from megatext.utils.sharding import create_device_mesh
 from tests.utils.test_helpers import get_decoupled_parallelism_overrides, get_test_config_path
 
 # ---------------------------------------------------------------------------
@@ -74,7 +74,7 @@ def _make_config(**overrides):
 
 
 def _make_mesh(cfg):
-  devices_array = megatext_utils.create_device_mesh(cfg)
+  devices_array = create_device_mesh(cfg)
   return Mesh(devices_array, cfg.mesh_axes)
 
 

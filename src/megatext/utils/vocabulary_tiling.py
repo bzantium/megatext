@@ -26,7 +26,7 @@ from megatext.utils.sharding import (
     create_sharding,
 )
 from megatext.common.common_types import ShardMode
-from megatext.utils import max_utils
+from megatext.utils.training import cross_entropy_with_logits
 
 
 def vocab_tiling_linen_loss(
@@ -142,7 +142,7 @@ def vocab_tiling_linen_loss(
       )
       chunk_logits = _maybe_shard_with_name(chunk_logits, chunked_logits_spec)
       one_hot_label_chunk = jax.nn.one_hot(label_chunk, config.vocab_size)
-      chunk_xent, chunk_z_loss = max_utils.cross_entropy_with_logits(
+      chunk_xent, chunk_z_loss = cross_entropy_with_logits(
           chunk_logits, one_hot_label_chunk, z_loss=config.z_loss_multiplier
       )
 
@@ -187,7 +187,7 @@ def vocab_tiling_linen_loss(
       )
       chunk_logits = _maybe_shard_with_name(chunk_logits, chunked_logits_spec)
       one_hot_label_chunk = jax.nn.one_hot(input_label_chunk, config.vocab_size)
-      xent, _ = max_utils.cross_entropy_with_logits(chunk_logits, one_hot_label_chunk, z_loss=config.z_loss_multiplier)
+      xent, _ = cross_entropy_with_logits(chunk_logits, one_hot_label_chunk, z_loss=config.z_loss_multiplier)
       return jnp.sum(xent * (input_segmentation_chunk != 0))
 
     def _bwd_scan_body(grad_params_acc, chunk_data):

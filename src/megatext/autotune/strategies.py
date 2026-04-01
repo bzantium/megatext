@@ -79,7 +79,6 @@ class Candidate:
             "dcn_fsdp_parallelism": self.dcn_fsdp_parallelism,
             "remat_policy": self.remat_policy,
             "per_device_batch_size": self.per_device_batch_size,
-            "gradient_accumulation_steps": self.gradient_accumulation_steps,
             "scan_layers": self.scan_layers,
             "sa_use_fused_bwd_kernel": True,
             **{k: self.sa_block_size for k in SA_BLOCK_KEYS},

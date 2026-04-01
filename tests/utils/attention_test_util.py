@@ -25,9 +25,9 @@ from megatext.configs import pyconfig
 from megatext.common.gcloud_stub import is_decoupled
 from megatext.common.common_types import AttentionType, DECODING_ACTIVE_SEQUENCE_INDICATOR, EP_AS_CONTEXT, MODEL_MODE_PREFILL, MODEL_MODE_TRAIN, ShardMode
 from megatext.layers.attention_mla import MLA
-from megatext.utils import max_utils
-from megatext.utils import megatext_utils
 from megatext.utils.sharding import maybe_shard_with_name
+from megatext.utils.sharding import create_device_mesh, get_reorder_callable
+from megatext.utils.training import reorder_sequence
 from tests.utils.test_helpers import get_test_config_path, get_decoupled_parallelism_overrides
 
 
@@ -72,7 +72,7 @@ class MLATestBase(parameterized.TestCase):
     self.cfg = config
     self.rng = jax.random.PRNGKey(0)
     self.nnx_rng = nnx.Rngs(params=0, dropout=jax.random.PRNGKey(42))
-    devices_array = megatext_utils.create_device_mesh(self.cfg)
+    devices_array = create_device_mesh(self.cfg)
     self.mesh = Mesh(devices_array, self.cfg.mesh_axes)
 
   def init_mla(self, config_arguments, rope_type):
@@ -83,7 +83,7 @@ class MLATestBase(parameterized.TestCase):
         rope_type=rope_type,
     )
 
-    devices_array = megatext_utils.create_device_mesh(cfg)
+    devices_array = create_device_mesh(cfg)
     mesh = Mesh(devices_array, cfg.mesh_axes)
 
     dummy_inputs_q = jnp.ones(
@@ -196,7 +196,7 @@ def forward_with_context_expert_parallelism(
         "inputs_position": decoder_positions,
     }
     with mesh_cp:
-      reordered_batch = megatext_utils.get_reorder_callable(context_parallel_size, ShardMode.AUTO)(batch)
+      reordered_batch = get_reorder_callable(context_parallel_size, ShardMode.AUTO)(batch)
     lnx = reordered_batch["inputs"]
     decoder_segment_ids = reordered_batch["inputs_segmentation"]
     decoder_positions = reordered_batch["inputs_position"]
@@ -237,7 +237,7 @@ def forward_with_context_expert_parallelism(
   # If load balanced cp, de-shuffle and gather along seq dim for output
   # Note training does not need post-shuffle. Since the target seq is also pre-shuffled, the loss remains correct
   if context_parallel_size > 1 and cfg_cp.context_parallel_load_balance:
-    attention_cp_output = max_utils.reorder_sequence(
+    attention_cp_output = reorder_sequence(
         tensor=attention_cp_output,
         cp_size=context_parallel_size,
         seq_dim=1,

@@ -53,7 +53,7 @@ class ProfileResult:
 def profile_candidate(
     config_overrides: dict,
     candidate: Candidate,
-    num_steps: int = 10,
+    num_steps: int = 5,
     warmup_steps: int = 2,
     timeout: int = 600,
 ) -> ProfileResult:
@@ -87,13 +87,14 @@ def profile_candidate(
 
     env = os.environ.copy()
     env["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+    env["JAX_COMPILATION_CACHE_DIR"] = "/tmp/autotune_xla_cache"
 
-    proc = subprocess.Popen(cmd, env=env)
+    proc = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     try:
-        proc.wait(timeout=timeout)
+        stdout, _ = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         proc.kill()
-        proc.wait()
+        stdout, _ = proc.communicate()
         logger.error(f"Timeout ({timeout}s) for {candidate}")
         if os.path.exists(result_file):
             os.unlink(result_file)
@@ -107,6 +108,10 @@ def profile_candidate(
             oom=False,
             error=f"Timeout after {timeout}s",
         )
+
+    if proc.returncode != 0:
+        error_tail = stdout.decode(errors="replace")[-2000:] if stdout else ""
+        logger.error(f"Worker failed (rc={proc.returncode}) for {candidate}:\n{error_tail}")
 
     # Read result from file
     result_data = None

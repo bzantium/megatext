@@ -32,9 +32,9 @@ from megatext.utils.constants import MEGATEXT_CONFIGS_DIR, MEGATEXT_ASSETS_ROOT,
 from megatext.common.common_types import DecoderBlockType, ShardMode
 from megatext.configs import types
 from megatext.configs.types import MegaTextConfig
-from megatext.utils.max_utils import str2bool
-from megatext.utils import max_utils
+from megatext.utils.training import str2bool
 from megatext.utils import logging as max_logging
+from megatext.utils.sharding import maybe_initialize_jax_distributed_system
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("LOGLEVEL", "INFO"))
@@ -196,13 +196,13 @@ def _prepare_for_pydantic(raw_keys: dict[str, Any]) -> dict[str, Any]:
 
     # Preprocess muon_consistent_rms to be None or float
     if key == "muon_consistent_rms":
-      if value in ["None", "none"]:
+      if value is None or (isinstance(value, str) and value.lower() == "none"):
         new_value = None
       else:
         try:
           new_value = float(value)
-        except ValueError as e:
-          raise ValueError("muon_consistent_rms should be None or float") from e
+        except (ValueError, TypeError) as e:
+          raise ValueError("muon_consistent_rms should be null or float") from e
 
     pydantic_kwargs[key] = new_value
 
@@ -378,7 +378,7 @@ def initialize_pydantic(argv: list[str], **kwargs) -> MegaTextConfig:
     jax.config.update("jax_debug_log_modules", pydantic_kwargs["jax_debug_log_modules"])
   # Do not initialize jax distributed system during pytest runs.
   if "pytest" not in sys.modules:
-    max_utils.maybe_initialize_jax_distributed_system(pydantic_kwargs)
+    maybe_initialize_jax_distributed_system(pydantic_kwargs)
   if pydantic_kwargs.get("jax_cache_dir"):
     from jax.experimental.compilation_cache import compilation_cache  # pylint: disable=import-outside-toplevel
 

@@ -30,6 +30,7 @@ from megatext.common.common_types import MODEL_MODE_PREFILL, MODEL_MODE_AUTOREGR
 from megatext.utils import storage as gcs_utils
 from megatext.utils import logging as max_logging
 
+
 OVERWRITE_WITH_GRADIENT = "_overwrite_with_gradient"
 
 
@@ -542,3 +543,42 @@ def parse_custom_args(argv):
   if current_argv:
     configs.append(current_argv)
   return configs
+
+
+def should_prevent_cse_in_remat(config):
+  """Determines whether to prevent common subexpression elimination (CSE) in remat.
+
+  CSE should not be prevented when:
+  1. Layers are being scanned (scan_layers=True), OR
+  2. Gradient accumulation is enabled (gradient_accumulation_steps > 1) on GPU hardware
+  """
+  if config.scan_layers:
+    return False
+  if config.gradient_accumulation_steps > 1 and config.hardware in ("gpu", "gpu_multiprocess"):
+    return False
+  return True
+
+
+def get_abstract_param(model, config):
+  """Get abstract model structure (name, shape) without materializing the weights to save memory."""
+  import numpy as np
+  import jax.numpy as jnp
+  from flax.linen import partitioning as nn_partitioning
+  from megatext.multimodal import processor as mm_processor
+
+  with model.mesh, nn_partitioning.axis_rules(config.logical_axis_rules):
+    key = jax.random.PRNGKey(0)
+    input_shape = (config.micro_batch_size_to_train_on, config.max_target_length)
+    image_shape = mm_processor.get_dummy_image_shape_for_init(
+        config.decoder_block, batch_size=config.micro_batch_size_to_train_on
+    )
+    audio_shape = mm_processor.get_dummy_audio_shape_for_init(config)
+  abstract_vars = jax.eval_shape(
+      model.init,
+      {"params": key, "dropout": key, "aqt": key},
+      jnp.ones(input_shape, dtype=jnp.int32),
+      jnp.ones(input_shape, dtype=jnp.int32),
+      encoder_images=np.ones(image_shape, dtype=jnp.int32) if config.use_multimodal else None,
+      encoder_audios=np.ones(audio_shape, dtype=jnp.float32) if config.use_audio else None,
+  )
+  return abstract_vars

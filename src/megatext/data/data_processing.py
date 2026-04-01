@@ -78,7 +78,7 @@ def _create_multihost_iterator(config, mesh, split_index: int):
         data_source = _build_data_source(config, split_index)
 
     # Compute per-process batch size
-    global_batch_size = int(config.per_device_batch_size * jax.device_count())
+    global_batch_size = config.global_batch_size_to_load
     num_processes = jax.process_count()
     if global_batch_size % num_processes != 0:
         raise ValueError(
@@ -87,13 +87,12 @@ def _create_multihost_iterator(config, mesh, split_index: int):
         )
     per_process_batch = global_batch_size // num_processes
 
-    ga_steps = int(getattr(config, "gradient_accumulation_steps", 1))
-    effective_batch = global_batch_size * ga_steps
-    total_samples = int(config.steps) * effective_batch
+    ga_steps = config.gradient_accumulation_steps
+    total_samples = int(config.steps) * global_batch_size
     per_device_bs = int(config.per_device_batch_size)
     max_logging.log(
         f"Data ({['train', 'eval'][split_index]}): {total_samples} samples "
-        f"global_batch={effective_batch}, per_device_batch={per_device_bs}"
+        f"global_batch={global_batch_size}, per_device_batch={per_device_bs}"
         + (f", ga_steps={ga_steps}" if ga_steps > 1 else "")
     )
 
@@ -140,7 +139,7 @@ def _create_fixed_arecord_iterator(config, mesh):
     process_index = jax.process_index()
     num_processes = jax.process_count()
 
-    global_batch_size = int(config.per_device_batch_size * jax.device_count())
+    global_batch_size = config.global_batch_size_to_load
     if global_batch_size % num_processes != 0:
         raise ValueError(
             f"Global batch size ({global_batch_size}) must be divisible by "
@@ -148,12 +147,11 @@ def _create_fixed_arecord_iterator(config, mesh):
         )
     per_process_batch = global_batch_size // num_processes
 
-    ga_steps = int(getattr(config, "gradient_accumulation_steps", 1))
-    effective_batch = global_batch_size * ga_steps
-    total_samples = int(config.steps) * effective_batch
+    ga_steps = config.gradient_accumulation_steps
+    total_samples = int(config.steps) * global_batch_size
     max_logging.log(
         f"Data (train): {total_samples} samples "
-        f"global_batch={effective_batch}, per_device_batch={int(config.per_device_batch_size)}"
+        f"global_batch={global_batch_size}, per_device_batch={int(config.per_device_batch_size)}"
         + (f", ga_steps={ga_steps}" if ga_steps > 1 else "")
     )
 
@@ -171,6 +169,7 @@ def _create_fixed_arecord_iterator(config, mesh):
 
     if len(entries) == 1:
         _, path = entries[0]
+        max_logging.log(f"Data blend: 1 source, weight=1.0 path={path}")
         dataset = _make_iter_dataset(path)
     else:
         datasets = []
@@ -180,6 +179,8 @@ def _create_fixed_arecord_iterator(config, mesh):
             weights.append(weight)
         total_w = sum(weights)
         norm_weights = [w / total_w for w in weights]
+        for (weight, path), nw in zip(entries, norm_weights):
+            max_logging.log(f"Data blend: weight={weight} ({nw:.2%}) path={path}")
         dataset = grain.IterDataset.mix(datasets, norm_weights)
 
     worker_count = config.grain_worker_count
@@ -235,6 +236,7 @@ def _build_data_source(config, split_index: int):
         )
         sources.append(src)
         weights.append(weight)
+        max_logging.log(f"Data blend: weight={weight} ({norm_weight:.2%}) path={path}")
 
     if len(sources) == 1:
         return sources[0]

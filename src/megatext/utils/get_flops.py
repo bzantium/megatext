@@ -16,7 +16,7 @@
 
 from megatext.configs import pyconfig
 from megatext.utils.globals import MEGATEXT_PKG_DIR
-from megatext.utils.megatext_utils import calculate_tflops_training_per_device
+from megatext.utils.flops import calculate_tflops_training_per_device
 import os
 from typing import Sequence, cast
 from absl import app

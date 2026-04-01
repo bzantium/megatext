@@ -50,7 +50,7 @@ from megatext.layers.engram import NgramHashMapping as NgramHashMappingJAX
 from megatext.layers.engram import MultiHeadEmbedding as MultiHeadEmbeddingJAX
 from megatext.layers.engram import ShortConv as ShortConvJAX
 from megatext.layers.engram import Engram as EngramJAX
-from megatext.utils import megatext_utils
+from megatext.utils.sharding import create_device_mesh
 from tests.utils.test_helpers import get_test_config_path
 
 
@@ -481,7 +481,7 @@ def get_cfg_and_mesh(config):
       float32_logits=True,
       base_emb_dim=config.base_emb_dim,
   )
-  devices_array = megatext_utils.create_device_mesh(cfg)
+  devices_array = create_device_mesh(cfg)
   mesh = Mesh(devices_array, cfg.mesh_axes)
   return cfg, mesh
 

@@ -24,10 +24,10 @@ import jax.numpy as jnp
 from jax.sharding import Mesh
 
 from megatext.configs import pyconfig
-from megatext.utils.constants import MAXTEXT_PKG_DIR
+from megatext.utils.constants import MEGATEXT_PKG_DIR
 from megatext.common.common_types import MODEL_MODE_TRAIN
 from megatext.layers.decoders import Decoder
-from megatext.utils import megatext_utils
+from megatext.utils.sharding import create_device_mesh
 import pytest
 
 
@@ -94,10 +94,10 @@ class TestDeepSeekScanEngram(unittest.TestCase):
 
     mock_from_pretrained.return_value = MockTokenizer()
 
-    config_path = os.path.join(MAXTEXT_PKG_DIR, "configs", "base.yaml")
+    config_path = os.path.join(MEGATEXT_PKG_DIR, "configs", "base.yaml")
     config = pyconfig.initialize([None, config_path] + self._COMMON_CONFIG + [f"engram_layers=[{engram_layers_str}]"])
 
-    devices_array = megatext_utils.create_device_mesh(config)
+    devices_array = create_device_mesh(config)
     mesh = Mesh(devices_array, config.mesh_axes)
 
     decoder = Decoder(

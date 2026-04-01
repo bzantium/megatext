@@ -36,7 +36,7 @@ from megatext.layers.encoders import AudioEncoder, VisionEncoder, audio_encoder_
 from megatext.layers.multi_token_prediction import multi_token_prediction_block_as_linen
 from megatext.layers.quantizations import AqtQuantization as Quant
 from megatext.multimodal import processor as mm_processor
-from megatext.utils import max_utils
+from megatext.utils.training import get_batch_seq_len_for_mode
 
 # ------------------------------------------------------------------------------
 # The network: Transformer Definitions
@@ -339,7 +339,7 @@ class Transformer(nnx.Module):
       self.decoder = nnx_wrappers.ToNNX(decoder_linen, rngs=rngs)
     self.hidden_states = None
 
-    batch_size, seq_len = max_utils.get_batch_seq_len_for_mode(config=cfg, model_mode=model_mode)
+    batch_size, seq_len = get_batch_seq_len_for_mode(config=cfg, model_mode=model_mode)
     dummy_decoder_input_tokens = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
     dummy_decoder_positions = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
 

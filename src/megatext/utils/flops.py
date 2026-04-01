@@ -597,6 +597,11 @@ def calculate_tflops_training_per_device(config, log=True):
     attention_tflops, learnable_weight_tflops = calculate_mixed_attention_model_tflops_training_per_device(
         config, total_ffn_flops, qkv_flops, projection_flops, embedding_flops, attention_pattern_length=2
     )
+  elif config.decoder_block == DecoderBlockType.QWEN3_SWA:
+    attention_tflops, learnable_weight_tflops = calculate_mixed_attention_model_tflops_training_per_device(
+        config, total_ffn_flops, qkv_flops, projection_flops, embedding_flops,
+        attention_pattern_length=config.inhomogeneous_layer_cycle_interval,
+    )
   elif config.decoder_block == DecoderBlockType.LLAMA4:
     # Use the new helper to calculate attention TFLOPs correctly.
     attention_tflops = calculate_llama4_attention_tflops(config)

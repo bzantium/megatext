@@ -19,21 +19,19 @@ import os
 import jax
 import functools
 from flax.linen import partitioning as nn_partitioning
-from megatext.common import checkpointing
-from megatext.common.data_loader import create_dataloader
-from megatext.common.goodput import GoodputEvent, maybe_record_goodput
-from megatext.optimizers import optimizers
 from megatext.schedulers import create_learning_rate_schedule
 from megatext.utils import logging as max_logging
-from megatext.utils import max_utils
-from megatext.utils import megatext_utils
-from megatext.utils import model_factory as model_creation_utils
 from megatext.utils import sharding
-from megatext.utils.rampup_batch import create_rampup_manager
+from megatext.utils.debug import print_non_trivial_mesh_axis, print_shardings_params
+from megatext.utils.sharding import get_reorder_callable
+from megatext.utils.training import unbox_logicallypartioned
 
 
 def create_training_tools(config, model, mesh):
   """Creates the init_rng, optimizer, learning rate schedule, and checkpoint manager."""
+  from megatext.common import checkpointing
+  from megatext.optimizers import optimizers
+
   init_rng = jax.random.PRNGKey(config.init_weights_seed)
   learning_rate_schedule = create_learning_rate_schedule(config)
   # pass in model for muon
@@ -46,7 +44,7 @@ def create_training_tools(config, model, mesh):
         mesh,
     )
   elif config.enable_emergency_checkpoint:
-    abstract_state, _, _ = megatext_utils.get_abstract_state(model, tx, config, init_rng, mesh, is_training=True)
+    abstract_state, _, _ = get_abstract_state(model, tx, config, init_rng, mesh, is_training=True)
     checkpoint_manager = checkpointing.create_orbax_emergency_checkpoint_manager(
         config.local_checkpoint_directory,
         config.checkpoint_dir,
@@ -94,7 +92,7 @@ def jit_train_step(config, model, state, state_mesh_shardings, data_sharding, tr
       out_shardings,
       static_argnums,
       donate_argnums,
-  ) = megatext_utils.get_functional_train_with_signature(
+  ) = get_functional_train_with_signature(
       train_step, data_sharding, state_mesh_shardings, model, config, params_shardings
   )
 
@@ -103,7 +101,7 @@ def jit_train_step(config, model, state, state_mesh_shardings, data_sharding, tr
     max_logging.log("Loading the compiled function...")
     execution_devices = model.mesh.devices.flatten().tolist()
     # Need to pass train signature and state to determine i/o shapes of train_state for now.
-    p_train_step = megatext_utils.load_compiled(config, functional_train, state, execution_devices)
+    p_train_step = load_compiled(config, functional_train, state, execution_devices)
     max_logging.log("Loaded compiled function!")
   else:
     p_train_step = jax.jit(
@@ -125,7 +123,7 @@ def jit_eval_step(config, model, state_mesh_shardings, data_sharding, eval_step)
       out_shardings,
       static_argnums,
       donate_argnums,
-  ) = megatext_utils.get_functional_eval_with_signature(eval_step, data_sharding, state_mesh_shardings, model, config)
+  ) = get_functional_eval_with_signature(eval_step, data_sharding, state_mesh_shardings, model, config)
 
   p_eval_step = None
   if config.compiled_trainstep_file == "":
@@ -182,7 +180,11 @@ def setup_train_loop(config, recorder, devices=None):
     state: the initialized train state
   """
   # pylint: disable=import-outside-toplevel
+  from megatext.common.data_loader import create_dataloader
+  from megatext.common.goodput import GoodputEvent, maybe_record_goodput
   from megatext.data.input_pipeline_interface import create_data_iterator
+  from megatext.utils import model_factory as model_creation_utils
+  from megatext.utils.rampup_batch import create_rampup_manager
 
   with maybe_record_goodput(recorder, GoodputEvent.TPU_INIT):
     model = model_creation_utils.from_config(config, devices)
@@ -205,14 +207,14 @@ def setup_train_loop(config, recorder, devices=None):
     # Apply reordering wrapper to data iterators if context parallelism is enabled
     with jax.set_mesh(mesh):
       if context_parallel_size > 1 and config.context_parallel_load_balance:
-        data_iterator = map(megatext_utils.get_reorder_callable(context_parallel_size, config.shard_mode), data_iterator)
+        data_iterator = map(get_reorder_callable(context_parallel_size, config.shard_mode), data_iterator)
         if eval_data_iterator:
           eval_data_iterator = map(
-              megatext_utils.get_reorder_callable(context_parallel_size, config.shard_mode),
+              get_reorder_callable(context_parallel_size, config.shard_mode),
               eval_data_iterator,
           )
 
-    state, _, state_mesh_shardings, data_iterator = megatext_utils.setup_training_state(
+    state, _, state_mesh_shardings, data_iterator = setup_training_state(
         model, data_iterator, tx, config, init_rng, mesh, checkpoint_manager
     )
 
@@ -223,9 +225,9 @@ def setup_train_loop(config, recorder, devices=None):
 
     # print weights sharding info under debug sharding mode
     if config.debug_sharding:
-      logical_annotations = megatext_utils.get_logical_annotations(model, tx, config, init_rng, mesh, is_training=True)
-      max_utils.print_non_trivial_mesh_axis(model.mesh)
-      megatext_utils.print_shardings_params(
+      logical_annotations = get_logical_annotations(model, tx, config, init_rng, mesh, is_training=True)
+      print_non_trivial_mesh_axis(model.mesh)
+      print_shardings_params(
           state.params, state_mesh_shardings.params, model.mesh, logical_annotations.params
       )
 
@@ -519,7 +521,6 @@ def setup_decode_state(model, config, rng, mesh, checkpoint_manager):
   from flax.linen import partitioning as nn_partitioning
 
   from megatext.common import checkpointing
-  from megatext.utils import max_utils
 
   if not config.load_parameters_path:
     # generate random params
@@ -541,7 +542,7 @@ def setup_decode_state(model, config, rng, mesh, checkpoint_manager):
       )
     state = init_decode_state(None, params)
 
-  state = max_utils.unbox_logicallypartioned(state)
+  state = unbox_logicallypartioned(state)
   return state, state_mesh_annotations
 
 
@@ -593,7 +594,6 @@ def setup_initial_state(
   import orbax.checkpoint.experimental.emergency.replicator_checkpoint_manager as emergency_replicator_checkpoint_manager
 
   from megatext.common import checkpointing
-  from megatext.utils import max_utils
 
   unboxed_abstract_state, state_mesh_annotations, state_mesh_shardings = get_abstract_state(
       model, tx, config, rng, mesh, is_training
@@ -642,7 +642,7 @@ def setup_initial_state(
       if raw_params:  # If we loaded a partial state, we need to merge it.
         state = state.replace(params=raw_params)
 
-  state = max_utils.unbox_logicallypartioned(state)
+  state = unbox_logicallypartioned(state)
 
   return state, state_mesh_annotations, state_mesh_shardings, data_iterator
 
@@ -668,7 +668,6 @@ def get_abstract_state(model, tx, config, rng, mesh, is_training=True):
   from flax import linen as nn
   from flax.linen import partitioning as nn_partitioning
 
-  from megatext.utils import max_utils
   from megatext.utils import sharding as _sharding
 
   init_state_partial = _functools.partial(init_initial_state, model, tx, config, is_training, rng)
@@ -684,7 +683,7 @@ def get_abstract_state(model, tx, config, rng, mesh, is_training=True):
     state_mesh_shardings = state_mesh_shardings.replace(
         opt_state=jax.tree.map_with_path(
             _functools.partial(_sharding.add_data_to_sharding, mesh),
-            max_utils.unbox_logicallypartioned(abstract_state).opt_state,
+            unbox_logicallypartioned(abstract_state).opt_state,
             state_mesh_shardings.opt_state,
         )
     )
@@ -695,7 +694,7 @@ def get_abstract_state(model, tx, config, rng, mesh, is_training=True):
     assert config.param_scan_axis == 0, "You must set the scan axis 0 to enable parameter offloading."
 
     def move(path, x):
-      max_logging.log(f"max_utils.py: Moving {path} to host")
+      max_logging.log(f"train_utils: Moving {path} to host")
       return x.with_memory_kind(kind="pinned_host")
 
     params = jax.tree_util.tree_map_with_path(move, state_mesh_shardings.params)
@@ -703,7 +702,7 @@ def get_abstract_state(model, tx, config, rng, mesh, is_training=True):
 
   abstract_sharded_state = jax.jit(init_state_partial, in_shardings=None, out_shardings=state_mesh_shardings).eval_shape()
 
-  unboxed_abstract_sharded_state = max_utils.unbox_logicallypartioned(abstract_sharded_state)
+  unboxed_abstract_sharded_state = unbox_logicallypartioned(abstract_sharded_state)
   # Initialization
   with jax.set_mesh(mesh), nn_partitioning.axis_rules(config.logical_axis_rules):
     state_mesh_annotations = nn.logical_to_mesh(state_logical_annotations)

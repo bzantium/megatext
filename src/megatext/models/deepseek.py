@@ -39,9 +39,9 @@ from megatext.layers.engram import Engram
 from megatext.layers.engram import NgramHashMapping
 from megatext.layers.normalizations import RMSNorm
 from megatext.models import deepseek_batchsplit
-from megatext.utils import max_utils
 from megatext.utils.sharding import create_sharding
 from megatext.utils.sharding import maybe_shard_with_logical
+from megatext.utils.training import get_batch_seq_len_for_mode
 
 import transformers
 
@@ -75,7 +75,7 @@ class DeepSeekGenericLayer(nnx.Module):
     self.layer_idx = layer_idx
     self.is_engram_enabled = config.engram_layers and layer_idx in config.engram_layers
 
-    batch_size, sequence_length = max_utils.get_batch_seq_len_for_mode(self.config, self.model_mode)
+    batch_size, sequence_length = get_batch_seq_len_for_mode(self.config, self.model_mode)
     self.dummy_inputs_shape = (batch_size, sequence_length, self.config.emb_dim)
 
     self.out_sharding = create_sharding(self.mesh, self.logical_axis_names)

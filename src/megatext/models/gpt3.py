@@ -36,7 +36,8 @@ from megatext.layers.attentions import AttentionOp, KVQuant
 from megatext.layers.initializers import Initializer, NdInitializer, nd_dense_init
 from megatext.layers.quantizations import AqtQuantization as Quant
 from megatext.utils import logging as max_logging
-from megatext.utils import max_utils
+from megatext.utils.debug import device_space
+from megatext.utils.training import get_batch_seq_len_for_mode
 
 # -----------------------------------------
 # The Normalization Layer specific for GPT3
@@ -94,7 +95,7 @@ class Gpt3LayerNorm(nnx.Module):
     # Move scale to device if parameter offloading is enabled
     if self.parameter_memory_host_offload:
       max_logging.log("gpt3.py: Moving scale parameter to device")
-      scale = jax.device_put(scale, max_utils.device_space())
+      scale = jax.device_put(scale, device_space())
 
     scale = jnp.asarray(scale, self.dtype)
     # broadcast second inputs and element-wise mul
@@ -360,7 +361,7 @@ class Gpt3DecoderLayer(nnx.Module):
     self.quant = quant
     self.rngs = rngs
 
-    batch_size, seq_len = max_utils.get_batch_seq_len_for_mode(config, model_mode)
+    batch_size, seq_len = get_batch_seq_len_for_mode(config, model_mode)
     dummy_inputs_shape = (batch_size, seq_len, config.emb_dim)
 
     self.pre_self_attention_norm = Gpt3LayerNorm(

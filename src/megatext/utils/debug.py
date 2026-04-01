@@ -21,8 +21,8 @@ import psutil
 from packaging.version import Version
 
 from megatext.utils import logging as max_logging
-from megatext.utils import max_utils
 from megatext.utils import sharding
+from megatext.utils.logging import add_text_to_summary_writer
 
 
 def print_shardings_params(params, params_sharding, mesh, logical_annotations=None):
@@ -57,7 +57,7 @@ def add_config_to_summary_writer(config, summary_writer):
   """Writes config params to tensorboard"""
   if jax.process_index() == 0:
     for key, value in config.get_keys().items():
-      max_utils.add_text_to_summary_writer(key, str(value), summary_writer)
+      add_text_to_summary_writer(key, str(value), summary_writer)
 
 
 # ---------------------------------------------------------------------------

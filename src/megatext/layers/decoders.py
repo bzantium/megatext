@@ -59,9 +59,9 @@ from megatext.models import (
 from megatext.multimodal import utils as mm_utils
 from megatext.utils.sharding import create_sharding
 from megatext.utils import logging as max_logging
-from megatext.utils import max_utils
-from megatext.utils import megatext_utils
 from megatext.utils import sharding
+from megatext.utils.debug import device_space
+from megatext.utils.training import should_prevent_cse_in_remat
 
 # ------------------------------------------------------------------------------
 # The network: Decoder Definitions
@@ -438,56 +438,9 @@ class Decoder(nn.Module):
     return policy
 
   def get_decoder_layers(self):
-    """Retrieves a list of decoder layer classes based on the `decoder_block` config.
-
-    Returns:
-        A list containing one or more `nn.Module` classes for the decoder.
-    """
-    match self.config.decoder_block:
-      case DecoderBlockType.DEFAULT:
-        return [DecoderLayer]
-      case DecoderBlockType.LLAMA2:
-        return [llama2.LlamaDecoderLayerToLinen]
-      case DecoderBlockType.MISTRAL:
-        # TODO(ranran): update to Mistral with sliding window attention
-        return [mistral.MistralDecoderLayerToLinen]
-      case DecoderBlockType.MIXTRAL:
-        return [mixtral.MixtralDecoderLayerToLinen]
-      case DecoderBlockType.DEEPSEEK:
-        return [
-            deepseek.DeepSeekDenseLayerToLinen,
-            deepseek.DeepSeekMoELayerToLinen,
-        ]
-      case DecoderBlockType.GEMMA:
-        return [gemma.GemmaDecoderLayerToLinen]
-      case DecoderBlockType.GEMMA2:
-        return [gemma2.Gemma2DecoderLayerToLinen]
-      case DecoderBlockType.GEMMA3:
-        return [gemma3.Gemma3DecoderLayerToLinen]
-      case DecoderBlockType.GPT3:
-        return [gpt3.Gpt3DecoderLayerToLinen]
-      case DecoderBlockType.GPT_OSS:
-        return [gpt_oss.GptOssScannableBlockToLinen] if self.config.scan_layers else [gpt_oss.GptOssDecoderLayerToLinen]
-      case DecoderBlockType.QWEN2:
-        return [qwen2.Qwen2DecoderLayerToLinen]
-      case DecoderBlockType.QWEN3:
-        return [qwen3.Qwen3DecoderLayerToLinen]
-      case DecoderBlockType.QWEN3_MOE:
-        return [qwen3.Qwen3MoeDecoderLayerToLinen]
-      case DecoderBlockType.QWEN3_NEXT:
-        return [qwen3.Qwen3NextScannableBlockToLinen] if self.config.scan_layers else [qwen3.Qwen3NextDecoderLayerToLinen]
-      case DecoderBlockType.SIMPLE:
-        return [simple_layer.SimpleDecoderLayerToLinen]
-      case DecoderBlockType.SIMPLE_MLP:
-        return [simple_layer.SimpleMlpDecoderLayerToLinen]
-      case DecoderBlockType.LLAMA4:
-        return [llama4.Llama4ScannableBlockToLinen] if self.config.scan_layers else [llama4.Llama4DecoderLayerToLinen]
-      case DecoderBlockType.OLMO3:
-        return [olmo3.Olmo3ScannableBlockToLinen] if self.config.scan_layers else [olmo3.Olmo3DecoderLayerToLinen]
-
-      case _:
-        # Default case to handle any unknown decoder block types.
-        raise ValueError(f"Incorrect decoder_block name {self.config.decoder_block.value=}")
+    """Retrieves decoder layer classes from the decoder block registry."""
+    from megatext.common.decoder_registry import get_linen_layers
+    return get_linen_layers(self.config.decoder_block, self.config)
 
   def set_remat_policy(self, block_layers, policy):
     """Set remat policy"""
@@ -500,7 +453,7 @@ class Decoder(nn.Module):
 
           def map_fn(path, value):
             max_logging.log(f"models.py: Moving parameter {path} to device")
-            return jax.device_put(value, max_utils.device_space())
+            return jax.device_put(value, device_space())
 
           return jax.tree_util.tree_map_with_path(map_fn, variables)
 
@@ -510,7 +463,7 @@ class Decoder(nn.Module):
       # Apply remat policy to layer
       layer = nn.remat(
           block_layer,
-          prevent_cse=megatext_utils.should_prevent_cse_in_remat(self.config),
+          prevent_cse=should_prevent_cse_in_remat(self.config),
           policy=policy,
           static_argnums=(4, 5),  # Deterministic and model mode are static arguments.
       )
@@ -518,34 +471,16 @@ class Decoder(nn.Module):
     return RemattedBlockLayers
 
   def get_norm_layer(self, num_features: int):
-    """get normalization layer (return type inherits from nn.Module)"""
-    if self.config.decoder_block in (
-        DecoderBlockType.DEFAULT,
-        DecoderBlockType.LLAMA2,
-        DecoderBlockType.MISTRAL,
-        DecoderBlockType.MIXTRAL,
-        DecoderBlockType.DEEPSEEK,
-        DecoderBlockType.GEMMA,
-        DecoderBlockType.GEMMA2,
-        DecoderBlockType.GEMMA3,
-        DecoderBlockType.QWEN2,
-        DecoderBlockType.QWEN3,
-        DecoderBlockType.QWEN3_MOE,
-        DecoderBlockType.GPT_OSS,
-        DecoderBlockType.SIMPLE,
-        DecoderBlockType.SIMPLE_MLP,
-        DecoderBlockType.LLAMA4,
-        DecoderBlockType.OLMO3,
-    ):
-      return functools.partial(rms_norm, num_features=num_features, shard_mode=self.config.shard_mode)
-    elif self.config.decoder_block == DecoderBlockType.GPT3:
+    """Get normalization layer from decoder block registry."""
+    from megatext.common.decoder_registry import get_spec
+    norm_type = get_spec(self.config.decoder_block).norm_type
+    if norm_type == "gpt3_layernorm":
       return functools.partial(gpt3.gpt3_layer_norm, num_features=num_features, reductions_in_fp32=False, use_bias=True)
-    elif self.config.decoder_block == DecoderBlockType.QWEN3_NEXT:
+    if norm_type == "qwen3_next_rmsnorm":
       return functools.partial(
           normalizations.Qwen3NextRMSNormLinen, num_features=num_features, shard_mode=self.config.shard_mode
       )
-    else:
-      raise ValueError(f"Incorrect decoder_block name {self.config.decoder_block.value=}")
+    return functools.partial(rms_norm, num_features=num_features, shard_mode=self.config.shard_mode)
 
   def scan_decoder_layers(self, cfg, decoder_layer, length, metadata_axis_name, mesh, in_axes_tuple, **kwargs):
     """scan decoder layers, calls `flax.linen.transforms.scan`"""

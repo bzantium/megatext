@@ -32,8 +32,9 @@ from megatext.common.gcloud_stub import workload_monitor
 from megatext.common.managed_mldiagnostics import ManagedMLDiagnostics
 from megatext.utils import storage as gcs_utils
 from megatext.utils import logging as max_logging
-from megatext.utils import max_utils
-from megatext.utils import megatext_utils
+from megatext.utils.debug import add_config_to_summary_writer, calculate_num_params_from_pytree
+from megatext.utils.flops import calculate_tflops_training_per_device, calculate_tokens_training_per_device
+from megatext.utils.logging import add_text_to_summary_writer, close_summary_writer, initialize_summary_writer
 from collections import defaultdict
 
 mldiag, _ = mldiagnostics_modules()
@@ -92,7 +93,7 @@ class MetricLogger:
   """
 
   def __init__(self, config, learning_rate_schedule):
-    self.writer = max_utils.initialize_summary_writer(config.tensorboard_dir, config.run_name)
+    self.writer = initialize_summary_writer(config.tensorboard_dir, config.run_name)
     self.config = config
     self.metadata = {}
     self.running_gcs_metrics = [] if config.gcs_metrics else None
@@ -174,6 +175,8 @@ class MetricLogger:
         [
             f"total_weights: {scalars['learning/total_weights']}",
             f"loss: {loss:.3f}",
+            f"lr: {scalars['learning/current_learning_rate']:.3e}",
+            f"grad_norm: {scalars['learning/grad_norm']:.3e}",
         ]
     )
 
@@ -283,13 +286,13 @@ class MetricLogger:
 
   def write_setup_info_to_tensorboard(self, params):
     """Writes setup information like train config params, num model params, and XLA flags to TensorBoard."""
-    num_model_parameters = max_utils.calculate_num_params_from_pytree(params)
-    self.metadata[MetadataKey.PER_DEVICE_TFLOPS], _, _ = megatext_utils.calculate_tflops_training_per_device(self.config)
-    self.metadata[MetadataKey.PER_DEVICE_TOKENS] = megatext_utils.calculate_tokens_training_per_device(self.config)
+    num_model_parameters = calculate_num_params_from_pytree(params)
+    self.metadata[MetadataKey.PER_DEVICE_TFLOPS], _, _ = calculate_tflops_training_per_device(self.config)
+    self.metadata[MetadataKey.PER_DEVICE_TOKENS] = calculate_tokens_training_per_device(self.config)
     max_logging.log(f"number parameters: {num_model_parameters/1e9:.3f} billion")
-    max_utils.add_text_to_summary_writer("num_model_parameters", str(num_model_parameters), self.writer)
-    max_utils.add_text_to_summary_writer("libtpu_init_args", os.getenv("LIBTPU_INIT_ARGS", ""), self.writer)
-    megatext_utils.add_config_to_summary_writer(self.config, self.writer)
+    add_text_to_summary_writer("num_model_parameters", str(num_model_parameters), self.writer)
+    add_text_to_summary_writer("libtpu_init_args", os.getenv("LIBTPU_INIT_ARGS", ""), self.writer)
+    add_config_to_summary_writer(self.config, self.writer)
 
   def get_performance_metric_queue(self, config):
     """Records heartbeat metrics and performance metrics to GCP."""
@@ -389,4 +392,4 @@ class MetricLogger:
       (step_to_write, metrics_to_write) = self.buffered_train_metrics
       self.write_metrics(metrics_to_write, step_to_write)
 
-    max_utils.close_summary_writer(self.writer)
+    close_summary_writer(self.writer)

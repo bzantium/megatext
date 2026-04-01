@@ -40,8 +40,9 @@ from megatext.schedulers import create_learning_rate_schedule
 from megatext.utils import storage as gcs_utils
 from megatext.utils import lora_utils
 from megatext.utils import logging as max_logging
-from megatext.utils import max_utils
-from megatext.utils import megatext_utils
+from megatext.utils.debug import calculate_num_params_from_pytree
+from megatext.utils.sharding import create_device_mesh
+from megatext.utils.train_utils import init_decode_state, setup_training_state
 
 Transformer = models.transformer_as_linen
 
@@ -98,10 +99,10 @@ def _read_train_checkpoint(config, checkpoint_manager, mesh):
   rng = random.PRNGKey(0)
   learning_rate_schedule = create_learning_rate_schedule(config)
   tx = optimizers.get_optimizer(config, learning_rate_schedule)
-  state, state_mesh_notations, _, _ = megatext_utils.setup_training_state(
+  state, state_mesh_notations, _, _ = setup_training_state(
       model, None, tx, config, rng, mesh, checkpoint_manager
   )
-  num_params = max_utils.calculate_num_params_from_pytree(state.params)
+  num_params = calculate_num_params_from_pytree(state.params)
   max_logging.log(f"In input checkpoint Number of model params={num_params/1e9:.3f} billion")
   return state, state_mesh_notations
 
@@ -145,7 +146,7 @@ def _generate_lora_decode_checkpoints(config, mesh):
 
 def _save_decode_checkpoint(config, state, checkpoint_manager):
   """Generate checkpoint for decode from the training_state."""
-  decode_state = megatext_utils.init_decode_state(
+  decode_state = init_decode_state(
       None, jax.tree_util.tree_map(lambda x: x.astype(jax.numpy.bfloat16), state.params)
   )
   if checkpoint_manager is not None:
@@ -162,7 +163,7 @@ def generate_decode_checkpoint(config):
   * Inference checkpoint will be saved at the config's checkpoint directory.
   """
 
-  devices_array = megatext_utils.create_device_mesh(config)
+  devices_array = create_device_mesh(config)
   mesh = Mesh(devices_array, config.mesh_axes)
 
   assert config.checkpoint_dir, "checkpoint_dir not configured"

@@ -33,8 +33,8 @@ from megatext.layers import nnx_wrappers
 from megatext.layers import pipeline
 from megatext.models import deepseek
 from megatext.models import simple_layer
-from megatext.utils import megatext_utils
 from megatext.trainers.pretrain import main as train_main
+from megatext.utils.sharding import create_device_mesh
 from tests.utils.test_helpers import get_test_config_path, get_test_dataset_path, get_test_base_output_directory
 import pytest
 
@@ -76,7 +76,7 @@ class PipelineParallelismTest(unittest.TestCase):
 
   def assert_pipeline_same_output_and_grad(self, config, single_pipeline_stage_class=None):
     """check that the output and gradient are the same"""
-    devices_array = megatext_utils.create_device_mesh(config)
+    devices_array = create_device_mesh(config)
     mesh = Mesh(devices_array, config.mesh_axes)
     model_mode = MODEL_MODE_TRAIN
     if single_pipeline_stage_class is None:

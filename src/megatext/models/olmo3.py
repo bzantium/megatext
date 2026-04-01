@@ -31,11 +31,12 @@ from megatext.layers import attentions
 from megatext.layers import initializers
 from megatext.layers import nnx_wrappers
 from megatext.layers import quantizations
+from megatext.layers.scannable_block import ScannableBlock
 from megatext.layers.attentions import Attention
 from megatext.layers.linears import MlpBlock
 from megatext.layers.normalizations import RMSNorm
 from megatext.layers.quantizations import AqtQuantization as Quant
-from megatext.utils import max_utils
+from megatext.utils.training import get_batch_seq_len_for_mode
 
 
 # -----------------------------------------
@@ -74,7 +75,7 @@ class Olmo3DecoderLayer(nnx.Module):
     self.attention_type = attention_type
     self.quant = quant
 
-    batch_size, seq_len = max_utils.get_batch_seq_len_for_mode(config, model_mode)
+    batch_size, seq_len = get_batch_seq_len_for_mode(config, model_mode)
     dummy_inputs_shape = (batch_size, seq_len, config.emb_dim)
 
     self.post_self_attention_layer_norm = RMSNorm(
@@ -221,18 +222,17 @@ Olmo3DecoderLayerToLinen = nnx_wrappers.to_linen_class(
 )
 
 
-class Olmo3ScannableBlock(nnx.Module):
+def _olmo3_layer_kwargs(i, config):
+  """Return per-layer kwargs for Olmo3: attention type from pattern table."""
+  return {"attention_type": get_attention_type(i)}
+
+
+class Olmo3ScannableBlock(ScannableBlock):
   """A repeatable block of Olmo 3 decoder layers.
 
     This block applies multiple decoder layers sequentially, using the attention
     pattern defined by OLMO3_ATTENTION_PATTERN. It's designed to be
     used with `nn.scan` for efficient compilation.
-
-  Attributes:
-    config: Config, MegaText model config
-    mesh: Mesh, JAX device mesh (used for sharding)
-    num_of_layers: int, number of decoder layers in the block
-    quant: Optional[Quant], quantization config
   """
 
   def __init__(
@@ -243,52 +243,12 @@ class Olmo3ScannableBlock(nnx.Module):
       quant: Optional[Quant] = None,
       rngs: nnx.Rngs = None,
   ):
-    self.config = config
-    self.mesh = mesh
-    self.model_mode = model_mode
-    self.quant = quant
-    for layer_id in range(config.inhomogeneous_layer_cycle_interval):
-      attention_type = get_attention_type(layer_id)
-      layer_name = f"layers_{layer_id}"
-      layer = Olmo3DecoderLayer(
-          config=config,
-          mesh=mesh,
-          model_mode=model_mode,
-          attention_type=attention_type,
-          quant=self.quant,
-          rngs=rngs,
-      )
-      setattr(self, layer_name, layer)
-
-  def __call__(
-      self,
-      inputs,
-      decoder_segment_ids,
-      decoder_positions,
-      deterministic,
-      model_mode,
-  ):
-    cfg = self.config
-
-    inputs = nn.with_logical_constraint(inputs, ("activation_batch", "activation_norm_length", "activation_embed"))
-    inputs = checkpoint_name(inputs, "decoder_layer_input")
-    y = inputs
-    for layer_id in range(cfg.inhomogeneous_layer_cycle_interval):
-      layer_name = f"layers_{layer_id}"
-      layer = getattr(self, layer_name)
-      y = layer(
-          y,
-          decoder_segment_ids,
-          decoder_positions,
-          deterministic,
-          model_mode,
-      )
-      if cfg.scan_layers:
-        y = y[0]
-    if cfg.scan_layers:
-      return y, None
-    else:
-      return y
+    super().__init__(
+        config, mesh, model_mode, quant,
+        layer_cls=Olmo3DecoderLayer,
+        layer_kwargs_fn=_olmo3_layer_kwargs,
+        rngs=rngs,
+    )
 
 
 Olmo3ScannableBlockToLinen = nnx_wrappers.to_linen_class(

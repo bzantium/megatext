@@ -30,13 +30,14 @@ from megatext.layers import initializers
 from megatext.layers import linears
 from megatext.layers import nnx_wrappers
 from megatext.layers import quantizations
+from megatext.layers.scannable_block import ScannableBlock
 from megatext.layers.attentions import Attention
 from megatext.layers.linears import Dropout
 from megatext.layers.linears import MlpBlock
 from megatext.layers.moe import RoutedAndSharedMoE
 from megatext.layers.normalizations import RMSNorm
 from megatext.layers.quantizations import AqtQuantization as Quant
-from megatext.utils import max_utils
+from megatext.utils.training import get_batch_seq_len_for_mode
 
 #### Multi modal model implementation
 
@@ -337,7 +338,7 @@ class Llama4DecoderLayer(nnx.Module):
     self.is_nope_layer = is_nope_layer
     self.is_moe_layer = is_moe_layer
 
-    batch_size, seq_len = max_utils.get_batch_seq_len_for_mode(config, model_mode)
+    batch_size, seq_len = get_batch_seq_len_for_mode(config, model_mode)
     dummy_inputs_shape = (batch_size, seq_len, config.emb_dim)
 
     self.pre_self_attention_layer_norm = RMSNorm(
@@ -516,7 +517,7 @@ Llama4DecoderLayerToLinen = nnx_wrappers.to_linen_class(
 )
 
 
-class Llama4ScannableBlock(nnx.Module):
+class Llama4ScannableBlock(ScannableBlock):
   """A repeatable block given nope_layer_interval and interleave_moe_layer_step."""
 
   def __init__(
@@ -524,10 +525,11 @@ class Llama4ScannableBlock(nnx.Module):
       config: Config,
       mesh: Mesh,
       model_mode: str,
-      rngs: nnx.Rngs,
       quant: None | Quant = None,
       nope_layer_interval: int = 1,
       interleave_moe_layer_step: int = 1,
+      *,
+      rngs: nnx.Rngs,
   ):
     """Initializes the scannable block.
 
@@ -540,63 +542,19 @@ class Llama4ScannableBlock(nnx.Module):
       nope_layer_interval: Specifies the interval for inserting a NoPE layer.
       interleave_moe_layer_step: Specifies the interval for inserting a MoE layer.
     """
-    self.config = config
-    self.mesh = mesh
-    self.model_mode = model_mode
-    self.quant = quant
-    self.rngs = rngs
-    self.nope_layer_interval = nope_layer_interval
-    self.interleave_moe_layer_step = interleave_moe_layer_step
 
-    for layer_id in range(self.config.inhomogeneous_layer_cycle_interval):
-      nope_layer = determine_is_nope_layer(layer_id, self.nope_layer_interval)
-      moe_layer = determine_is_moe_layer(layer_id, self.interleave_moe_layer_step)
-      layer_name = f"layers_{layer_id}"
-      layer = Llama4DecoderLayer(
-          config=self.config,
-          mesh=self.mesh,
-          model_mode=self.model_mode,
-          rngs=self.rngs,
-          quant=self.quant,
-          is_nope_layer=nope_layer,
-          is_moe_layer=moe_layer,
-      )
-      setattr(self, layer_name, layer)
+    def _llama4_layer_kwargs(i, config):
+      return {
+          "is_nope_layer": determine_is_nope_layer(i, nope_layer_interval),
+          "is_moe_layer": determine_is_moe_layer(i, interleave_moe_layer_step),
+      }
 
-  def __call__(
-      self,
-      inputs,
-      decoder_segment_ids,
-      decoder_positions,
-      deterministic,
-      model_mode,
-      slot: None | int = None,
-      page_state: None | page_manager.PageState = None,
-      previous_chunk=None,
-  ):
-
-    cfg = self.config
-
-    inputs = nn.with_logical_constraint(inputs, ("activation_batch", "activation_norm_length", "activation_embed"))
-    inputs = checkpoint_name(inputs, "decoder_layer_input")
-    y = inputs
-    for layer_id in range(cfg.inhomogeneous_layer_cycle_interval):
-      y = getattr(self, f"layers_{layer_id}")(
-          y,
-          decoder_segment_ids,
-          decoder_positions,
-          deterministic,
-          model_mode,
-          previous_chunk=previous_chunk,
-          page_state=page_state,
-          slot=slot,
-      )
-      if cfg.scan_layers:
-        y = y[0]
-    if cfg.scan_layers:
-      return y, None
-    else:
-      return y
+    super().__init__(
+        config, mesh, model_mode, quant,
+        layer_cls=Llama4DecoderLayer,
+        layer_kwargs_fn=_llama4_layer_kwargs,
+        rngs=rngs,
+    )
 
 
 Llama4ScannableBlockToLinen = nnx_wrappers.to_linen_class(

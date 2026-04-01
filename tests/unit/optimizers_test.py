@@ -24,8 +24,8 @@ from optax.contrib import MuonDimensionNumbers as mdn
 
 from megatext.configs import pyconfig
 from megatext.optimizers import optimizers
-from megatext.utils import megatext_utils
 from megatext.utils.muon_utils import get_model_mdn
+from megatext.schedulers import create_learning_rate_schedule
 from tests.utils.test_helpers import get_test_config_path
 from typing import NamedTuple
 
@@ -313,7 +313,7 @@ class AdamWMaskTest(parameterized.TestCase):
         f"opt_type={opt_type}",
     ]
     config = pyconfig.initialize(argv)
-    learning_rate_schedule = megatext_utils.create_learning_rate_schedule(config)
+    learning_rate_schedule = create_learning_rate_schedule(config)
 
     with patch(mock_path) as mock_opt:
       # Call get_optimizer
@@ -350,7 +350,7 @@ class AdamWMaskTest(parameterized.TestCase):
     """Test that optimizer receives None for mask when config is empty"""
     argv = ["", get_test_config_path(), "run_name=test", f"opt_type={opt_type}"]
     config = pyconfig.initialize(argv)
-    learning_rate_schedule = megatext_utils.create_learning_rate_schedule(config)
+    learning_rate_schedule = create_learning_rate_schedule(config)
 
     with patch(mock_path) as mock_opt:
       # Call get_optimizer

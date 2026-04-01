@@ -28,7 +28,7 @@ from megatext.layers import moe
 from megatext.layers import nnx_wrappers
 from megatext.layers.initializers import NdInitializer, nd_dense_init, variable_to_logically_partitioned
 from megatext.layers.quantizations import Fp8Quantization
-from megatext.utils import megatext_utils
+from megatext.utils.sharding import create_device_mesh
 from tests.utils.test_helpers import get_test_config_path, get_decoupled_parallelism_overrides
 import pytest
 
@@ -52,7 +52,7 @@ class TokenDroppingTest(unittest.TestCase):
         **extra_args,
     )
     self.rngs = nnx.Rngs(params=0)
-    devices_array = megatext_utils.create_device_mesh(self.cfg)
+    devices_array = create_device_mesh(self.cfg)
     self.model = moe.RoutedMoE(
         config=self.cfg,
         num_experts=self.cfg.num_experts,
@@ -177,7 +177,7 @@ class MlpBlockTest(unittest.TestCase):
     )
     self.rng = jax.random.PRNGKey(42)
     quant = Fp8Quantization()
-    devices_array = megatext_utils.create_device_mesh(self.config)
+    devices_array = create_device_mesh(self.config)
     self.model = linears.mlp_block(
         mesh=Mesh(devices_array, self.config.mesh_axes),
         config=self.config,
@@ -221,7 +221,7 @@ class DeepSeekRoutingTest(unittest.TestCase):
         **extra_args,
     )
     self.rngs = nnx.Rngs(params=0)
-    devices_array = megatext_utils.create_device_mesh(self.cfg)
+    devices_array = create_device_mesh(self.cfg)
     self.model = moe.RoutedMoE(
         config=self.cfg,
         num_experts=self.cfg.num_experts,
@@ -474,7 +474,7 @@ class RoutedMoeTest(unittest.TestCase):
         dtype=cfg.dtype,
     )
 
-    devices_array = megatext_utils.create_device_mesh(cfg)
+    devices_array = create_device_mesh(cfg)
     mesh = Mesh(devices_array, cfg.mesh_axes)
     variables, expected_output = self.get_expected_output(rng_model, hidden_states, cfg, mesh)
     actual_output, _, _ = self.get_moe_output(variables, hidden_states, cfg, mesh)
@@ -503,7 +503,7 @@ class RoutedMoeTest(unittest.TestCase):
         dtype=cfg.dtype,
     )
 
-    devices_array = megatext_utils.create_device_mesh(cfg)
+    devices_array = create_device_mesh(cfg)
     mesh = Mesh(devices_array, cfg.mesh_axes)
     variables, expected_output = self.get_expected_output(rng_model, hidden_states, cfg, mesh)
     actual_output, _, _ = self.get_moe_output(variables, hidden_states, cfg, mesh)
@@ -532,7 +532,7 @@ class RoutedMoeTest(unittest.TestCase):
         dtype=cfg.dtype,
     )
 
-    devices_array = megatext_utils.create_device_mesh(cfg)
+    devices_array = create_device_mesh(cfg)
     mesh = Mesh(devices_array, cfg.mesh_axes)
     variables, expected_output = self.get_expected_output(rng_model, hidden_states, cfg, mesh)
     actual_output, _, _ = self.get_moe_output(variables, hidden_states, cfg, mesh)
@@ -562,7 +562,7 @@ class RoutedMoeTest(unittest.TestCase):
         dtype=cfg.dtype,
     )
 
-    devices_array = megatext_utils.create_device_mesh(cfg)
+    devices_array = create_device_mesh(cfg)
     mesh = Mesh(devices_array, cfg.mesh_axes)
     with nn_partitioning.axis_rules(cfg.logical_axis_rules):
       variables, expected_output = self.get_expected_output(rng_model, hidden_states, cfg, mesh)
@@ -595,7 +595,7 @@ class RoutedMoeTest(unittest.TestCase):
         dtype=cfg.dtype,
     )
 
-    devices_array = megatext_utils.create_device_mesh(cfg)
+    devices_array = create_device_mesh(cfg)
     mesh = Mesh(devices_array, cfg.mesh_axes)
     with nn_partitioning.axis_rules(cfg.logical_axis_rules):
       variables, expected_output = self.get_expected_output(rng_model, hidden_states, cfg, mesh)
@@ -628,7 +628,7 @@ class RoutedMoeTest(unittest.TestCase):
         dtype=cfg.dtype,
     )
 
-    devices_array = megatext_utils.create_device_mesh(cfg)
+    devices_array = create_device_mesh(cfg)
     mesh = Mesh(devices_array, cfg.mesh_axes)
     with nn_partitioning.axis_rules(cfg.logical_axis_rules):
       variables, expected_output = self.get_expected_output(rng_model, hidden_states, cfg, mesh)
@@ -672,7 +672,7 @@ class RoutedMoeTest(unittest.TestCase):
         dtype=cfg.dtype,
     )
 
-    devices_array = megatext_utils.create_device_mesh(cfg)
+    devices_array = create_device_mesh(cfg)
     mesh = Mesh(devices_array, cfg.mesh_axes)
     with nn_partitioning.axis_rules(cfg.logical_axis_rules):
       variables, _ = self.get_expected_output(rng_model, hidden_states, cfg, mesh)
@@ -704,7 +704,7 @@ class RoutedMoeTest(unittest.TestCase):
         dtype=cfg.dtype,
     )
 
-    devices_array = megatext_utils.create_device_mesh(cfg)
+    devices_array = create_device_mesh(cfg)
     mesh = Mesh(devices_array, cfg.mesh_axes)
     with nn_partitioning.axis_rules(cfg.logical_axis_rules):
       variables, expected_output = self.get_expected_output(rng_model, hidden_states, cfg, mesh)
@@ -737,7 +737,7 @@ class RoutedMoeTest(unittest.TestCase):
         dtype=cfg.dtype,
     )
 
-    devices_array = megatext_utils.create_device_mesh(cfg)
+    devices_array = create_device_mesh(cfg)
     mesh = Mesh(devices_array, cfg.mesh_axes)
     with nn_partitioning.axis_rules(cfg.logical_axis_rules):
       variables, expected_output = self.get_expected_output(rng_model, hidden_states, cfg, mesh)
@@ -769,7 +769,7 @@ class RoutedMoeTest(unittest.TestCase):
         dtype=cfg.dtype,
     )
 
-    devices_array = megatext_utils.create_device_mesh(cfg)
+    devices_array = create_device_mesh(cfg)
     mesh = Mesh(devices_array, cfg.mesh_axes)
     with nn_partitioning.axis_rules(cfg.logical_axis_rules):
       variables, expected_output = self.get_expected_output(rng_model, hidden_states, cfg, mesh)

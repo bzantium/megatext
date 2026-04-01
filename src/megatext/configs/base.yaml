@@ -23,8 +23,6 @@ run_name: ""
 model: "default" # override config settings to match a specific model. other than the override, nothing should use this!
 override_model_config: False # When set to true allows overriding model parameters via CLI for the purpose of debugging/testing.
 override_logical_axis_rules: False # When set overrides logical axis rules instead of merging them.
-debug:
-  rl: False # RL-specific debugging
 
 normalization_layer_epsilon: 1.e-05 # epsilon value for rmsnorm, layernorm.
 
@@ -55,7 +53,7 @@ enable_checkpointing: True
 save_checkpoint_on_completion: True
 async_checkpointing: True
 checkpoint_period: 10_000
-max_num_checkpoints_to_keep: None
+max_num_checkpoints_to_keep: null
 enable_continuous_checkpointing: False
 # enables one replica to read the ckpt then broadcast to the rest
 enable_single_replica_ckpt_restoring: False
@@ -77,7 +75,7 @@ checkpoint_storage_concurrent_gb: 96
 # Bool flag for enabling Orbax v1.
 enable_orbax_v1: False
 # function for processing loaded checkpoint dict into a format maxtext can understand. (for other formats, i.e. safetensors)
-checkpoint_conversion_fn: none
+checkpoint_conversion_fn: null
 # optional checkpoint context to use for loading. options: "orbax", "safetensors"
 source_checkpoint_layout: "orbax"
 
@@ -591,17 +589,8 @@ tokenizer_path: ""
 # grain pipeline supports tokenizer_type: sentencepiece, huggingface
 # hf pipeline only supports huggingface type, and will ignore tokenizer_type flag
 tokenizer_type: "sentencepiece" # Currently supporting: "tiktoken", "sentencepiece", "huggingface"
-use_chat_template: False
-chat_template_path: "" # path to chat template json file
-tokenize_train_data: True  # False if the dataset is pre-tokenized
-tokenize_eval_data: True  # False if the dataset is pre-tokenized
 add_bos: True
 add_eos: True
-# If False, use chunking for long sequences instead of truncation.
-# Note: use_truncation=False is only available in grain's pretrain preprocessing pipeline.
-# See the TokenizeAndTrim and TokenizeAndChunk classes in
-# `src/maxtext/input_pipeline/_grain_tokenizer.py` for implementation details.
-use_truncation: True
 
 # Dataset
 per_device_batch_size: 12.0
@@ -611,14 +600,7 @@ per_device_batch_size: 12.0
 # Details in https://github.com/AI-Hypercomputer/maxtext/blob/main/docs/guides/data_input_pipeline/data_input_grain.md#using-grain
 expansion_factor_real_data: -1.0
 eval_per_device_batch_size: 0.0
-max_corpus_chars: 10_000_000
-train_data_columns: ['text'] # for DPO dataset containing "chosen" and "rejected"
-train_image_column: 'image'
-eval_data_columns: ['text'] # for DPO dataset containing "chosen" and "rejected"
-eval_image_column: 'image'
 packing: True
-num_epoch: 1
-generate_padding_batch_train: False
 generate_padding_batch_eval: False
 # Maximum number of segments that can be packed into a single sequence
 # This needs to be passed to TransformerEngine's DotProductAttention layer for packing
@@ -657,9 +639,6 @@ max_chunks_per_sample: 0
 add_extra_token: true
 data_cache_dir: ''
 
-# for using pathways
-colocated_python_data_input: False  # experimental feature, under testing
-
 # Training loop
 steps: 150_000 # If set to -1 then will inherit value from learning_rate_schedule_steps
 log_period: 100 # The frequency of Tensorboard flush, gcs metrics writing, and managed profiler metrics updating.
@@ -675,19 +654,24 @@ skip_jax_distributed_system: False # If True we will not initialize the jax dist
 
 # Learning rate schedule structure depends on lr_schedule_type:
 #
+# Constant schedule (lr_schedule_type='constant'):
+# 1) Linear warmup from 0 to learning_rate over [0, warmup_steps]
+# 2) Constant learning_rate over [warmup_steps, learning_rate_schedule_steps]
+# 3) Constant 0 from learning_rate_schedule_steps to steps (if steps > learning_rate_schedule_steps)
+#
 # Cosine schedule (lr_schedule_type='cosine'):
 # 1) Linear warmup from 0 to learning_rate over [0, warmup_steps]
-# 2) Cosine decay from learning_rate to learning_rate * learning_rate_final_fraction over [warmup_steps, learning_rate_schedule_steps]
+# 2) Cosine decay from learning_rate to final_learning_rate over [warmup_steps, learning_rate_schedule_steps]
 # 3) Constant 0 from learning_rate_schedule_steps to steps (if steps > learning_rate_schedule_steps)
 #
 # WSD schedule (lr_schedule_type='wsd', Warmup-Stable-Decay):
 # 1) Linear warmup from 0 to learning_rate over [0, warmup_steps]
 # 2) Stable phase at learning_rate
-# 3) Decay from learning_rate to learning_rate * learning_rate_final_fraction over wsd_decay_steps
+# 3) Decay from learning_rate to final_learning_rate over wsd_decay_steps
 # 4) Constant 0 from learning_rate_schedule_steps to steps (if steps > learning_rate_schedule_steps)
 learning_rate: 3.e-5
-lr_schedule_type: 'cosine'  # Options: 'cosine' or 'wsd'
-learning_rate_final_fraction: 0.1  # Final LR as fraction of peak LR
+lr_schedule_type: 'cosine'  # Options: 'constant', 'cosine', or 'wsd'
+final_learning_rate: 0.0  # Final learning rate after decay
 warmup_steps: 0  # Number of warmup steps (applies to both schedules)
 wsd_decay_steps: 0  # Number of decay steps for WSD schedule
 wsd_decay_style: 'linear'  # Decay style for WSD schedule: 'linear' or 'cosine'
@@ -747,9 +731,12 @@ init_weights_seed: 0
 # You may disable clipping by setting gradient_clipping_threshold to zero.
 gradient_clipping_threshold: 1.0
 
-# Instead of updating the weights every step, you may effectively use a larger
-# batch by accumulating the gradient over a set of steps.
-gradient_accumulation_steps: 1
+# Mutually exclusive: set one or neither.
+# global_batch_size → auto-derives gradient_accumulation_steps
+# gradient_accumulation_steps → auto-derives global_batch_size
+# Both null → ga_steps=1, global_batch_size = per_device_batch_size * num_devices
+global_batch_size: null
+gradient_accumulation_steps: null
 
 opt_type: "adamw"  # one of "adamw", "adam_pax", "sgd", or "muon"
 # List of parameter names/patterns to train.
@@ -775,7 +762,7 @@ mu_dtype: "" # data type to store "mu" of AdamW tracking the first moment. Inher
 # "nesterov", "ns_coeffs", "ns_steps", "weight_decay_mask", "adaptive" use default
 muon_beta: 0.95 # Decay rate for the exponentially weighted average of grads.
 muon_weight_decay: 0 # Strength of the weight decay regularization. This is multiplied with the learning rate.
-muon_consistent_rms: None # If None, apply width scaling to updates. If float, apply consistent rms scaling (recommend 0.2).
+muon_consistent_rms: null # If null, apply width scaling to updates. If float, apply consistent rms scaling (recommend 0.2).
 
 # Stack trace parameters
 collect_stack_trace: False
@@ -858,10 +845,6 @@ inference_microbenchmark_num_samples: [1, 2, 3, 4, 5]
 inference_metadata_file: "" # path to a json file
 inference_benchmark_test: False
 
-# Stack prefill cache across the layer to reduce the
-# Python layer latency.
-stack_prefill_result_cache: False
-
 # KV Cache layout control
 # Logical layout: 0,1,2,3 ; CACHE_BATCH, CACHE_SEQUENCE, CACHE_HEADS, CACHE_KV
 # Default layout: 1,2,0,3 ; CACHE_SEQUENCE, CACHE_HEADS, CACHE_BATCH, CACHE_KV
@@ -874,13 +857,6 @@ ar_cache_axis_order: "1,2,0,3"
 compute_axis_order: "0,1,2,3"
 
 reshape_q: False
-
-# Maxengine Metrics
-prometheus_port: 0
-
-# Maxengine server
-enable_jax_profiler: False
-jax_profiler_port: 9999
 
 # TPU power trace level for xprof. 0:POWER_TRACE_NONE, 1:POWER_TRACE_NORMAL, or 2:POWER_TRACE_SPI
 xprof_tpu_power_trace_level: 0
@@ -947,12 +923,8 @@ pagedattn_head_dim_alignment: 128
 
 
 # Chunked Prefill Parameters
-prefill_chunk_size: 256
 use_chunked_prefill: False
 
-
-# This is a temporary flag that will be removed soon after the fix lands in TE
-enable_padding_causal_mask: True
 
 # Llama4-specific
 # Whether to apply Query/Key normalization.
@@ -974,7 +946,6 @@ use_audio: False
 freeze_vision_encoder_params: True
 freeze_audio_encoder_params: True
 dtype_mm: "float32"  # Data type for multimodal model's vision encoder
-remat_policy_for_vit: "minimal"  # Remat policy for multimodal model's vision encoder. Check `remat_policy` for options.
 image_size_for_vit: 896 # Default for Gemma3, and should be overwritten by model's config
 image_path: "" # Local image path used for decoding, can be multiple paths separated by comma, exp "/path/image1.jpg,/path/image2.jpg"
 video_path: "" # Local video path used for decoding, can be multiple paths separated by comma, exp "/path/video1.mp4,/path/video2.mp4"
@@ -984,11 +955,6 @@ video_placeholder: "<|video|>"
 audio_placeholder: "<|audio|>"
 use_audio_in_video: False
 posemb_type_for_vit: "learn"
-# max_num_images_per_example only applies for training when your image column is a list of images.
-# -1 means no limit, and will pad to the max possible number of images determined by sequence length.
-# Set it to avoid unnecessary padding if you know the maximum number of images per example.
-max_num_images_per_example: -1
-
 ### llama4 multi modal configs
 hidden_size_for_vit: 1408
 intermediate_size_for_vit: 5632
@@ -1105,4 +1071,4 @@ engram_seed: 0
 distill_alpha: 0.5
 distill_temperature: 1.0
 distill_beta: 0.0
-distill_layer_indices: None
+distill_layer_indices: null

@@ -77,8 +77,8 @@ from megatext.kernels.attention.ragged_attention import ragged_mha
 from megatext.layers import nnx_wrappers
 from megatext.layers.initializers import variable_to_logically_partitioned
 from megatext.layers.quantizations import AqtQuantization as Quant
-from megatext.utils import max_utils
 from megatext.utils.sharding import logical_to_mesh_axes, maybe_shard_with_name
+from megatext.utils.training import reorder_mask_load_balancing, reorder_sequence
 import numpy as np
 from tokamax._src.ops.experimental.tpu.splash_attention import splash_attention_kernel as tokamax_splash_kernel
 from tokamax._src.ops.experimental.tpu.splash_attention import splash_attention_mask as tokamax_splash_mask
@@ -1394,9 +1394,9 @@ class AttentionOp(nnx.Module):
       # the K and V to be contiguous. Note that K and V are not sharded over the sequence aka context axis
       # This was we get the unsharded unpermuted key and value tensors
       if cp_size > 1 and load_balanced_context_parallel:
-        key = max_utils.reorder_sequence(tensor=key, cp_size=cp_size, seq_dim=2, to_contiguous=True)
-        value = max_utils.reorder_sequence(tensor=value, cp_size=cp_size, seq_dim=2, to_contiguous=True)
-        decoder_segment_ids_unpermuted = max_utils.reorder_sequence(
+        key = reorder_sequence(tensor=key, cp_size=cp_size, seq_dim=2, to_contiguous=True)
+        value = reorder_sequence(tensor=value, cp_size=cp_size, seq_dim=2, to_contiguous=True)
+        decoder_segment_ids_unpermuted = reorder_sequence(
             tensor=decoder_segment_ids_kv,
             cp_size=cp_size,
             seq_dim=1,
@@ -2131,7 +2131,7 @@ class LoadBalancedCausalMask(splash_attention_mask._ComputableMask):
     arr = np.arange(shape[0])
     # we reorder the mask to be load balanced following the same approach as
     # used to reorder the input tokens
-    out = max_utils.reorder_mask_load_balancing(arr[None, :, None, None], cp_size, 1)
+    out = reorder_mask_load_balancing(arr[None, :, None, None], cp_size, 1)
     q_sequence = out[0, :, 0, 0]
 
     mask_function = causal_mask_function

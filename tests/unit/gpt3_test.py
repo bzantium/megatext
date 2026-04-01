@@ -24,7 +24,7 @@ from megatext.configs import pyconfig
 from megatext.common.common_types import MODEL_MODE_TRAIN
 from megatext.layers import quantizations
 from megatext.models import models
-from megatext.utils import megatext_utils
+from megatext.utils.sharding import create_device_mesh
 from tests.utils.test_helpers import get_test_config_path
 import pytest
 
@@ -64,7 +64,7 @@ class GPT3(unittest.TestCase):
     )
     self.rng = jax.random.PRNGKey(1234)
 
-    devices_array = megatext_utils.create_device_mesh(self.cfg)
+    devices_array = create_device_mesh(self.cfg)
     mesh = Mesh(devices_array, self.cfg.mesh_axes)
     quant = quantizations.configure_quantization(self.cfg)
     self.model = models.transformer_as_linen(config=self.cfg, mesh=mesh, quant=quant, model_mode=MODEL_MODE_TRAIN)

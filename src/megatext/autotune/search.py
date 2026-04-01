@@ -26,7 +26,8 @@ class AutoTuneConfig:
     """Configuration for automated hyperparameter search."""
 
     scope: str = "batch_remat"
-    num_profile_steps: int = 10
+    warmup_steps: int = 3
+    num_profile_steps: int = 3
     include_sa_block: bool = False
 
 
@@ -129,6 +130,7 @@ def run_search(
     constraints = ModelConstraints.from_config_dict(config_overrides, topology)
     all_results: list[ProfileResult] = []
     num_steps = autotune_config.num_profile_steps
+    warmup_steps = autotune_config.warmup_steps
     best_result: ProfileResult | None = None
     total_candidates = 0
     search_space_parts = []
@@ -155,7 +157,7 @@ def run_search(
         logging.info(f"=== {stage_name} search ===")
         logging.info(f"Search space: {stage_total} combinations")
 
-        best_result = _search_batch_remat(config_overrides, all_results, num_steps, valid_sa_blocks=valid_sa_blocks, batch_sizes=batch_sizes)
+        best_result = _search_batch_remat(config_overrides, all_results, num_steps, warmup_steps, valid_sa_blocks=valid_sa_blocks, batch_sizes=batch_sizes)
 
         if best_result is None:
             logging.warning("All batch+remat combinations failed (OOM). Try reducing model size or max_target_length.")
@@ -177,7 +179,7 @@ def run_search(
         # scope=all: base was already profiled in stage 1, skip it
         # scope=parallelism: base hasn't been profiled, include it
         skip_base_tp = scope == "all"
-        stage_best = _search_parallelism(config_overrides, base, tp_values, all_results, num_steps, skip_base_tp)
+        stage_best = _search_parallelism(config_overrides, base, tp_values, all_results, num_steps, warmup_steps, skip_base_tp)
 
         if stage_best is not None:
             if best_result is None or stage_best.tflops_per_device > best_result.tflops_per_device:
@@ -230,36 +232,59 @@ def _search_batch_remat(
     config_overrides: dict,
     all_results: list[ProfileResult],
     num_steps: int,
+    warmup_steps: int = 3,
     valid_sa_blocks: list[int] | None = None,
     batch_sizes: list[int] | None = None,
 ) -> ProfileResult | None:
-    """Search over sa_block_size x batch_size x remat_policy.
+    """2-phase search over sa_block_size × batch_size × remat_policy.
 
-    All axes are monotonically increasing in memory:
-      sa_block_sizes: ascending (larger block = more memory, faster)
-      BATCH_SIZES:    [1, 2, 3, ..., 16] (ascending)
-      REMAT_POLICIES: [full, ..., minimal]  (ascending memory)
+    Phase 1: SA block binary search — find max feasible sa_block (probe: remat=full, batch=1)
+    Phase 2: Batch binary search — find max feasible batch (remat=full, sa_block=best)
+    Phase 3: Remat sweep — for each remat policy, find max feasible batch (shrinking ceiling),
+             profile it, track best TFLOPs/s. Stop when no remat can fit batch=1.
 
-    For each (sa_block, batch) pair (largest first), binary search over remat
-    to find the fastest remat that fits. Profile that combo.
+    Memory ordering (ascending): full < save_out_proj < ... < minimal_with_context
+    Higher-memory remat can only have equal or lower max_batch than lower-memory remat.
     """
     best_result: ProfileResult | None = None
     eval_count = 0
     oom_count = 0
-    pruned_count = 0
+
+    # Cache to avoid re-profiling identical candidates.
+    _cache: dict[tuple, ProfileResult] = {}
+
+    def _profile(candidate):
+        nonlocal eval_count, oom_count
+        cache_key = (
+            candidate.ici_fsdp_parallelism, candidate.ici_tensor_parallelism,
+            candidate.dcn_data_parallelism, candidate.dcn_fsdp_parallelism,
+            candidate.remat_policy, candidate.per_device_batch_size,
+            candidate.sa_block_size, candidate.scan_layers,
+            candidate.gradient_accumulation_steps,
+        )
+        if cache_key in _cache:
+            return _cache[cache_key]
+        result = profile_candidate(config_overrides, candidate, num_steps=num_steps, warmup_steps=warmup_steps)
+        _cache[cache_key] = result
+        eval_count += 1
+        all_results.append(result)
+        if result.oom or result.error:
+            oom_count += 1
+            _log_result(f"{candidate}: OOM", eval_count, 0, 0)
+        else:
+            _log_result(f"{candidate}: {result.tflops_per_device:.1f} TFLOPs/s", eval_count, 0, 0)
+        return result
 
     if valid_sa_blocks is None:
         valid_sa_blocks = [512]
     if batch_sizes is None:
         batch_sizes = BATCH_SIZES
 
-    total = len(valid_sa_blocks) * len(batch_sizes) * len(REMAT_POLICIES)
-
-    # Binary search for max feasible sa_block using (full, batch=1) probe.
-    max_sa_idx = len(valid_sa_blocks) - 1
+    # ── Phase 1: SA block binary search ──────────────────────────────────
+    best_sa_block = valid_sa_blocks[0]
     if len(valid_sa_blocks) > 1:
-        logging.info("SA block feasibility (binary search)")
-        lo, hi = 0, max_sa_idx
+        logging.info("Phase 1: SA block binary search")
+        lo, hi = 0, len(valid_sa_blocks) - 1
         best_sa_idx = -1
         while lo <= hi:
             mid = (lo + hi) // 2
@@ -268,73 +293,61 @@ def _search_batch_remat(
                 per_device_batch_size=batch_sizes[0],
                 sa_block_size=valid_sa_blocks[mid],
             )
-            eval_count += 1
-            result = profile_candidate(config_overrides, probe, num_steps=num_steps)
-            _remaining_count = total - eval_count - pruned_count
+            result = _profile(probe)
             if result.oom or result.error:
-                all_results.append(result)
-                oom_count += 1
-                _log_result(f"{probe}: OOM", eval_count, _remaining_count, pruned_count)
                 hi = mid - 1
             else:
-                all_results.append(result)
                 best_sa_idx = mid
                 lo = mid + 1
-                _log_result(f"{probe}: {result.tflops_per_device:.1f} TFLOPs/s", eval_count, _remaining_count, pruned_count)
         if best_sa_idx < 0:
-            _remaining_count = total - eval_count - pruned_count
-            _log_result("All sa_block sizes infeasible", eval_count, _remaining_count, pruned_count)
+            logging.warning("All SA block sizes OOM at batch=1, remat=full.")
             return None
-        max_sa_idx = best_sa_idx
-        pruned_sa = len(valid_sa_blocks) - (max_sa_idx + 1)
-        pruned_count += pruned_sa * len(batch_sizes) * len(REMAT_POLICIES)
+        best_sa_block = valid_sa_blocks[best_sa_idx]
+        logging.info(f"Phase 1 result: best sa_block={best_sa_block}")
 
-    # Profile each feasible sa_block (largest first = best performance)
-    for si in range(max_sa_idx, -1, -1):
-        sa_block = valid_sa_blocks[si]
+    # ── Phase 2: Batch binary search (remat=full, sa_block=best) ─────────
+    logging.info("Phase 2: Batch binary search (remat=full)")
+    lo, hi = 0, len(batch_sizes) - 1
+    max_batch_idx = 0
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        candidate = Candidate(
+            remat_policy=REMAT_POLICIES[0],
+            per_device_batch_size=batch_sizes[mid],
+            sa_block_size=best_sa_block,
+        )
+        result = _profile(candidate)
+        if result.oom or result.error:
+            hi = mid - 1
+        else:
+            max_batch_idx = mid
+            lo = mid + 1
+    logging.info(f"Phase 2 result: max batch={batch_sizes[max_batch_idx]} (remat=full)")
 
-        max_batch_idx = len(batch_sizes) - 1
+    # ── Phase 3: Remat sweep with shrinking batch ceiling ────────────────
+    logging.info("Phase 3: Remat sweep")
+    for remat in REMAT_POLICIES:
+        if max_batch_idx < 0:
+            logging.info(f"  {remat}: skipped (no feasible batch)")
+            break
 
-        for remat in REMAT_POLICIES:
-            if max_batch_idx < 0:
-                pruned_count += len(batch_sizes)
+        # Try max_batch_idx first; if OOM, try lower batches
+        found = False
+        for bi in range(max_batch_idx, -1, -1):
+            candidate = Candidate(
+                remat_policy=remat,
+                per_device_batch_size=batch_sizes[bi],
+                sa_block_size=best_sa_block,
+            )
+            result = _profile(candidate)
+            if not result.oom and not result.error:
+                max_batch_idx = bi  # shrink ceiling for next remat
+                if best_result is None or result.tflops_per_device > best_result.tflops_per_device:
+                    best_result = result
+                found = True
                 break
-
-            lo, hi = 0, max_batch_idx
-            best_batch_idx = -1
-            best_batch_result = None
-
-            while lo <= hi:
-                mid = (lo + hi) // 2
-                candidate = Candidate(
-                    remat_policy=remat,
-                    per_device_batch_size=batch_sizes[mid],
-                    sa_block_size=sa_block,
-                )
-                eval_count += 1
-                result = profile_candidate(config_overrides, candidate, num_steps=num_steps)
-                _remaining_count = total - eval_count - pruned_count
-                if result.oom or result.error:
-                    all_results.append(result)
-                    oom_count += 1
-                    _log_result(f"{candidate}: OOM", eval_count, _remaining_count, pruned_count)
-                    hi = mid - 1
-                else:
-                    all_results.append(result)
-                    _log_result(f"{candidate}: {result.tflops_per_device:.1f} TFLOPs/s", eval_count, _remaining_count, pruned_count)
-                    best_batch_idx = mid
-                    best_batch_result = result
-                    lo = mid + 1
-
-            if best_batch_idx < 0:
-                max_batch_idx = -1
-                continue
-
-            max_batch_idx = best_batch_idx
-
-            if not best_batch_result.oom and not best_batch_result.error:
-                if best_result is None or best_batch_result.tflops_per_device > best_result.tflops_per_device:
-                    best_result = best_batch_result
+        if not found:
+            max_batch_idx = -1  # no feasible batch for this remat → stop
 
     return best_result
 
@@ -345,6 +358,7 @@ def _search_parallelism(
     tp_values: list[int],
     all_results: list[ProfileResult],
     num_steps: int,
+    warmup_steps: int = 3,
     skip_base_tp: bool = False,
 ) -> ProfileResult | None:
     """Search TP/FSDP splits with fixed batch and remat."""
@@ -358,7 +372,7 @@ def _search_parallelism(
             continue  # skip -- already profiled in stage 1
         candidate = replace(base, ici_tensor_parallelism=tp, ici_fsdp_parallelism=-1)
         eval_count += 1
-        result = profile_candidate(config_overrides, candidate, num_steps)
+        result = profile_candidate(config_overrides, candidate, num_steps, warmup_steps=warmup_steps)
         all_results.append(result)
         remaining = total - eval_count - oom_count
         if result.oom or result.error:
@@ -421,7 +435,9 @@ def _parse_train_script(script_path: str) -> list[str]:
         # Find the module arg and collect everything after it
         for i, tok in enumerate(tokens):
             if tok == "megatext.trainers.pretrain":
-                overrides.extend(tok for tok in tokens[i + 1:] if "=" in tok)
+                for tok in tokens[i + 1:]:
+                    if "=" in tok and "$" not in tok:
+                        overrides.append(tok)
                 break
         break  # only parse the first matching command
 
@@ -495,7 +511,8 @@ def main() -> None:
     parser.add_argument("overrides", nargs="*", help="Config overrides as key=value")
     parser.add_argument("--scope", default="all", choices=["all", "batch_remat", "parallelism"],
                         help="What to auto-tune (default: all).")
-    parser.add_argument("--num-profile-steps", type=int, default=5, help="Profile steps per candidate (default: 5).")
+    parser.add_argument("--num-profile-steps", type=int, default=3, help="Profile steps per candidate (default: 3).")
+    parser.add_argument("--warmup-steps", type=int, default=3, help="Warmup steps per candidate (default: 3).")
     parser.add_argument("--include-sa-block", action="store_true",
                         help="Include splash attention block size in batch_remat search.")
     parser.add_argument("--max-batch-size", type=int, default=8, help="Max per-device batch size to search (default: 8).")
@@ -542,6 +559,7 @@ def main() -> None:
 
         autotune_cfg = AutoTuneConfig(
             scope=args.scope,
+            warmup_steps=args.warmup_steps,
             num_profile_steps=args.num_profile_steps,
             include_sa_block=args.include_sa_block,
         )

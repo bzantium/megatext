@@ -31,8 +31,8 @@ from megatext.layers.attentions import Attention
 from megatext.layers.linears import Dropout, MlpBlock
 from megatext.layers.normalizations import RMSNorm
 from megatext.layers.quantizations import AqtQuantization as Quant
-from megatext.utils import max_utils
 from megatext.utils.sharding import create_sharding, maybe_shard_with_logical
+from megatext.utils.training import get_batch_seq_len_for_mode
 
 # -----------------------------------------
 # The Decoder Layer specific for Llama2
@@ -60,7 +60,7 @@ class LlamaDecoderLayer(nnx.Module):
     else:
       self.activation_axis_names = ("activation_batch", "activation_norm_length", "activation_embed")
 
-    batch_size, seq_len = max_utils.get_batch_seq_len_for_mode(config, model_mode)
+    batch_size, seq_len = get_batch_seq_len_for_mode(config, model_mode)
     dummy_inputs_shape = (batch_size, seq_len, config.emb_dim)
 
     self.pre_self_attention_layer_norm = RMSNorm(

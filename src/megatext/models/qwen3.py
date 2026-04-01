@@ -35,6 +35,7 @@ from megatext.layers import initializers as max_initializers
 from megatext.layers import moe
 from megatext.layers import nnx_wrappers
 from megatext.layers import quantizations
+from megatext.layers.scannable_block import ScannableBlock
 from megatext.layers.embeddings import Qwen3OmniMoeVisionPosEmbedInterpolate, PositionalEmbedding
 from megatext.layers.normalizations import RMSNorm, l2norm, Qwen3NextRMSNorm, Qwen3NextRMSNormGated
 from megatext.layers.quantizations import AqtQuantization as Quant
@@ -43,8 +44,8 @@ from megatext.layers.linears import DenseGeneral, MlpBlock
 from megatext.layers.moe import RoutedMoE
 from megatext.layers.initializers import nd_dense_init, variable_to_logically_partitioned
 
-from megatext.utils import max_utils
 from megatext.inference import page_manager, kvcache
+from megatext.utils.training import get_batch_seq_len_for_mode
 
 
 # -----------------------------------------
@@ -710,7 +711,7 @@ class Qwen3NextFullAttention(nnx.Module):
     cfg = self.config
 
     scaling_factor = self.config.head_dim**-0.5
-    batch_size, seq_len = max_utils.get_batch_seq_len_for_mode(config, model_mode)
+    batch_size, seq_len = get_batch_seq_len_for_mode(config, model_mode)
     dummy_inputs_shape = (batch_size, seq_len, config.emb_dim)
 
     self.attention = attentions.Attention(
@@ -849,85 +850,27 @@ class Qwen3NextSparseMoeBlock(nnx.Module):
     return final_output, load_balance_loss
 
 
-class Qwen3NextScannableBlock(nnx.Module):
+def _qwen3_next_layer_kwargs(i, config):
+  """Return per-layer kwargs for Qwen3-Next: pass layer_idx to each layer."""
+  return {"layer_idx": i}
+
+
+class Qwen3NextScannableBlock(ScannableBlock):
   """A scannable block of Qwen3-Next decoder layers.
 
   This module contains a fixed number of heterogeneous decoder layers that form
   a repeating pattern, as defined by `config.inhomogeneous_layer_cycle_interval`. It is
   intended to be the body of an `nn.scan` transformation to construct the full
   decoder stack efficiently.
-
-  Attributes:
-    config: The model configuration object.
-    mesh: The device mesh for sharding.
-    model_mode: The operational mode (e.g., 'train', 'prefill').
-    quant: Optional quantization configuration.
   """
 
   def __init__(self, config: Config, mesh: Mesh, model_mode: str, quant: None | Quant = None, *, rngs: nnx.Rngs):
-    self.config = config
-    self.mesh = mesh
-    self.model_mode = model_mode
-    self.quant = quant
-    self.rngs = rngs
-    cfg = self.config
-
-    # Instantiate each layer within the block in __init__
-    for i in range(cfg.inhomogeneous_layer_cycle_interval):
-      layer_rngs = self.rngs.fork()  # Fork RNGs for each layer
-      layer_name = f"layer_{i}"
-      layer = Qwen3NextDecoderLayer(
-          config=self.config,
-          mesh=self.mesh,
-          quant=self.quant,
-          model_mode=self.model_mode,
-          layer_idx=i,
-          rngs=layer_rngs,
-      )
-      setattr(self, layer_name, layer)
-
-  def __call__(
-      self,
-      carry: jnp.ndarray,
-      decoder_segment_ids: None | jnp.ndarray,
-      decoder_positions: None | jnp.ndarray,
-      deterministic: bool,
-      model_mode: str,
-      previous_chunk=None,
-      page_state: None | page_manager.PageState = None,
-      slot: None | int = None,
-  ) -> tuple[Array, None]:
-    """Applies the block of decoder layers to the input carry.
-
-    Args:
-      carry: The input tensor from the previous scan iteration.
-      # ... other arguments are broadcasted to each iteration.
-
-    Returns:
-      A tuple containing the output of the block (the new carry) and an empty
-      value for the scan's `y` collection.
-    """
-    cfg = self.config
-    x = carry
-
-    # Loop over the number of sub-layers that make up one repeating pattern.
-    for i in range(cfg.inhomogeneous_layer_cycle_interval):
-      layer = getattr(self, f"layer_{i}")
-      # The second return value is kv_cache, which we ignore here because
-      # it is not passed as a carry in scannable layers.
-      x, _ = layer(
-          x,
-          decoder_segment_ids,
-          decoder_positions,
-          deterministic,
-          model_mode,
-          previous_chunk,
-          page_state,
-          slot,
-      )
-
-    # The output of the block is the carry for the next scan iteration.
-    return x, None
+    super().__init__(
+        config, mesh, model_mode, quant,
+        layer_cls=Qwen3NextDecoderLayer,
+        layer_kwargs_fn=_qwen3_next_layer_kwargs,
+        rngs=rngs,
+    )
 
 
 class Qwen3NextDecoderLayer(nnx.Module):
@@ -1084,7 +1027,7 @@ class AttentionWithNorm(nnx.Module):
     self.mesh = mesh
     self.quant = quant
 
-    batch_size, seq_len = max_utils.get_batch_seq_len_for_mode(config, model_mode)
+    batch_size, seq_len = get_batch_seq_len_for_mode(config, model_mode)
     dummy_inputs_shape = (batch_size, seq_len, config.emb_dim)
     self.activation_axis_names = ("activation_batch", "activation_norm_length", "activation_embed")
 

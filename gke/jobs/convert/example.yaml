@@ -1,0 +1,9 @@
+# Convert HuggingFace checkpoint to Megatext format
+workload_name: convert-qwen3-8b
+bucket: lmt-tpu-datasets
+
+args:
+  direction: hf-to-megatext
+  hf-model-path: "Qwen/Qwen3-8B"
+  output-dir: "gs://lmt-tpu-datasets/models/Qwen3-8B"
+  scan-layers: true

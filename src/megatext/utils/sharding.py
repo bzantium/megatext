@@ -37,7 +37,7 @@ from orbax.checkpoint.experimental.emergency.multi_tier_checkpointing import ini
 
 from megatext.common.common_types import ShardMode
 from megatext.utils import logging as max_logging
-from megatext.utils import max_utils
+from megatext.utils.training import reorder_causal_load_balanced
 
 import inspect  # for debugging only
 from pathlib import Path
@@ -393,7 +393,8 @@ def assert_params_sufficiently_sharded(params, mesh, tolerance):
     tolerance: A float representing the maximum allowed percentage of unsharded parameters.
   """
   # Calculate the total size of all parameters in the model.
-  total_num_params = max_utils.calculate_bytes_from_pytree(params)
+  from megatext.utils.debug import calculate_bytes_from_pytree
+  total_num_params = calculate_bytes_from_pytree(params)
 
   # Get the set of nontrival mesh axes that can be used for sharding.
   valid_target_mesh_axes = _get_nontrival_mesh_axes(mesh)
@@ -696,14 +697,14 @@ def create_device_mesh(config, devices=None):
   multi_slice_env = num_slices > 1
 
   # Find possible unspecified parallelisms
-  ici_parallelism = max_utils.fill_unspecified_mesh_axes(config.ici_parallelism.copy(), num_devices_per_slice, "ICI")
+  ici_parallelism = fill_unspecified_mesh_axes(config.ici_parallelism.copy(), num_devices_per_slice, "ICI")
 
   allow_split_physical_axes = config.allow_split_physical_axes if config.allow_split_physical_axes else False
 
   if multi_slice_env:
-    dcn_parallelism = max_utils.fill_unspecified_mesh_axes(config.dcn_parallelism.copy(), num_slices, "DCN")
-    if max_utils.is_valid_custom_mesh(ici_parallelism, config.custom_mesh):
-      mesh = max_utils.create_custom_device_mesh(ici_parallelism, dcn_parallelism, devices, config.custom_mesh)
+    dcn_parallelism = fill_unspecified_mesh_axes(config.dcn_parallelism.copy(), num_slices, "DCN")
+    if is_valid_custom_mesh(ici_parallelism, config.custom_mesh):
+      mesh = create_custom_device_mesh(ici_parallelism, dcn_parallelism, devices, config.custom_mesh)
     else:
       mesh = mesh_utils.create_hybrid_device_mesh(
           ici_parallelism,
@@ -713,14 +714,14 @@ def create_device_mesh(config, devices=None):
       )
   else:
     if allow_split_physical_axes:
-      if max_utils.is_valid_custom_mesh(ici_parallelism, config.custom_mesh):
+      if is_valid_custom_mesh(ici_parallelism, config.custom_mesh):
         mesh = mesh_utils.create_device_mesh(
             [16, 16],
             devices,
             contiguous_submeshes=False,
             allow_split_physical_axes=False,
         )
-        mesh = max_utils.reshape_mesh_to_rings(mesh, config.custom_mesh)
+        mesh = reshape_mesh_to_rings(mesh, config.custom_mesh)
         mesh = np.reshape(mesh, ici_parallelism)
       else:
         mesh = mesh_utils.create_device_mesh(
@@ -735,7 +736,7 @@ def create_device_mesh(config, devices=None):
           devices,
       )
       if config.optimize_mesh_for_tpu_v6e:
-        mesh = max_utils.optimize_mesh_for_tpu_v6e(mesh, devices)
+        mesh = optimize_mesh_for_tpu_v6e(mesh, devices)
 
   max_logging.log(f"Num_devices: {num_devices}, shape {mesh.shape}")
 
@@ -744,7 +745,7 @@ def create_device_mesh(config, devices=None):
 
 def shard_reorder_causal_load_balanced(batch, cp_size, shard_mode):
   """Shard the output of the reordered sequence."""
-  reordered = max_utils.reorder_causal_load_balanced(batch, cp_size)
+  reordered = reorder_causal_load_balanced(batch, cp_size)
   for _, v in batch.items():
     if isinstance(v, jax.Array):
       reordered = maybe_shard_with_name(reordered, v.sharding, shard_mode)

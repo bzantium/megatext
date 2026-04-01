@@ -24,10 +24,11 @@ from jax.sharding import Mesh
 from megatext.common.common_types import AttentionType
 from megatext.inference import page_manager
 from megatext.layers import quantizations
+from megatext.layers.scannable_block import ScannableBlock
 from megatext.layers.attentions import Attention
 from megatext.layers.normalizations import RMSNorm
 from megatext.models.qwen3 import MlpBlock
-from megatext.utils import max_utils
+from megatext.utils.training import get_batch_seq_len_for_mode
 
 Config = Any
 Quant = Any
@@ -51,7 +52,7 @@ class Qwen3SWADecoderLayer(nnx.Module):
     self.quant = quant
     self.attention_type = attention_type
 
-    batch_size, seq_len = max_utils.get_batch_seq_len_for_mode(config, model_mode)
+    batch_size, seq_len = get_batch_seq_len_for_mode(config, model_mode)
     dummy_inputs_shape = (batch_size, seq_len, config.emb_dim)
     self.activation_axis_names = ("activation_batch", "activation_norm_length", "activation_embed")
 
@@ -164,7 +165,14 @@ class Qwen3SWADecoderLayer(nnx.Module):
     return output, kv_cache
 
 
-class Qwen3SWAScannableBlock(nnx.Module):
+def _qwen3_swa_layer_kwargs(i, config):
+  """Return per-layer kwargs for Qwen3 SWA: last in cycle is global, rest are sliding."""
+  cycle = config.inhomogeneous_layer_cycle_interval
+  is_global = (i + 1) % cycle == 0
+  return {"attention_type": AttentionType.GLOBAL if is_global else AttentionType.LOCAL_SLIDING}
+
+
+class Qwen3SWAScannableBlock(ScannableBlock):
   """Scannable block of Qwen3 layers with mixed sliding/global attention.
 
   Within each cycle of inhomogeneous_layer_cycle_interval layers:
@@ -173,39 +181,9 @@ class Qwen3SWAScannableBlock(nnx.Module):
   """
 
   def __init__(self, config: Config, mesh: Mesh, model_mode: str, quant: None | Quant = None, *, rngs: nnx.Rngs):
-    self.config = config
-    self.mesh = mesh
-    cycle = config.inhomogeneous_layer_cycle_interval
-    for i in range(cycle):
-      is_global = (i + 1) % cycle == 0
-      attn_type = AttentionType.GLOBAL if is_global else AttentionType.LOCAL_SLIDING
-      layer = Qwen3SWADecoderLayer(
-          config=config,
-          mesh=mesh,
-          model_mode=model_mode,
-          quant=quant,
-          attention_type=attn_type,
-          rngs=rngs,
-      )
-      setattr(self, f"layers_{i}", layer)
-
-  def __call__(
-      self,
-      inputs: jnp.ndarray,
-      decoder_segment_ids: None | jnp.ndarray,
-      decoder_positions: None | jnp.ndarray,
-      deterministic: bool,
-      model_mode: str,
-      previous_chunk=None,
-      page_state: None | page_manager.PageState = None,
-      slot: None | int = None,
-  ):
-    y = inputs
-    for i in range(self.config.inhomogeneous_layer_cycle_interval):
-      layer = getattr(self, f"layers_{i}")
-      y = layer(y, decoder_segment_ids, decoder_positions, deterministic, model_mode)
-      if self.config.scan_layers:
-        y = y[0]
-    if self.config.scan_layers:
-      return y, None
-    return y
+    super().__init__(
+        config, mesh, model_mode, quant,
+        layer_cls=Qwen3SWADecoderLayer,
+        layer_kwargs_fn=_qwen3_swa_layer_kwargs,
+        rngs=rngs,
+    )

@@ -35,9 +35,9 @@ from megatext.layers import attentions, linears, nnx_wrappers, quantizations
 from megatext.layers.initializers import NdInitializer, default_bias_init, nd_dense_init, variable_to_logically_partitioned
 from megatext.kernels import megablox as mblx
 from megatext.utils import logging as max_logging
-from megatext.utils import max_utils
 from megatext.utils.sharding import maybe_shard_with_logical, create_sharding
 from megatext.utils.sharding import logical_to_mesh_axes
+from megatext.utils.training import generate_representative_group_sizes, unbox_logicallypartioned
 import numpy as np
 import qwix.pallas as qpl
 import tokamax
@@ -902,7 +902,7 @@ class RoutedMoE(nnx.Module):
       else:
         tokamax_group_sizes = tokamax.RaggedDotGroupSizes(
             group_sizes,
-            max_utils.generate_representative_group_sizes(inputs.shape[0], kernel.shape[0]),
+            generate_representative_group_sizes(inputs.shape[0], kernel.shape[0]),
         )
       pad_length = self.config.wi_tile_fwd_batch_seq
       hs_shape = inputs.shape
@@ -1998,9 +1998,9 @@ class RoutedMoE(nnx.Module):
     w1_kernel = self.variables["aqt"]["AqtEinsum_1"]["AqtDotGeneral_0"]["qrhs"]["frozen"]
     wo_kernel = self.variables["aqt"]["AqtEinsum_2"]["AqtDotGeneral_0"]["qrhs"]["frozen"]
 
-    w0_kernel = max_utils.unbox_logicallypartioned(w0_kernel)
-    w1_kernel = max_utils.unbox_logicallypartioned(w1_kernel)
-    wo_kernel = max_utils.unbox_logicallypartioned(wo_kernel)
+    w0_kernel = unbox_logicallypartioned(w0_kernel)
+    w1_kernel = unbox_logicallypartioned(w1_kernel)
+    wo_kernel = unbox_logicallypartioned(wo_kernel)
     return w0_kernel, w1_kernel, wo_kernel
 
   def __call__(
