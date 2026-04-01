@@ -37,7 +37,7 @@ import jax.numpy as jnp
 from megatext.configs import pyconfig
 from megatext.layers import attentions, moe, embeddings
 from megatext.layers.initializers import nd_dense_init
-from megatext.utils import megatext_utils
+from megatext.utils.sharding import create_device_mesh
 from tests.utils.test_helpers import get_test_config_path
 
 
@@ -318,7 +318,7 @@ class GptOssMLPTest(unittest.TestCase):
         attention="dot_product",
     )
     jax_hidden_states = to_jax(hidden_states)
-    devices_array = megatext_utils.create_device_mesh(cfg)
+    devices_array = create_device_mesh(cfg)
     mesh = Mesh(devices_array, cfg.mesh_axes)
     jax_model = moe.get_routed_moe(
         name="MoeBlock",
@@ -416,7 +416,7 @@ class GptOssAttentionTest(unittest.TestCase):
         attention_bias=False,
         attention_sink=True,
     )
-    devices_array = megatext_utils.create_device_mesh(cfg_dot)
+    devices_array = create_device_mesh(cfg_dot)
     mesh = Mesh(devices_array, cfg_dot.mesh_axes)
 
     attention_op_dot = attentions.AttentionOp(
@@ -479,7 +479,7 @@ class GptOssAttentionTest(unittest.TestCase):
         attention_bias=False,
         attention_sink=True,
     )
-    devices_array = megatext_utils.create_device_mesh(cfg_flash)
+    devices_array = create_device_mesh(cfg_flash)
     mesh = Mesh(devices_array, cfg_flash.mesh_axes)
 
     attention_op_flash = attentions.AttentionOp(
@@ -726,7 +726,7 @@ class GptOssYarnTest(unittest.TestCase):
         "num_attention_heads": float("inf"),
     }
     self.pt_config = SimpleNamespace(**pt_config)
-    devices_array = megatext_utils.create_device_mesh(self.config)
+    devices_array = create_device_mesh(self.config)
     self.mesh = Mesh(devices_array, self.config.mesh_axes)
 
   def test_yarn(self):

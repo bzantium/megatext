@@ -35,7 +35,8 @@ from megatext.configs import pyconfig
 from megatext.utils.constants import MEGATEXT_PKG_DIR
 from megatext.layers import quantizations
 from megatext.models import models
-from megatext.utils import megatext_utils
+from megatext.utils.sharding import create_device_mesh
+from megatext.utils.training import get_abstract_param
 from optax.contrib._muon import MuonDimensionNumbers as mdn
 
 
@@ -108,7 +109,7 @@ def get_transform_tree(tree, path=()):
 def get_muon_weight_dimension_numbers(model, config, verbose=False):
   """Extract muon dimension number from model structure."""
   # quickly get param structure without materialization
-  abstract_param = megatext_utils.get_abstract_param(model, config)
+  abstract_param = get_abstract_param(model, config)
   # get muon dimension number from param
   muon_weight_dimension_numbers = get_transform_tree(abstract_param)
   if verbose:
@@ -157,7 +158,7 @@ def get_model_mdn(model, scan_layers=True, verbose=False):
   ]
   config = pyconfig.initialize(argv)
   # Setup model
-  devices_array = megatext_utils.create_device_mesh(config)
+  devices_array = create_device_mesh(config)
   mesh = jax.sharding.Mesh(devices_array, config.mesh_axes)
   quant = quantizations.configure_quantization(config)
   model = Transformer(config, mesh=mesh, quant=quant)

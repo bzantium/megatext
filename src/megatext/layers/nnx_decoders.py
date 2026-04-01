@@ -62,8 +62,9 @@ from megatext.models import (
     simple_layer,
 )
 from megatext.multimodal import utils as mm_utils
-from megatext.utils import logging as max_logging, max_utils, megatext_utils, sharding
 from megatext.utils.sharding import create_sharding
+from megatext.utils.debug import device_space
+from megatext.utils.training import should_prevent_cse_in_remat
 
 # ------------------------------------------------------------------------------
 # The network: Decoder Definitions
@@ -435,7 +436,7 @@ class NNXDecoder(nnx.Module):
   def _apply_layers_sequentially(self, layers, x_in, *args, length: int, **kwargs):
     """Runs the layer stack using nnx.scan."""
     policy = self.get_remat_policy()
-    prevent_cse = megatext_utils.should_prevent_cse_in_remat(self.config)
+    prevent_cse = should_prevent_cse_in_remat(self.config)
     graphdef, params, state = nnx.split(
         layers, nnx.Param, ...
     )  # state: the mutable state we carry (KV cache, RNGs, etc.)
@@ -459,7 +460,7 @@ class NNXDecoder(nnx.Module):
       current_params, current_state = scanned_vars
 
       if self.config.parameter_memory_host_offload:
-        current_params = jax.tree.map(lambda x: jax.device_put(x, max_utils.device_space()), current_params)
+        current_params = jax.tree.map(lambda x: jax.device_put(x, device_space()), current_params)
 
       # Merge using the SLICED state
       layer = nnx.merge(graphdef, current_params, current_state)
@@ -1006,13 +1007,13 @@ class NNXDecoder(nnx.Module):
         scan_length = int(cfg.num_decoder_layers / cfg.inhomogeneous_layer_cycle_interval)
         y, self.layers = self._apply_layers_sequentially(self.layers, y, *layer_args, length=scan_length, **layer_kwargs)
     else:
-      prevent_cse = megatext_utils.should_prevent_cse_in_remat(cfg)
+      prevent_cse = should_prevent_cse_in_remat(cfg)
 
       # Hoisted function to preserve XLA cache ID
       def pure_layer_fn(graphdef, state_in, y_in, kv_in):
 
         if cfg.parameter_memory_host_offload:
-          state_in = jax.tree.map(lambda x: jax.device_put(x, max_utils.device_space()), state_in)
+          state_in = jax.tree.map(lambda x: jax.device_put(x, device_space()), state_in)
 
         merged_layer = nnx.merge(graphdef, state_in)
         out_y, out_kv = merged_layer(y_in, *layer_args, kv_cache=kv_in, **layer_kwargs)
@@ -1094,7 +1095,7 @@ class NNXDecoder(nnx.Module):
     num_remaining_layers = cfg.num_decoder_layers % attention_pattern_length
     if num_remaining_layers > 0:
       policy = self.get_remat_policy()
-      prevent_cse = megatext_utils.should_prevent_cse_in_remat(cfg)
+      prevent_cse = should_prevent_cse_in_remat(cfg)
 
       def pure_gemma_fn(graphdef, state_in, y_in):
         merged_layer = nnx.merge(graphdef, state_in)

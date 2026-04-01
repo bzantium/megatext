@@ -35,7 +35,7 @@ from megatext.layers.attentions import Attention
 from megatext.layers.linears import MlpBlock
 from megatext.layers.normalizations import RMSNorm
 from megatext.layers.quantizations import AqtQuantization as Quant
-from megatext.utils import max_utils
+from megatext.utils.training import get_batch_seq_len_for_mode
 
 
 # -----------------------------------------
@@ -74,7 +74,7 @@ class Olmo3DecoderLayer(nnx.Module):
     self.attention_type = attention_type
     self.quant = quant
 
-    batch_size, seq_len = max_utils.get_batch_seq_len_for_mode(config, model_mode)
+    batch_size, seq_len = get_batch_seq_len_for_mode(config, model_mode)
     dummy_inputs_shape = (batch_size, seq_len, config.emb_dim)
 
     self.post_self_attention_layer_norm = RMSNorm(

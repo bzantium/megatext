@@ -28,8 +28,8 @@ from jax.experimental import mesh_utils
 from megatext.layers import attentions, embeddings
 from megatext.models import llama4
 from megatext.common.common_types import MODEL_MODE_TRAIN, AttentionType
-from megatext.utils import megatext_utils
 from megatext.configs import pyconfig
+from megatext.utils.sharding import create_device_mesh
 import numpy as np
 from tests.utils.test_helpers import get_test_config_path
 
@@ -620,7 +620,7 @@ class Llama4VisionAttentionTest(unittest.TestCase):
     )
     self.rng = jax.random.PRNGKey(0)
 
-    devices_array = megatext_utils.create_device_mesh(self.cfg)
+    devices_array = create_device_mesh(self.cfg)
     self.mesh = Mesh(devices_array, self.cfg.mesh_axes)
     self.seq_len_for_vit = (self.cfg.image_size_for_vit // self.cfg.patch_size_for_vit) ** 2 + 1
 
@@ -899,7 +899,7 @@ class Llama4VisionEncoderTest(unittest.TestCase):
     )
     self.rng = jax.random.PRNGKey(0)
 
-    devices_array = megatext_utils.create_device_mesh(self.cfg)
+    devices_array = create_device_mesh(self.cfg)
     self.mesh = Mesh(devices_array, self.cfg.mesh_axes)
     self.seq_len_for_vit = (self.cfg.image_size_for_vit // self.cfg.patch_size_for_vit) ** 2 + 1
 

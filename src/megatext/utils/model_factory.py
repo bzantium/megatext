@@ -28,8 +28,8 @@ from megatext.configs import pyconfig
 from megatext.common.common_types import MODEL_MODE_TRAIN, ShardMode
 from megatext.layers import quantizations
 from megatext.models import models
-from megatext.utils import max_utils
-from megatext.utils import megatext_utils
+from megatext.utils.debug import print_non_trivial_mesh_axis, print_shardings_params
+from megatext.utils.sharding import create_device_mesh
 from orbax import checkpoint as ocp
 
 
@@ -80,7 +80,7 @@ def from_config(
       model = from_config(config)
   """
   if mesh is None:
-    devices_array = megatext_utils.create_device_mesh(config, devices)
+    devices_array = create_device_mesh(config, devices)
 
     if config.shard_mode == ShardMode.EXPLICIT:
       axis_types = tuple([AxisType.Explicit] * len(config.mesh_axes))
@@ -156,8 +156,8 @@ def create_nnx_model(config, mesh=None, devices=None, model_mode=MODEL_MODE_TRAI
     model = nnx.merge(graphdef, sharded_state)
     # print weights sharding info under debug sharding mode
     if config.debug_sharding:
-      max_utils.print_non_trivial_mesh_axis(model.mesh)
-      megatext_utils.print_shardings_params(
+      print_non_trivial_mesh_axis(model.mesh)
+      print_shardings_params(
           params=sharded_state,
           params_sharding=out_shardings,
           mesh=model.mesh,

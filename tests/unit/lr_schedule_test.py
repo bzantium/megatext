@@ -113,7 +113,7 @@ def test_config_dispatch_cosine():
 
     config = SimpleNamespace(
         learning_rate=1e-3,
-        learning_rate_final_fraction=0.1,
+        final_learning_rate=1e-4,
         warmup_steps=10,
         learning_rate_schedule_steps=100,
         steps=100,
@@ -130,7 +130,7 @@ def test_config_dispatch_wsd():
 
     config = SimpleNamespace(
         learning_rate=1e-3,
-        learning_rate_final_fraction=0.1,
+        final_learning_rate=1e-4,
         warmup_steps=10,
         learning_rate_schedule_steps=100,
         steps=100,

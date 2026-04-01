@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-""" Tests for verifying FLOPs calculation in megatext_utils.py"""
+""" Tests for verifying FLOPs calculation in megatext.utils.flops"""
 
 import unittest
 import pytest
 
 from megatext.configs import pyconfig
-from megatext.utils.megatext_utils import calculate_tflops_training_per_device
+from megatext.utils.flops import calculate_tflops_training_per_device
+from megatext.utils.flops import calculate_gated_delta_net_flops_per_device
 from tests.utils.test_helpers import get_test_config_path
 
 
@@ -125,7 +126,7 @@ class FlopCalculation(unittest.TestCase):
     D_v = kwargs["gdn_value_head_dim"]
     C = kwargs["gdn_chunk_size"]
 
-    # Formulas from megatext_utils.calculate_gated_delta_net_flops_per_device
+    # Formulas from calculate_gated_delta_net_flops_per_device
     flops_intra = 2 * B * S * H_v * C * (2 * D_k + D_v) + (B * H_v * S * C**2)
     flops_inter = (2 * B * S * H_v * C * (D_k + D_v)) + (6 * B * S * H_v * D_k * D_v)
 

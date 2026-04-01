@@ -97,7 +97,7 @@ def create_wsd_schedule(
 def create_learning_rate_schedule(config) -> optax.Schedule:
   """Create learning rate schedule from config. Dispatches to cosine or WSD."""
   lr = config.learning_rate
-  final_lr = lr * config.learning_rate_final_fraction
+  final_lr = config.final_learning_rate
 
   if config.lr_schedule_type == LearningRateScheduleType.COSINE:
     return create_cosine_schedule(lr, final_lr, config.warmup_steps, config.learning_rate_schedule_steps, config.steps)

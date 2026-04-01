@@ -50,7 +50,8 @@ from megatext.common.common_types import DECODING_ACTIVE_SEQUENCE_INDICATOR, MOD
 from megatext.layers import quantizations
 from megatext.models import models
 from megatext.utils import logging as max_logging
-from megatext.utils import megatext_utils
+from megatext.utils.sharding import create_device_mesh
+from megatext.utils.train_utils import setup_decode_state
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -238,11 +239,11 @@ def main(config, test_args):  # pylint: disable=W0621
     max_logging.log("Initializing MegaText model")
     init_rng = jax.random.PRNGKey(config.init_weights_seed)
     init_rng, rng1 = jax.random.split(init_rng)
-    devices_array = megatext_utils.create_device_mesh(config)
+    devices_array = create_device_mesh(config)
     mesh = jax.sharding.Mesh(devices_array, config.mesh_axes)
     quant = quantizations.configure_quantization(config)
     model = models.transformer_as_linen(config, mesh=mesh, quant=quant, model_mode=MODEL_MODE_TRAIN)
-    state, _ = megatext_utils.setup_decode_state(model, config, rng1, mesh, None)
+    state, _ = setup_decode_state(model, config, rng1, mesh, None)
 
     if test_args.golden_logits_path == "":
       input_golden_data_path = os.path.join(
@@ -420,11 +421,11 @@ def main(config, test_args):  # pylint: disable=W0621
 
     init_rng = jax.random.PRNGKey(config.init_weights_seed)
     init_rng, rng1 = jax.random.split(init_rng)
-    devices_array = megatext_utils.create_device_mesh(config)
+    devices_array = create_device_mesh(config)
     mesh = jax.sharding.Mesh(devices_array, config.mesh_axes)
     quant = quantizations.configure_quantization(config)
     megatext_model = models.transformer_as_linen(config, mesh, quant=quant, model_mode=MODEL_MODE_TRAIN)
-    megatext_state, _ = megatext_utils.setup_decode_state(megatext_model, config, rng1, mesh, None)
+    megatext_state, _ = setup_decode_state(megatext_model, config, rng1, mesh, None)
 
     prompts = ["I love to", "Today is a", "What is the"]
     all_data_to_save = []

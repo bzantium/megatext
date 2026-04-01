@@ -59,9 +59,9 @@ from megatext.models import (
 from megatext.multimodal import utils as mm_utils
 from megatext.utils.sharding import create_sharding
 from megatext.utils import logging as max_logging
-from megatext.utils import max_utils
-from megatext.utils import megatext_utils
 from megatext.utils import sharding
+from megatext.utils.debug import device_space
+from megatext.utils.training import should_prevent_cse_in_remat
 
 # ------------------------------------------------------------------------------
 # The network: Decoder Definitions
@@ -500,7 +500,7 @@ class Decoder(nn.Module):
 
           def map_fn(path, value):
             max_logging.log(f"models.py: Moving parameter {path} to device")
-            return jax.device_put(value, max_utils.device_space())
+            return jax.device_put(value, device_space())
 
           return jax.tree_util.tree_map_with_path(map_fn, variables)
 
@@ -510,7 +510,7 @@ class Decoder(nn.Module):
       # Apply remat policy to layer
       layer = nn.remat(
           block_layer,
-          prevent_cse=megatext_utils.should_prevent_cse_in_remat(self.config),
+          prevent_cse=should_prevent_cse_in_remat(self.config),
           policy=policy,
           static_argnums=(4, 5),  # Deterministic and model mode are static arguments.
       )

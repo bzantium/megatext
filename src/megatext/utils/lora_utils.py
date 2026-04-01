@@ -24,9 +24,9 @@ from flax.linen import partitioning as nn_partitioning
 
 from megatext.common import checkpointing
 from megatext.utils import storage as gcs_utils
-from megatext.utils import max_utils
-from megatext.utils import megatext_utils
 from megatext.utils import logging as max_logging
+from megatext.utils.train_utils import get_abstract_state
+from megatext.utils.training import unbox_logicallypartioned
 
 
 def apply_lora_on_base_params(base_params, lora_params, lora_scale_factor=1.0):
@@ -166,7 +166,7 @@ def setup_initial_lora_state(model, data_iterator, tx, config, rng, mesh, checkp
 
   if lora_adapter_path:
     max_logging.log(f"Setting initial state of LoRA with lora_adapter_path = {lora_adapter_path}")
-    unboxed_abstract_state, _, _ = megatext_utils.get_abstract_state(model, tx, config, rng, mesh, True)
+    unboxed_abstract_state, _, _ = get_abstract_state(model, tx, config, rng, mesh, True)
 
     lora_config_path = lora_adapter_path + "adapter_config.json"
 
@@ -194,7 +194,7 @@ def setup_initial_lora_state(model, data_iterator, tx, config, rng, mesh, checkp
         raise NotImplementedError("This codepath is not implemented for LoRA adapters yet.")
       else:
         lora_state = lora_state.replace(params=raw_lora_params)
-        lora_state = max_utils.unbox_logicallypartioned(lora_state)
+        lora_state = unbox_logicallypartioned(lora_state)
 
   return lora_config, lora_state, lora_state_annotations
 

@@ -28,9 +28,8 @@ from megatext.layers.decoders import DecoderLayer
 from megatext.layers.initializers import variable_to_logically_partitioned
 from megatext.layers.linears import DenseGeneral
 from megatext.layers.normalizations import RMSNorm
-from megatext.utils import max_utils
-from megatext.utils import megatext_utils
 from megatext.utils import sharding
+from megatext.utils.training import cross_entropy_with_logits, get_nested_value
 
 
 # Custom Variable types for MTP intermediate outputs
@@ -276,7 +275,7 @@ class MultiTokenPredictionBlock(nnx.Module):
 
       mtp_logits = self.decoder.apply_output_head(shared_embedding, mtp_hidden_state, deterministic, model_mode)
 
-      mtp_xent, _ = max_utils.cross_entropy_with_logits(
+      mtp_xent, _ = cross_entropy_with_logits(
           mtp_logits, jax.nn.one_hot(rolled_target_ids, cfg.vocab_size), 0.0
       )
       mtp_xent_masked = mtp_xent * rolled_target_mask
@@ -304,10 +303,10 @@ class MultiTokenPredictionBlock(nnx.Module):
 
 def calculate_mtp_loss(intermediate_outputs, config):
   """Calculates Multi-Token Prediction loss from intermediate outputs."""
-  mtp_losses_data = megatext_utils.get_nested_value(
+  mtp_losses_data = get_nested_value(
       intermediate_outputs, ("mtp_losses", "mtp_block", "losses"), default=None
   )
-  mtp_weights_data = megatext_utils.get_nested_value(
+  mtp_weights_data = get_nested_value(
       intermediate_outputs, ("mtp_losses", "mtp_block", "weights"), default=None
   )
 
@@ -332,11 +331,11 @@ def calculate_mtp_loss(intermediate_outputs, config):
 
 def calculate_mtp_acceptance_rate(intermediate_outputs, config):
   """Calculates MTP acceptance rate from intermediate outputs."""
-  sown_data = megatext_utils.get_nested_value(intermediate_outputs, ("mtp_acceptance", "mtp_block"), {})
+  sown_data = get_nested_value(intermediate_outputs, ("mtp_acceptance", "mtp_block"), {})
 
   # Handle both tuple (Linen sow) and array (NNX Variable) formats.
-  mtp_preds_raw = megatext_utils.get_nested_value(sown_data, ("mtp_preds",), None)
-  valid_mask_raw = megatext_utils.get_nested_value(sown_data, ("mtp_mask",), None)
+  mtp_preds_raw = get_nested_value(sown_data, ("mtp_preds",), None)
+  valid_mask_raw = get_nested_value(sown_data, ("mtp_mask",), None)
 
   mtp_preds = mtp_preds_raw[0] if isinstance(mtp_preds_raw, (tuple, list)) and mtp_preds_raw else mtp_preds_raw
   valid_mask = valid_mask_raw[0] if isinstance(valid_mask_raw, (tuple, list)) and valid_mask_raw else valid_mask_raw

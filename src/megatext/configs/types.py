@@ -31,9 +31,9 @@ from typing import Any, Literal, NewType, Optional
 import jax
 from megatext.common.common_types import AttentionType, DecoderBlockType, ShardMode
 from megatext.utils import storage as gcs_utils
-from megatext.utils import max_utils
 from megatext.utils.constants import MEGATEXT_ASSETS_ROOT
 from megatext.utils import accelerator_to_spec_map
+from megatext.utils.sharding import get_num_slices
 from pydantic.config import ConfigDict
 from pydantic.fields import Field
 from pydantic.functional_validators import field_validator, model_validator
@@ -1032,8 +1032,12 @@ class Optimizer(BaseModel):
   """Configuration for the optimizer and learning rate schedule."""
 
   opt_type: OptimizerType = Field(OptimizerType.ADAMW, description="The type of optimizer to use.")
+  global_batch_size: None | int = Field(
+      None,
+      description="Global batch size. If set, gradient_accumulation_steps is derived automatically.",
+  )
   gradient_accumulation_steps: PositiveInt = Field(
-      1, description="Number of steps to accumulate gradients before updating."
+      1, description="Derived from global_batch_size / (per_device_batch_size * num_devices). Do not set directly.",
   )
   use_tunix_gradient_accumulation: bool = Field(
       False,
@@ -1047,9 +1051,9 @@ class Optimizer(BaseModel):
       LearningRateScheduleType.COSINE,
       description="The type of learning rate schedule to use.",
   )
-  learning_rate_final_fraction: float = Field(
-      0.1,
-      description="Final LR as a fraction of peak LR (applies to both cosine and WSD schedules).",
+  final_learning_rate: float = Field(
+      0.0,
+      description="Final learning rate after decay. 0.0 decays to zero.",
   )
   warmup_steps: int = Field(0, ge=0, description="Number of steps for LR warmup. 0 disables warmup.")
   wsd_decay_steps: int = Field(0, ge=0, description="Number of steps for decay phase in WSD schedule.")
@@ -1872,7 +1876,7 @@ class MegaTextConfig(
         "hardware": self.hardware,
         "compile_topology_num_slices": self.compile_topology_num_slices,
     }
-    self.num_slices = max_utils.get_num_slices(raw_keys_for_num_slices)
+    self.num_slices = get_num_slices(raw_keys_for_num_slices)
 
     # Default quantization sharding count to number of local devices if not set.
     if self.quantization_local_shard_count == -1:
@@ -1881,7 +1885,19 @@ class MegaTextConfig(
       except RuntimeError:
         self.quantization_local_shard_count = 1
 
-    # F. CALCULATE BATCH SIZES
+    # F. DERIVE GRADIENT ACCUMULATION FROM GLOBAL BATCH SIZE
+    if self.global_batch_size is not None:
+      micro_batch = int(self.num_target_devices * self.per_device_batch_size)
+      if micro_batch <= 0:
+        raise ValueError("per_device_batch_size * num_devices must be > 0")
+      if self.global_batch_size % micro_batch != 0:
+        raise ValueError(
+            f"global_batch_size ({self.global_batch_size}) must be divisible by "
+            f"per_device_batch_size * num_devices ({micro_batch})"
+        )
+      self.gradient_accumulation_steps = self.global_batch_size // micro_batch
+
+    # G. CALCULATE BATCH SIZES
     def calculate_global_batch_sizes(per_device_batch_size, expansion_factor, num_devices, grad_accum_steps):
       """Helper to calculate global and micro batch sizes for training and loading."""
       if per_device_batch_size < 1.0:
@@ -2262,6 +2278,7 @@ class MegaTextConfig(
     if self.opt_type == "muon" and self.decoder_block not in [
         DecoderBlockType.DEEPSEEK,
         DecoderBlockType.QWEN3,
+        DecoderBlockType.QWEN3_SWA,
         DecoderBlockType.GEMMA3,
         DecoderBlockType.LLAMA2,
     ]:

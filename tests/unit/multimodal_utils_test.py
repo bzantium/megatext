@@ -18,7 +18,7 @@ import unittest
 import numpy as np
 
 from megatext.configs import pyconfig
-from megatext.utils.constants import MAXTEXT_REPO_ROOT
+from megatext.utils.constants import MEGATEXT_REPO_ROOT
 from megatext.multimodal import processor as mm_processor
 from megatext.multimodal import utils as mm_utils
 from megatext.multimodal import processor_gemma3
@@ -198,7 +198,7 @@ class TestLlama4PostProcessing(unittest.TestCase):
         pixel_values=dummy_pixel_values,
         aspect_ratios=dummy_aspect_ratios,
     )
-    base_config_path = os.path.join(MAXTEXT_REPO_ROOT, "src", "maxtext", "configs", "base.yaml")
+    base_config_path = os.path.join(MEGATEXT_REPO_ROOT, "src", "maxtext", "configs", "base.yaml")
     config = pyconfig.initialize(
         ["", base_config_path],
         model="llama4-17b-16e",

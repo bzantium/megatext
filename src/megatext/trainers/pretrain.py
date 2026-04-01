@@ -60,13 +60,25 @@ from megatext.common.metric_logger import MetricLogger, record_activation_metric
 from megatext.utils import exceptions
 from megatext.utils import storage as gcs_utils
 from megatext.utils import logging as max_logging
-from megatext.utils import max_utils
-from megatext.utils import megatext_utils
 from megatext.utils import qk_clip_utils
 from megatext.utils import sharding
 from megatext.utils import train_utils
 from megatext.utils.gradient_accumulation import gradient_accumulation_loss_and_grad
 from megatext.utils.vocabulary_tiling import vocab_tiling_linen_loss
+from megatext.utils.debug import (
+    print_compiled_memory_stats,
+    print_mem_stats,
+    print_system_information,
+    with_memory_kind,
+)
+from megatext.utils.train_utils import apply_gradient_clipping, get_shaped_batch, update_state_param
+from megatext.utils.training import (
+    cross_entropy_with_logits,
+    get_nested_value,
+    l2norm_pytree,
+    maybe_dump_jaxpr,
+    maybe_get_transformer_engine_context,
+)
 
 _diag_modules = _cloud_diag()
 diagnostic, debug_configuration, diagnostic_configuration, stack_trace_configuration = _diag_modules
@@ -141,11 +153,11 @@ def loss_fn(model, config, data, dropout_rng, params, is_train=True):
       total_z_loss = 0.0
     elif config.num_vocab_tiling > 1:
       hidden_state_key = ("intermediates", "decoder", "hidden_states")
-      hidden_states = megatext_utils.get_nested_value(intermediate_outputs, hidden_state_key)[0]
+      hidden_states = get_nested_value(intermediate_outputs, hidden_state_key)[0]
       total_loss, total_z_loss = vocab_tiling_linen_loss(hidden_states, data, config, model, params, is_train)
     else:
       one_hot_targets = jax.nn.one_hot(data["targets"], config.vocab_size)
-      xent, z_loss = max_utils.cross_entropy_with_logits(logits, one_hot_targets, z_loss=config.z_loss_multiplier)
+      xent, z_loss = cross_entropy_with_logits(logits, one_hot_targets, z_loss=config.z_loss_multiplier)
 
       xent = sharding.maybe_shard_with_logical(
           xent,
@@ -189,7 +201,7 @@ def loss_fn(model, config, data, dropout_rng, params, is_train=True):
       total_z_loss = 0.0
     else:
       one_hot_targets = jax.nn.one_hot(data["targets"], config.vocab_size)
-      xent, z_loss = max_utils.cross_entropy_with_logits(logits, one_hot_targets, z_loss=config.z_loss_multiplier)
+      xent, z_loss = cross_entropy_with_logits(logits, one_hot_targets, z_loss=config.z_loss_multiplier)
 
       xent = nn.with_logical_constraint(xent, ("activation_embed_and_logits_batch", "activation_length"))
       z_loss = nn.with_logical_constraint(z_loss, ("activation_embed_and_logits_batch", "activation_length"))
@@ -258,7 +270,7 @@ def loss_fn(model, config, data, dropout_rng, params, is_train=True):
     total_moe_lb_loss = 0.0
     found_loss = False
     for nested_key in possible_keys:
-      total_moe_lb_loss = megatext_utils.get_nested_value(intermediate_outputs, nested_key, 0.0)
+      total_moe_lb_loss = get_nested_value(intermediate_outputs, nested_key, 0.0)
       if total_moe_lb_loss != 0.0:
         found_loss = True
         break
@@ -273,7 +285,7 @@ def loss_fn(model, config, data, dropout_rng, params, is_train=True):
   moe_bias_updates = None
   if config.routed_bias and config.routed_bias_update_rate > 0.0:
     nested_key = ("intermediates", "decoder", "moe_layers", "moe_bias_updates")
-    moe_bias_updates = megatext_utils.get_nested_value(intermediate_outputs, nested_key, None)
+    moe_bias_updates = get_nested_value(intermediate_outputs, nested_key, None)
 
   # Add the model's primary output to the intermediates dict so it can be used
   # by the acceptance rate calculation in eval_step.
@@ -337,7 +349,7 @@ def train_step(model, config, state_mesh_shardings, params_shardings, state, dat
   if config.parameter_memory_host_offload:
     raw_grads = jax.device_put(
         raw_grads,
-        max_utils.with_memory_kind(params_shardings, "device"),
+        with_memory_kind(params_shardings, "device"),
     )
   intermediate_outputs = aux["intermediate_outputs"]
   total_weights = aux["total_weights"]
@@ -348,7 +360,7 @@ def train_step(model, config, state_mesh_shardings, params_shardings, state, dat
   mtp_loss = aux["mtp_loss"]
 
   if config.gradient_clipping_threshold > 0:
-    grads = megatext_utils.apply_gradient_clipping(raw_grads, state, config.gradient_clipping_threshold)
+    grads = apply_gradient_clipping(raw_grads, state, config.gradient_clipping_threshold)
   else:
     grads = raw_grads
   if config.optimizer_memory_host_offload:
@@ -383,7 +395,7 @@ def train_step(model, config, state_mesh_shardings, params_shardings, state, dat
     # Flax 'sow' returns a tuple, so we take the first element [0].
     # Updates the shape to be aligned with state.
     moe_bias_updates = jnp.array(moe_bias_updates[0]).transpose()
-    new_state = megatext_utils.update_state_param(new_state, target_path, moe_bias_updates)
+    new_state = update_state_param(new_state, target_path, moe_bias_updates)
 
   scalar_metrics = {
       "learning/loss": loss,
@@ -403,9 +415,9 @@ def train_step(model, config, state_mesh_shardings, params_shardings, state, dat
       scalar_metrics["learning/max_logits"] = global_max_logit
 
   if not config.optimizer_memory_host_offload:
-    scalar_metrics["learning/grad_norm"] = max_utils.l2norm_pytree(grads)
-    scalar_metrics["learning/raw_grad_norm"] = max_utils.l2norm_pytree(raw_grads)
-    scalar_metrics["learning/param_norm"] = max_utils.l2norm_pytree(new_state.params)
+    scalar_metrics["learning/grad_norm"] = l2norm_pytree(grads)
+    scalar_metrics["learning/raw_grad_norm"] = l2norm_pytree(raw_grads)
+    scalar_metrics["learning/param_norm"] = l2norm_pytree(new_state.params)
   metrics = {
       "scalar": scalar_metrics,
       "scalars": {},
@@ -478,14 +490,14 @@ def train_loop(config, recorder, state=None):
         eval_data_iterator,
         params_shardings,
     )
-    shaped_batch = megatext_utils.get_shaped_batch(config)
+    shaped_batch = get_shaped_batch(config)
     if config.shard_optimizer_over_data:
       state = sharding.maybe_shard_with_name(state, state_mesh_shardings, config.shard_mode)
-    megatext_utils.maybe_dump_jaxpr(config, p_train_step, (state, shaped_batch, init_rng))
+    maybe_dump_jaxpr(config, p_train_step, (state, shaped_batch, init_rng))
     if config.compiled_trainstep_file == "":  # compile only when there is no pre-compiled file loaded
       compiled = p_train_step.lower(state, shaped_batch, init_rng).compile()
       compiled_stats = compiled.memory_analysis()
-      max_utils.print_compiled_memory_stats(compiled_stats)
+      print_compiled_memory_stats(compiled_stats)
 
   # Training steps are 1-indexed: step 1 is the first training step.
   # state.step stores the number of completed steps (0 for fresh training).
@@ -552,7 +564,7 @@ def train_loop(config, recorder, state=None):
       prof.maybe_deactivate_profiler(step, state)
 
       if step == completed_steps + 1:
-        max_utils.print_mem_stats("After params initialized")
+        print_mem_stats("After params initialized")
 
       metric_logger.buffer_and_write_train_metrics(metrics, step, step_time_delta)
 
@@ -585,7 +597,7 @@ def initialize(argv: Sequence[str]) -> tuple[pyconfig.HyperParameters, Any, Any]
   # TODO: mazumdera@ : ensure missing mandatory fields in base.yaml are filled in in argv,
   # or fill in here
   config = pyconfig.initialize(argv)
-  max_utils.print_system_information()
+  print_system_information()
   train_utils.validate_train_config(config)
   jax.config.update("jax_use_shardy_partitioner", config.shardy)
   # update explicit sharding-supported config
@@ -628,7 +640,7 @@ def run(config, recorder, diagnostic_config):
 
   with (
       diagnostics_context,
-      max_utils.maybe_get_transformer_engine_context(config),
+      maybe_get_transformer_engine_context(config),
   ):
     train_loop(config, recorder)
 

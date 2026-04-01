@@ -27,7 +27,7 @@ from megatext.common.common_types import MODEL_MODE_TRAIN
 from megatext.common.common_types import Config
 from megatext.layers.nnx_decoders import NNXDecoderLayer
 from megatext.utils import logging as max_logging
-from megatext.utils import megatext_utils
+from megatext.utils.sharding import create_device_mesh
 
 from tests.utils.test_helpers import get_test_config_path, get_decoupled_parallelism_overrides
 
@@ -51,7 +51,7 @@ class MultiTokenPredictionLayerTest(unittest.TestCase):
     )
     self.rng = jax.random.PRNGKey(42)  # Base RNG for setup
     self.rngs = nnx.Rngs(params=self.rng, dropout=self.rng)
-    devices_array = megatext_utils.create_device_mesh(self.cfg)
+    devices_array = create_device_mesh(self.cfg)
     self.mesh = Mesh(devices_array, self.cfg.mesh_axes)
 
     self.mtp_layer = multi_token_prediction.MultiTokenPredictionLayer(
@@ -210,7 +210,7 @@ class MultiTokenPredictionBlockTest(unittest.TestCase):
     self.nnx_rngs = nnx.Rngs(params=0)
     self.rng = jax.random.PRNGKey(43)
     self.rngs = nnx.Rngs(params=self.rng, dropout=self.rng)
-    devices_array = megatext_utils.create_device_mesh(self.cfg)
+    devices_array = create_device_mesh(self.cfg)
     self.mesh = Mesh(devices_array, self.cfg.mesh_axes)
     data_rng, self.init_rng = jax.random.split(self.rng)
 

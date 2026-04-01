@@ -88,12 +88,12 @@ def profile_candidate(
     env = os.environ.copy()
     env["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
-    proc = subprocess.Popen(cmd, env=env)
+    proc = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     try:
-        proc.wait(timeout=timeout)
+        stdout, _ = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         proc.kill()
-        proc.wait()
+        stdout, _ = proc.communicate()
         logger.error(f"Timeout ({timeout}s) for {candidate}")
         if os.path.exists(result_file):
             os.unlink(result_file)
@@ -107,6 +107,10 @@ def profile_candidate(
             oom=False,
             error=f"Timeout after {timeout}s",
         )
+
+    if proc.returncode != 0:
+        error_tail = stdout.decode(errors="replace")[-2000:] if stdout else ""
+        logger.error(f"Worker failed (rc={proc.returncode}) for {candidate}:\n{error_tail}")
 
     # Read result from file
     result_data = None

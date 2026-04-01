@@ -23,7 +23,7 @@ from megatext.configs import pyconfig
 from megatext.common.common_types import DECODING_ACTIVE_SEQUENCE_INDICATOR, MODEL_MODE_AUTOREGRESSIVE, MODEL_MODE_PREFILL, MODEL_MODE_TRAIN
 from megatext.layers import quantizations
 from megatext.models import models
-from megatext.utils import megatext_utils
+from megatext.utils.sharding import create_device_mesh
 from tests.utils.test_helpers import get_test_config_path, get_decoupled_parallelism_overrides
 import numpy as np
 import pytest
@@ -79,7 +79,7 @@ class TestModel(unittest.TestCase):
     Does not perform any actual flops.
     """
     new_config = self.init_pyconfig(cast_logits_to_fp32=cast_logits_to_fp32, logits_dot_in_fp32=False)
-    devices_array = megatext_utils.create_device_mesh(new_config)
+    devices_array = create_device_mesh(new_config)
     mesh = Mesh(devices_array, new_config.mesh_axes)
     model = models.transformer_as_linen(config=new_config, mesh=mesh, quant=None, model_mode=MODEL_MODE_TRAIN)
 
@@ -120,7 +120,7 @@ class TestModel(unittest.TestCase):
     """Test train versus prefill and autoregress."""
     PREFILL_RANGE = MAX_PREFILL_PREDICT_LENGTH
 
-    devices_array = megatext_utils.create_device_mesh(self.cfg)
+    devices_array = create_device_mesh(self.cfg)
     mesh = Mesh(devices_array, self.cfg.mesh_axes)
     quant = quantizations.configure_quantization(self.cfg)
     train_model = models.transformer_as_linen(config=self.cfg, mesh=mesh, quant=quant, model_mode=MODEL_MODE_TRAIN)

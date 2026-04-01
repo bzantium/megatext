@@ -53,7 +53,7 @@ from flax import nnx
 from megatext.configs import pyconfig
 from megatext.layers import embeddings, attention_mla
 from megatext.common.common_types import MODEL_MODE_TRAIN
-from megatext.utils import megatext_utils
+from megatext.utils.sharding import create_device_mesh
 from tests.utils.test_helpers import get_test_config_path
 
 
@@ -771,7 +771,7 @@ def get_cfg_and_mesh(config, run_name, dtype, batch_size, seq_len, attention, in
       indexer_topk=indexer_topk,
       **asdict(config),
   )
-  devices_array = megatext_utils.create_device_mesh(cfg)
+  devices_array = create_device_mesh(cfg)
   mesh = Mesh(devices_array, cfg.mesh_axes)
   return cfg, mesh
 

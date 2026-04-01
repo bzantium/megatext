@@ -35,8 +35,8 @@ from megatext.layers import nnx_wrappers, quantizations
 from megatext.layers import normalizations
 from megatext.layers.initializers import NdInitializer, nd_dense_init, default_bias_init, variable_to_logically_partitioned
 from megatext.layers.quantizations import AqtQuantization as Quant
+from megatext.utils.debug import device_space
 from megatext.utils import logging as max_logging
-from megatext.utils import max_utils
 from megatext.utils.sharding import maybe_shard_with_logical
 
 
@@ -224,7 +224,7 @@ class DenseGeneral(nnx.Module):
       # Move logit_dense kernel to device if parameter offloading is enabled
       if self.parameter_memory_host_offload:
         max_logging.log("linear.py: Moving parameter logits_dense kernel to device")
-        kernel = jax.device_put(kernel, max_utils.device_space())
+        kernel = jax.device_put(kernel, device_space())
       kernel = jnp.asarray(kernel, self.dtype)
 
     # out_sharding should be None for auto mesh axis
@@ -479,7 +479,6 @@ class MlpBlock(nnx.Module):
       return functools.partial(normalizations.RMSNorm, num_features=num_features)
     elif self.config.decoder_block == DecoderBlockType.GPT3:
       from megatext.models import gpt3  # pylint: disable=import-outside-toplevel
-
       return functools.partial(
           gpt3.Gpt3LayerNorm, num_features=num_features, reductions_in_fp32=False, use_bias=self.use_bias
       )

@@ -44,11 +44,12 @@ from megatext.common import checkpointing
 from megatext.layers import quantizations
 from megatext.models import deepseek, models
 from megatext.utils import logging as max_logging
-from megatext.utils import max_utils
-from megatext.utils import megatext_utils
 import orbax.checkpoint as ocp
 from tqdm import tqdm
 from megatext.configs import pyconfig
+from megatext.utils.debug import print_system_information
+from megatext.utils.sharding import create_device_mesh
+from megatext.utils.train_utils import get_abstract_state, save_quantized_checkpoint_if_configured
 
 IGNORE = ocp.PLACEHOLDER
 PRNGKeyType = Any
@@ -169,7 +170,7 @@ class LayerwiseQuantization:
     ), f"Layerwise quantization is only supported for {common_types.DecoderBlockType.DEEPSEEK}\
       , but got {config.decoder_block}."
     # Mesh definition
-    devices_array = megatext_utils.create_device_mesh(config=config)
+    devices_array = create_device_mesh(config=config)
     self._mesh = jax.sharding.Mesh(devices_array, config.mesh_axes)
 
     # Model and quantization config
@@ -177,7 +178,7 @@ class LayerwiseQuantization:
     model = models.transformer_as_linen(
         config, mesh=self._mesh, quant=self.quant, model_mode=common_types.MODEL_MODE_TRAIN
     )
-    self.unboxed_abstract_state, _, _ = megatext_utils.get_abstract_state(
+    self.unboxed_abstract_state, _, _ = get_abstract_state(
         model, None, self.config, self.rng, self._mesh, False
     )
 
@@ -268,7 +269,7 @@ class LayerwiseQuantization:
       quantized_params["params"]["decoder"][unquantized_layer] = params["params"]["decoder"][unquantized_layer]
     quantized_params["params"]["token_embedder"] = self._load_layer("token_embedder")["params"]["token_embedder"]
 
-    megatext_utils.save_quantized_checkpoint_if_configured(self.config, quantized_params)
+    save_quantized_checkpoint_if_configured(self.config, quantized_params)
 
   def _load_layer(self, layer_name):
     """Loads a specific layer's parameters from the checkpoint."""
@@ -314,7 +315,7 @@ def main(argv: Sequence[str]) -> None:
   os.environ["TF_CPP_MIN_LOG_LEVEL"] = "0"
   config = pyconfig.initialize(argv)
   validate_config(config)
-  max_utils.print_system_information()
+  print_system_information()
   rng = jax.random.PRNGKey(1234)
   quantization = LayerwiseQuantization(config, rng)
   quantization.load_and_quantize()

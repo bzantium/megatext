@@ -26,10 +26,10 @@ from jax.sharding import Mesh
 
 from megatext.common.gcloud_stub import is_decoupled
 from megatext.layers import attention_mla
-from megatext.utils import megatext_utils
 from megatext.utils.qk_clip_utils import apply_qk_clip, calculate_max_logit_metric
 
 from megatext.configs import pyconfig
+from megatext.utils.sharding import create_device_mesh
 from tests.utils.test_helpers import get_test_config_path, get_decoupled_parallelism_overrides
 
 
@@ -280,7 +280,7 @@ class QKClipMLATest(unittest.TestCase):
     extra_args = get_decoupled_parallelism_overrides()
     config = pyconfig.initialize(args, **run_config_args, **extra_args)
 
-    devices_array = megatext_utils.create_device_mesh(config)
+    devices_array = create_device_mesh(config)
     mesh = Mesh(devices_array, config.mesh_axes)
 
     batch_size = jax.device_count()
@@ -383,7 +383,7 @@ class QKClipMLATest(unittest.TestCase):
     extra_args = get_decoupled_parallelism_overrides()
     config = pyconfig.initialize(args, **run_config_args, **extra_args)
 
-    devices_array = megatext_utils.create_device_mesh(config)
+    devices_array = create_device_mesh(config)
     mesh = Mesh(devices_array, config.mesh_axes)
 
     # Initialize

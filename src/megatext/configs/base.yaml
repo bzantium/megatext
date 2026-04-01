@@ -677,17 +677,17 @@ skip_jax_distributed_system: False # If True we will not initialize the jax dist
 #
 # Cosine schedule (lr_schedule_type='cosine'):
 # 1) Linear warmup from 0 to learning_rate over [0, warmup_steps]
-# 2) Cosine decay from learning_rate to learning_rate * learning_rate_final_fraction over [warmup_steps, learning_rate_schedule_steps]
+# 2) Cosine decay from learning_rate to final_learning_rate over [warmup_steps, learning_rate_schedule_steps]
 # 3) Constant 0 from learning_rate_schedule_steps to steps (if steps > learning_rate_schedule_steps)
 #
 # WSD schedule (lr_schedule_type='wsd', Warmup-Stable-Decay):
 # 1) Linear warmup from 0 to learning_rate over [0, warmup_steps]
 # 2) Stable phase at learning_rate
-# 3) Decay from learning_rate to learning_rate * learning_rate_final_fraction over wsd_decay_steps
+# 3) Decay from learning_rate to final_learning_rate over wsd_decay_steps
 # 4) Constant 0 from learning_rate_schedule_steps to steps (if steps > learning_rate_schedule_steps)
 learning_rate: 3.e-5
 lr_schedule_type: 'cosine'  # Options: 'cosine' or 'wsd'
-learning_rate_final_fraction: 0.1  # Final LR as fraction of peak LR
+final_learning_rate: 0.0  # Final learning rate after decay
 warmup_steps: 0  # Number of warmup steps (applies to both schedules)
 wsd_decay_steps: 0  # Number of decay steps for WSD schedule
 wsd_decay_style: 'linear'  # Decay style for WSD schedule: 'linear' or 'cosine'
@@ -747,9 +747,10 @@ init_weights_seed: 0
 # You may disable clipping by setting gradient_clipping_threshold to zero.
 gradient_clipping_threshold: 1.0
 
-# Instead of updating the weights every step, you may effectively use a larger
-# batch by accumulating the gradient over a set of steps.
-gradient_accumulation_steps: 1
+# Set global_batch_size to automatically derive gradient_accumulation_steps.
+# ga_steps = global_batch_size / (per_device_batch_size * num_devices)
+# If not set, gradient_accumulation_steps defaults to 1.
+# global_batch_size:  # uncomment and set to enable
 
 opt_type: "adamw"  # one of "adamw", "adam_pax", "sgd", or "muon"
 # List of parameter names/patterns to train.

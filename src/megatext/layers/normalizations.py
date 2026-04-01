@@ -27,7 +27,7 @@ from megatext.common.common_types import Array, DType, ShardMode
 from megatext.layers import nnx_wrappers
 from megatext.layers.initializers import Initializer, variable_to_logically_partitioned
 from megatext.utils import logging as max_logging
-from megatext.utils import max_utils
+from megatext.utils.debug import device_space
 
 
 class RMSNorm(nnx.Module):
@@ -70,7 +70,7 @@ class RMSNorm(nnx.Module):
     # Move scale to device if parameter offloading is enabled
     if self.parameter_memory_host_offload:
       max_logging.log("normalizations.py: Moving scale parameter to device")
-      scale = jax.device_put(scale, max_utils.device_space())
+      scale = jax.device_put(scale, device_space())
     # out_sharding must be None in auto shard mode
     if self.shard_mode != ShardMode.EXPLICIT:
       out_sharding = None

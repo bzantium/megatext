@@ -15,7 +15,7 @@
 """ Tests for kernels """
 
 import numpy as np
-from megatext.utils.max_utils import permute_to_match_megatext_rope, unpermute_from_match_megatext_rope
+from megatext.utils.training import permute_to_match_megatext_rope, unpermute_from_match_megatext_rope
 import unittest
 
 

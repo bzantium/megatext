@@ -31,8 +31,8 @@ from megatext.utils.constants import MEGATEXT_CONFIGS_DIR
 from megatext.common.common_types import DECODING_ACTIVE_SEQUENCE_INDICATOR
 from megatext.kernels.megablox import gmm
 from megatext.layers import nnx_wrappers, quantizations
-from megatext.utils import megatext_utils
 from megatext.utils import model_factory as model_creation_utils
+from megatext.utils.sharding import create_device_mesh
 from tests.utils.test_helpers import get_test_config_path, get_decoupled_parallelism_overrides
 import numpy as np
 import pytest
@@ -327,7 +327,7 @@ class QuantTest(unittest.TestCase):
 
   def setUp(self):
     self.cfg = self.init_pyconfig()
-    devices_array = megatext_utils.create_device_mesh(self.cfg)
+    devices_array = create_device_mesh(self.cfg)
     self.mesh = Mesh(devices_array, self.cfg.mesh_axes)
     self.inputs = jnp.ones((4, 16))
     self.rng = jax.random.PRNGKey(0)

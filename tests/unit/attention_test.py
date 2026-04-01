@@ -25,7 +25,6 @@ from flax import nnx
 import jax
 import jax.numpy as jnp
 from jax.sharding import AxisType, Mesh
-from megatext.utils import megatext_utils
 from megatext.common.gcloud_stub import is_decoupled
 
 from megatext.common.common_types import (
@@ -42,6 +41,7 @@ from megatext.layers.attentions import Attention
 from megatext.layers import embeddings
 from megatext.configs import pyconfig
 from megatext.models.qwen3 import Qwen3NextGatedDeltaNet
+from megatext.utils.sharding import create_device_mesh
 import numpy as np
 import pytest
 
@@ -285,7 +285,7 @@ class AttentionTest(parameterized.TestCase):
     self.rng = jax.random.PRNGKey(0)
     self.nnx_rng = nnx.Rngs(params=0, dropout=jax.random.PRNGKey(42))
 
-    devices_array = megatext_utils.create_device_mesh(self.cfg)
+    devices_array = create_device_mesh(self.cfg)
     self.mesh = Mesh(devices_array, self.cfg.mesh_axes)
     self.global_batch_size = self.cfg.global_batch_size_to_train_on
     self.num_kv_heads = self.cfg.num_kv_heads
@@ -742,7 +742,7 @@ class AttentionTest(parameterized.TestCase):
         expert_shard_attention_option=expert_shard_attention_option,
         shard_mode=shard_mode,
     )
-    devices_array_cp = megatext_utils.create_device_mesh(cfg_cp)
+    devices_array_cp = create_device_mesh(cfg_cp)
     axis_type = AxisType.Explicit if shard_mode == "explicit" else AxisType.Auto
     axis_names = [axis_type for _ in cfg_cp.mesh_axes]
     mesh_cp = Mesh(devices_array_cp, cfg_cp.mesh_axes, axis_types=tuple(axis_names))
@@ -1526,7 +1526,7 @@ class MLATest(attention_test_util.MLATestBase):
         ici_expert_parallelism=ici_expert_parallelism,
         expert_shard_attention_option=expert_shard_attention_option,
     )
-    devices_array_cp = megatext_utils.create_device_mesh(cfg_cp)
+    devices_array_cp = create_device_mesh(cfg_cp)
     axis_type = AxisType.Explicit if shard_mode == "explicit" else AxisType.Auto
     axis_names = [axis_type for _ in cfg_cp.mesh_axes]
     mesh_cp = Mesh(devices_array_cp, cfg_cp.mesh_axes, axis_types=tuple(axis_names))

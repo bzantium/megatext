@@ -26,6 +26,7 @@ from megatext.common.gcloud_stub import is_decoupled
 from megatext.common.gcloud_stub import writer, _TENSORBOARDX_AVAILABLE
 
 
+
 def log(user_str):
   """Logs a message at the INFO level."""
   # Note, stacklevel=2 makes the log show the caller of this function.

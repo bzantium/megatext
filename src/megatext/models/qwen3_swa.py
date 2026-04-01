@@ -27,7 +27,7 @@ from megatext.layers import quantizations
 from megatext.layers.attentions import Attention
 from megatext.layers.normalizations import RMSNorm
 from megatext.models.qwen3 import MlpBlock
-from megatext.utils import max_utils
+from megatext.utils.training import get_batch_seq_len_for_mode
 
 Config = Any
 Quant = Any
@@ -51,7 +51,7 @@ class Qwen3SWADecoderLayer(nnx.Module):
     self.quant = quant
     self.attention_type = attention_type
 
-    batch_size, seq_len = max_utils.get_batch_seq_len_for_mode(config, model_mode)
+    batch_size, seq_len = get_batch_seq_len_for_mode(config, model_mode)
     dummy_inputs_shape = (batch_size, seq_len, config.emb_dim)
     self.activation_axis_names = ("activation_batch", "activation_norm_length", "activation_embed")
 

@@ -28,8 +28,8 @@ from megatext.common.common_types import ShardMode, MODEL_MODE_PREFILL, MODEL_MO
 from megatext.layers import nnx_wrappers
 from megatext.layers.initializers import Initializer, default_embed_init, variable_to_logically_partitioned
 from megatext.utils import logging as max_logging
-from megatext.utils import max_utils
 from megatext.utils.sharding import logical_to_mesh_axes, create_sharding
+from megatext.utils.debug import device_space
 
 _MAX_WAVELENGTH = 10_000
 
@@ -38,7 +38,7 @@ def _maybe_move_embedding_to_device(embedding_table: Array, config: Config) -> A
   """Moves embedding table to device if parameter offloading is enabled."""
   if config.parameter_memory_host_offload:
     max_logging.log("embeddings.py: Moving embedding parameter to device")
-    return jax.device_put(embedding_table, max_utils.device_space())
+    return jax.device_put(embedding_table, device_space())
   return embedding_table
 
 

@@ -43,8 +43,8 @@ from megatext.layers.linears import DenseGeneral, MlpBlock
 from megatext.layers.moe import RoutedMoE
 from megatext.layers.initializers import nd_dense_init, variable_to_logically_partitioned
 
-from megatext.utils import max_utils
 from megatext.inference import page_manager, kvcache
+from megatext.utils.training import get_batch_seq_len_for_mode
 
 
 # -----------------------------------------
@@ -710,7 +710,7 @@ class Qwen3NextFullAttention(nnx.Module):
     cfg = self.config
 
     scaling_factor = self.config.head_dim**-0.5
-    batch_size, seq_len = max_utils.get_batch_seq_len_for_mode(config, model_mode)
+    batch_size, seq_len = get_batch_seq_len_for_mode(config, model_mode)
     dummy_inputs_shape = (batch_size, seq_len, config.emb_dim)
 
     self.attention = attentions.Attention(
@@ -1084,7 +1084,7 @@ class AttentionWithNorm(nnx.Module):
     self.mesh = mesh
     self.quant = quant
 
-    batch_size, seq_len = max_utils.get_batch_seq_len_for_mode(config, model_mode)
+    batch_size, seq_len = get_batch_seq_len_for_mode(config, model_mode)
     dummy_inputs_shape = (batch_size, seq_len, config.emb_dim)
     self.activation_axis_names = ("activation_batch", "activation_norm_length", "activation_embed")
 
