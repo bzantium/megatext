@@ -15,20 +15,18 @@
 ---
 
 **Megatext** is a streamlined pretraining framework for large language models on TPUs.
-Forked from [Google's MaxText](https://github.com/AI-Hypercomputer/maxtext), it strips away
-the complexity and keeps what matters: a fast data pipeline, clean configuration, and
-effortless scaling from a single host to thousands of TPU chips.
+Built on [JAX](https://github.com/jax-ml/jax), inspired by [Google's MaxText](https://github.com/AI-Hypercomputer/maxtext) and [NVIDIA's Megatron-LM](https://github.com/NVIDIA/Megatron-LM).
 
-### Why Megatext?
+### Features
 
-| | MaxText | Megatext |
-|---|---------|----------|
-| **Config** | 65 hardcoded model names (`Literal["qwen3-8b", ...]`) | Free-form `model=qwen3` + CLI overrides |
-| **Model configs** | 68 size-specific YAMLs | 9 architecture templates |
-| **Data indexing** | Python loops (minutes for 19M docs) | C++ segment tree (7 seconds) |
-| **Packing** | greedy only | greedy + best-fit bin packing |
-| **Cache I/O** | Local filesystem only | GCS-native via `gcsfs` |
-| **Codebase** | ~1M lines, inference server, benchmarks, post-training | ~20K lines, training only |
+- **C++ data indexing** — segment-tree bin packing builds indices for 19M documents in 7 seconds, with GCS-native caching
+- **Multi-source data blending** — Megatron-style proportional sampling across datasets with a simple `weight path` config
+- **Flexible config** — Pydantic-validated YAML + CLI overrides, 9 architecture templates, no hardcoded model names
+- **Modern optimizers** — AdamW, Muon (Newton-Schulz), SGD, with gradient accumulation and gradient clipping
+- **LR schedules** — Constant, Cosine, and Warmup-Stable-Decay with configurable warmup and decay phases
+- **Autotune** — Automated search over batch size, remat policy, and SA block size on synthetic data
+- **Checkpoint conversion** — Bidirectional HuggingFace <-> Megatext for 8 model architectures
+- **One-command GKE deployment** — YAML job definitions, Docker build, and xpk submission in a single command
 
 ---
 
@@ -311,5 +309,5 @@ kubectl logs <pod-name> --tail=20
 
 Apache 2.0 — see individual file headers for details.
 
-Megatext builds upon [MaxText](https://github.com/AI-Hypercomputer/maxtext) by Google,
-with significant restructuring, new features, and performance improvements.
+Megatext builds upon [MaxText](https://github.com/AI-Hypercomputer/maxtext) by Google
+and borrows data pipeline design from [Megatron-LM](https://github.com/NVIDIA/Megatron-LM) by NVIDIA.
