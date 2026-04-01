@@ -164,7 +164,6 @@ def _create_fixed_arecord_iterator(config, mesh):
         dataset = dataset.repeat(None)
         dataset = dataset[process_index::num_processes]
         dataset = dataset.map(fmt)
-        dataset = dataset.batch(per_process_batch, drop_remainder=True)
         return dataset.to_iter_dataset()
 
     if len(entries) == 1:
@@ -179,9 +178,12 @@ def _create_fixed_arecord_iterator(config, mesh):
             weights.append(weight)
         total_w = sum(weights)
         norm_weights = [w / total_w for w in weights]
-        for (weight, path), nw in zip(entries, norm_weights):
+        for (weight, path), nw in sorted(zip(entries, norm_weights), key=lambda x: x[1], reverse=True):
             max_logging.log(f"Data blend: weight={weight} ({nw:.2%}) path={path}")
+        # Sample-level mix: blend individual samples, then batch
         dataset = grain.IterDataset.mix(datasets, norm_weights)
+
+    dataset = dataset.batch(per_process_batch, drop_remainder=True)
 
     worker_count = config.grain_worker_count
     if worker_count > 0:
@@ -236,7 +238,10 @@ def _build_data_source(config, split_index: int):
         )
         sources.append(src)
         weights.append(weight)
-        max_logging.log(f"Data blend: weight={weight} ({norm_weight:.2%}) path={path}")
+
+    blend_info = sorted(zip(entries, [w / total_weight for w, _ in entries]), key=lambda x: x[1], reverse=True)
+    for (weight, path), nw in blend_info:
+        max_logging.log(f"Data blend: weight={weight} ({nw:.2%}) path={path}")
 
     if len(sources) == 1:
         return sources[0]
