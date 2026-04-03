@@ -230,17 +230,6 @@ def cmd_run(args) -> None:
     )
 
 
-# ── Subcommand: stop (suspend jobset) ────────────────────────────────────────
-
-def cmd_stop(args) -> None:
-    """Suspend a running workload (pods terminated, logs preserved)."""
-    run_cmd([
-        "kubectl", "patch", "jobset", args.workload_name,
-        "--type=merge", "-p", '{"spec":{"suspend":true}}',
-    ], dry_run=args.dry_run)
-    print(f"Workload '{args.workload_name}' suspended. Logs are still accessible.")
-
-
 # ── Subcommand: delete ──────────────────────────────────────────────────────
 
 def cmd_delete(args) -> None:
@@ -295,12 +284,6 @@ def main() -> None:
     p_run = sub.add_parser("run", parents=[common], help="Submit raw bash script")
     p_run.add_argument("job", help="Path to bash script")
     p_run.set_defaults(func=cmd_run)
-
-    # stop
-    p_stop = sub.add_parser("stop", help="Suspend a running workload (logs preserved)")
-    p_stop.add_argument("workload_name", help="Workload name to suspend")
-    p_stop.add_argument("--dry-run", action="store_true")
-    p_stop.set_defaults(func=cmd_stop)
 
     # delete
     p_delete = sub.add_parser("delete", help="Delete a workload")
