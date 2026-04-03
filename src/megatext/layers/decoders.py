@@ -1010,17 +1010,9 @@ class Decoder(nn.Module):
     else:
       hidden_state = y
 
-    # When initializing with vLLM RPA attention, we need to run the output head to
-    # initialize any parameters associated with it.
-    if self.is_initializing() and cfg.attention == "vllm_rpa":
-      _ = self.apply_output_head(shared_embedding, hidden_state, deterministic, model_mode)
-
-    # When invoking from vLLM with RPA attention, logit computation is deferred to a later stage.
-    if cfg.attention == "vllm_rpa":
-      logits = None
     # When in the Indexer Dense Warm-up stage, skip the expensive output head projection
     # for efficiency, as the main model is frozen and the LM loss is not needed.
-    elif (cfg.use_indexer and not cfg.indexer_sparse_training) and self.model_mode == MODEL_MODE_TRAIN:
+    if (cfg.use_indexer and not cfg.indexer_sparse_training) and self.model_mode == MODEL_MODE_TRAIN:
       logits = None
     # When vocab tiling is enabled in training mode, full logits won't generate to reduce memory
     # Instead, we keep track on the hidden states, which has smaller size compared to full logits

@@ -2132,6 +2132,8 @@ class MegaTextConfig(
         raise ValueError("`local_checkpoint_period` must be > 0 for emergency checkpointing.")
     if self.moba and self.attention not in ("dot_product"):
       raise ValueError("MoBA is only supported with dot_product attention.")
+    if self.attention == "vllm_rpa":
+      raise ValueError("`attention=vllm_rpa` is no longer supported in Megatext.")
     if self.use_indexer:
       if self.q_lora_rank == 0:
         raise NotImplementedError("Sparse indexer has not implemented for q_lora_rank = 0.")
@@ -2332,8 +2334,8 @@ class MegaTextConfig(
         "model": self.ici_tensor_parallelism,
         "expert": self.ici_expert_parallelism,
         "autoregressive": self.ici_autoregressive_parallelism,
-        "attn_dp": 1,  # initialized to 1, vLLM will auto calculate this value based on TP and num_kv_heads
-        "attn_dp_expert": 1,  # initialized to 1, vLLM will auto calculate this value based on EP
+        "attn_dp": 1,  # reserved compatibility axis
+        "attn_dp_expert": 1,  # reserved compatibility axis
     }
     self.ici_parallelism = [ici_map[axis] for axis in self.mesh_axes]
 
@@ -2351,8 +2353,8 @@ class MegaTextConfig(
         "model": self.dcn_tensor_parallelism,
         "expert": self.dcn_expert_parallelism,
         "autoregressive": self.dcn_autoregressive_parallelism,
-        "attn_dp": 1,  # initialized to 1, vLLM will auto calculate this value based on TP and num_kv_heads
-        "attn_dp_expert": 1,  # initialized to 1, vLLM will auto calculate this value based on EP
+        "attn_dp": 1,  # reserved compatibility axis
+        "attn_dp_expert": 1,  # reserved compatibility axis
     }
     self.dcn_parallelism = [dcn_map[axis] for axis in self.mesh_axes]
 

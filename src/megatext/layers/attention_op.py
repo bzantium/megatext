@@ -911,14 +911,11 @@ class AttentionOp(nnx.Module):
         self.sow("intermediates", "max_logits", local_max)
       return local_out, local_max, local_sum
 
-    # 'vllm_rpa' uses the same dot-attention wrapper but routes to the vLLM
-    # ragged paged attention kernel in `Attention.__call__`.
     elif (
         self.attention_kernel == "dot_product"
         or (self.attention_kernel == "autoselected" and model_mode == MODEL_MODE_AUTOREGRESSIVE)
         or (self.attention_kernel == "autoselected" and length < 128)
         or (self.attention_kernel == "paged")
-        or (self.attention_kernel == "vllm_rpa")
     ):
       return self.apply_attention_dot(
           query,
