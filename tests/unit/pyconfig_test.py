@@ -126,14 +126,6 @@ class PyconfigTest(unittest.TestCase):
     result = _module_from_path(module_file)
     self.assertEqual(result, "megatext.trainers.pretrain")
 
-  def test_vllm_rpa_attention_is_rejected(self):
-    with self.assertRaisesRegex(ValueError, "vllm_rpa"):
-      pyconfig.initialize(
-          [os.path.join(MEGATEXT_PKG_DIR, "train.py"), get_test_config_path()],
-          skip_jax_distributed_system=True,
-          attention="vllm_rpa",
-      )
-
   def test_unknown_module_raises(self):
     with self.assertRaises(ValueError):
       pyconfig.initialize_pydantic(["/custom_rl/module.py", "run_name=test"])
