@@ -863,7 +863,7 @@ class Attention(nnx.Module):
     elif self.partial_rotary_factor is not None and self.partial_rotary_factor < 1.0:
       rotary_embedding_cls = (
           Gemma4PartialRotaryEmbedding
-          if self.config.decoder_block == DecoderBlockType.GEMMA4
+          if decoder_block == DecoderBlockType.GEMMA4.value
           else PartialRotaryEmbedding
       )
       rotary_embedding = rotary_embedding_cls(

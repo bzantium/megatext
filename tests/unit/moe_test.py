@@ -16,12 +16,14 @@
 import unittest
 from types import SimpleNamespace
 
+from aqt.jax.v2 import aqt_tensor
 from flax import nnx
 import flax.linen as nn
 from flax.linen import partitioning as nn_partitioning
 import jax
 import jax.numpy as jnp
 from jax.sharding import Mesh
+import numpy as np
 from megatext.configs import pyconfig
 from megatext.common.common_types import Config, DType
 from megatext.layers import linears
@@ -340,6 +342,27 @@ class RoutedMoeBehaviorTest(unittest.TestCase):
 
     self.assertEqual(captured["dtype"], jnp.float32)
     self.assertEqual(output.dtype, jnp.bfloat16)
+
+  def test_per_expert_scale_is_preserved_for_quantized_sparse_wo_kernel(self):
+    per_expert_scale = jnp.array([2.0, 3.0], dtype=jnp.float32)
+    kernel = aqt_tensor.QTensor(
+        qvalue=jnp.arange(8, dtype=jnp.float32).reshape(2, 2, 2),
+        scale=[jnp.ones((1, 2, 1), dtype=jnp.float32)],
+        scale_t=[jnp.ones((1, 2, 1), dtype=jnp.float32)],
+        bias=[jnp.ones((1, 2, 1), dtype=jnp.float32)],
+        dequant_dtype=jnp.float32,
+    )
+
+    scaled_kernel = moe._apply_per_expert_scale_to_kernel(kernel, per_expert_scale, jnp.float32)
+    expected = kernel.dequant() * per_expert_scale[:, None, None]
+
+    self.assertIsInstance(scaled_kernel, aqt_tensor.QTensor)
+    self.assertIsNotNone(scaled_kernel.scale_t)
+    np.testing.assert_allclose(scaled_kernel.dequant(), expected)
+    np.testing.assert_allclose(
+        scaled_kernel.scale_t[0],
+        kernel.scale_t[0] * per_expert_scale[:, None, None],
+    )
 
 
 class MoeLoopBlock(nnx.Module):

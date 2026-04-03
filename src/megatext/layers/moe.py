@@ -49,6 +49,41 @@ DISPATCH = "dispatch"
 COMBINE = "combine"
 
 
+def _broadcast_per_expert_scale(per_expert_scale: jax.Array, target: jax.Array) -> jax.Array:
+  """Broadcasts per-expert scaling over the remaining kernel dimensions."""
+  if target.ndim == 0:
+    return per_expert_scale
+  return per_expert_scale.reshape((per_expert_scale.shape[0],) + (1,) * (target.ndim - 1))
+
+
+def _scale_qtensor_fields(
+    fields: list[jax.Array] | None,
+    per_expert_scale: jax.Array,
+) -> list[jax.Array] | None:
+  """Applies per-expert scaling to a list of QTensor scale/bias fields."""
+  if fields is None:
+    return None
+  return [field * _broadcast_per_expert_scale(per_expert_scale.astype(field.dtype), field) for field in fields]
+
+
+def _apply_per_expert_scale_to_kernel(
+    kernel: jax.Array | aqt.QTensor,
+    per_expert_scale: jax.Array | None,
+    dtype: ctypes.DType,
+) -> jax.Array | aqt.QTensor:
+  """Applies Gemma4 per-expert scaling to dense or quantized output kernels."""
+  if per_expert_scale is None:
+    return kernel
+  per_expert_scale = jnp.asarray(per_expert_scale, dtype)
+  if isinstance(kernel, aqt.QTensor):
+    return kernel.replace(
+        scale=_scale_qtensor_fields(kernel.scale, per_expert_scale),
+        scale_t=_scale_qtensor_fields(kernel.scale_t, per_expert_scale),
+        bias=_scale_qtensor_fields(kernel.bias, per_expert_scale),
+    )
+  return kernel * _broadcast_per_expert_scale(per_expert_scale, kernel)
+
+
 def _sort_activations(
     inputs: jax.Array,
     sort_indices: jax.Array,
@@ -2038,8 +2073,6 @@ class RoutedMoE(nnx.Module):
     w0_kernel = jnp.asarray(self.wi_0[...], self.dtype)
     w1_kernel = jnp.asarray(self.wi_1[...], self.dtype)
     wo_kernel = jnp.asarray(self.wo[...], self.dtype)
-    if self.per_expert_scale is not None:
-      wo_kernel = wo_kernel * jnp.asarray(self.per_expert_scale[...], self.dtype)[:, None, None]
 
     if cfg.mlp_bias:
       w0_bias = jnp.asarray(self.wi_0_bias[...], self.dtype)
@@ -2061,10 +2094,20 @@ class RoutedMoE(nnx.Module):
             w1_bias,
             wo_bias,
         )
+      wo_kernel = _apply_per_expert_scale_to_kernel(
+          wo_kernel,
+          self.per_expert_scale[...] if self.per_expert_scale is not None else None,
+          self.dtype,
+      )
       output, lb_loss, bias_updates = self.sparse_matmul(
           inputs, gate_logits, pre_bias_logits, w0_kernel, w1_kernel, wo_kernel, w0_bias, w1_bias, wo_bias
       )
     else:
+      wo_kernel = _apply_per_expert_scale_to_kernel(
+          wo_kernel,
+          self.per_expert_scale[...] if self.per_expert_scale is not None else None,
+          self.dtype,
+      )
       output, lb_loss, bias_updates = self.dense_matmul(
           inputs, gate_logits, pre_bias_logits, w0_kernel, w1_kernel, wo_kernel, w0_bias, w1_bias, wo_bias
       )

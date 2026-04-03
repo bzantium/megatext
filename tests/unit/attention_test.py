@@ -34,6 +34,7 @@ from megatext.common.common_types import (
     MODEL_MODE_PREFILL,
     MODEL_MODE_TRAIN,
     DEFAULT_MASK_VALUE,
+    DecoderBlockType,
 )
 from megatext.layers.attention_mla import MLA
 from megatext.layers.attention_op import ChunkedCausalMask, _generate_chunk_attention_mask, _make_bidirectional_block_mask
@@ -443,6 +444,36 @@ class AttentionTest(parameterized.TestCase):
     )
 
     self.assertEqual(dtype, mha_prefill.dtype)
+
+  def test_gemma4_string_decoder_block_uses_gemma4_partial_rotary(self):
+    cfg = self.cfg
+    object.__setattr__(cfg, "decoder_block", DecoderBlockType.GEMMA4.value)
+    object.__setattr__(cfg, "partial_rotary_factor", 0.5)
+    dummy_inputs = jnp.ones((cfg.global_batch_size_to_train_on, cfg.max_target_length, cfg.emb_dim))
+
+    with mock.patch("megatext.layers.attentions.Gemma4PartialRotaryEmbedding", autospec=True) as mock_gemma4_rope:
+      with mock.patch("megatext.layers.attentions.PartialRotaryEmbedding", autospec=True) as mock_partial_rope:
+        Attention(
+            config=cfg,
+            num_query_heads=cfg.num_query_heads,
+            num_kv_heads=cfg.num_kv_heads,
+            head_dim=cfg.head_dim,
+            max_target_length=cfg.max_target_length,
+            max_prefill_predict_length=cfg.max_prefill_predict_length,
+            inputs_q_shape=dummy_inputs.shape,
+            inputs_kv_shape=dummy_inputs.shape,
+            mesh=self.mesh,
+            attention_kernel="dot_product",
+            dtype=cfg.dtype,
+            dropout_rate=cfg.dropout_rate,
+            attention_type=cfg.attention_type,
+            model_mode=MODEL_MODE_PREFILL,
+            partial_rotary_factor=0.5,
+            rngs=nnx.Rngs(params=0, dropout=jax.random.PRNGKey(42)),
+        )
+
+    mock_gemma4_rope.assert_called_once()
+    mock_partial_rope.assert_not_called()
 
   @pytest.mark.tpu_only
   def test_tpu_kernel_attention_mha(self):
