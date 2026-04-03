@@ -397,16 +397,8 @@ class RoutedMoE(nnx.Module):
       self.wi_kernel_axes = ("exp", "embed_no_exp_moe", "mlp")
       self.wo_kernel_axes = ("exp", "mlp", "embed_no_exp_moe")
 
-    if self.config.attention == "vllm_rpa":
-      # vLLM uses 'model' as the tensor parallelism axis name
-      self._tensor_parallelism_name = ("model", "attn_dp")
-    else:
-      self._tensor_parallelism_name = "tensor"
-
-    if self.config.attention == "vllm_rpa" and self.config.enable_dp_attention:
-      self._expert_parallelism_name = "attn_dp_expert"
-    else:
-      self._expert_parallelism_name = "expert"
+    self._tensor_parallelism_name = "tensor"
+    self._expert_parallelism_name = "expert"
 
     self.gate = GateLogit(
         in_features_shape=self.config.emb_dim,

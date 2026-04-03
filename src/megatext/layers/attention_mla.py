@@ -1080,8 +1080,8 @@ class MLA(Attention):
       slot: The batch slot index for paged attention.
       page_state: The current state of the paged attention manager.
       bidirectional_mask: A mask for bidirectional attention, used in multimodal models.
-      kv_cache: Optional key-value cache used when serving models with vLLM.
-      attention_metadata: Optional attention-related metadata used when serving models with vLLM.
+      kv_cache: Optional key-value cache for decode-time execution.
+      attention_metadata: Optional attention metadata for decode-time backends.
 
     Returns:
       A tensor of shape [batch, length, embed_dim] containing the
