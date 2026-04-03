@@ -1,6 +1,5 @@
 # Pretrain Qwen3-SWA-8B on TPU v5e-256
 workload_name: pretrain-qwen3-swa-8b-stage1
-
 bucket: lmt-tpu-datasets
 mount_path: /mnt/bucket
 
@@ -12,7 +11,10 @@ config:
   model: qwen3-swa
   dataset_type: fixed_arecord
   dataset_path: >-
-    1657.4 ${DATA_ROOT}/nemotron-cc-v2-high
+    419.9 ${DATA_ROOT}/tpt-hq-csgk-en
+    204.5 ${DATA_ROOT}/tpt-hq-nemomath-dedup
+    113.7 ${DATA_ROOT}/tpt-hq-codenl-en
+    1657.4 ${DATA_ROOT}/nemotron-cc-v2-high-synthetic
     355.9 ${DATA_ROOT}/finepdfs-edu
     503.3 ${DATA_ROOT}/dq-csgk-ko
     88.6 ${DATA_ROOT}/dq-csgk-ja
@@ -32,7 +34,7 @@ config:
   data_cache_dir: ${BUCKET_PREFIX}/cache/indices
   jax_cache_dir: ${BUCKET_PREFIX}/cache/jax
   steps: 240000
-  per_device_batch_size: 2
+  per_device_batch_size: 5
   global_batch_size: 7680
   learning_rate: 1.23e-4
   warmup_steps: 2400
@@ -45,10 +47,11 @@ config:
   gradient_clipping_threshold: 1.0
   z_loss_multiplier: 5e-6
   max_target_length: 4096
+  sliding_window_size: 512
   attention: flash
   dtype: bfloat16
   weight_dtype: bfloat16
-  checkpoint_period: 500
+  checkpoint_period: 400
   log_period: 1
   opt_type: muon
   muon_weight_decay: 0.1

@@ -56,6 +56,7 @@ from megatext.common.common_types import (
 from megatext.layers import nnx_wrappers
 from megatext.layers.attention_op import AttentionOp
 from megatext.layers.embeddings import (
+    Gemma4PartialRotaryEmbedding,
     LLaMARotaryEmbedding,
     LlamaVisionRotaryEmbedding,
     Qwen3OmniMoeThinkerTextRotaryEmbedding,
@@ -128,6 +129,7 @@ def attention_as_linen(
     use_ragged_attention: bool = False,
     ragged_block_size: int = 256,
     use_qk_norm: bool = False,
+    use_v_norm: bool = False,
     query_pre_attn_scalar: float | None = None,
     use_bias_in_projections: bool = False,  # Set to True will enable bias in q, k, v, o projections
     share_kv_projections: bool = False,  # If true, Key and Value use the same projection
@@ -166,6 +168,8 @@ def attention_as_linen(
     mrope_section: tuple[int, int, int] | None = None,
     name: str | None = None,
     rope_type: str | None = None,
+    rope_max_timescale: float | None = None,
+    partial_rotary_factor: float | None = None,
 ):
   """A factory function to create an Attention as a Linen module.
 
@@ -198,6 +202,7 @@ def attention_as_linen(
       use_ragged_attention=use_ragged_attention,
       ragged_block_size=ragged_block_size,
       use_qk_norm=use_qk_norm,
+      use_v_norm=use_v_norm,
       query_pre_attn_scalar=query_pre_attn_scalar,
       use_bias_in_projections=use_bias_in_projections,
       share_kv_projections=share_kv_projections,
@@ -232,6 +237,8 @@ def attention_as_linen(
       mrope_section=mrope_section,
       name=name,
       rope_type=rope_type,
+      rope_max_timescale=rope_max_timescale,
+      partial_rotary_factor=partial_rotary_factor,
       metadata_fn=variable_to_logically_partitioned,
       abstract_init=False,
   )
@@ -295,6 +302,7 @@ class Attention(nnx.Module):
       use_ragged_attention: bool = False,
       ragged_block_size: int = 256,
       use_qk_norm: bool = False,
+      use_v_norm: bool = False,
       query_pre_attn_scalar: float | None = None,
       use_bias_in_projections: bool = False,  # Set to True will enable bias in q, k, v, o projections
       share_kv_projections: bool = False,  # If true, Key and Value use the same projection
@@ -334,6 +342,8 @@ class Attention(nnx.Module):
       mrope_section: tuple[int, int, int] | None = None,
       name: str | None = None,
       rope_type: str | None = None,
+      rope_max_timescale: float | None = None,
+      partial_rotary_factor: float | None = None,
       rngs: Optional[nnx.Rngs] = None,
   ):
     """Initializes the Attention module.
@@ -375,6 +385,9 @@ class Attention(nnx.Module):
       base_kv_cache: Whether to use base (non-MLA) kv cache, if KVCache is used
       rope_type: Optional override for the RoPE type (e.g., 'default', 'yarn').
           If provided, this takes precedence over `config.rope_type`.
+      use_v_norm: Whether to apply normalization to value.
+      rope_max_timescale: Optional RoPE max timescale override for this layer.
+      partial_rotary_factor: Optional partial rotary ratio for this layer.
       rngs: RNG state for initialization, passed by the nnx.to_linen wrapper.
     """
 
@@ -400,6 +413,7 @@ class Attention(nnx.Module):
     self.use_ragged_attention = use_ragged_attention
     self.ragged_block_size = ragged_block_size
     self.use_qk_norm = use_qk_norm
+    self.use_v_norm = use_v_norm
     self.query_pre_attn_scalar = query_pre_attn_scalar
     self.use_bias_in_projections = use_bias_in_projections
     self.share_kv_projections = share_kv_projections
@@ -435,6 +449,8 @@ class Attention(nnx.Module):
     self.rngs = rngs
     # Use the rope type specified in the arguments if provided, otherwise fall back to the one in the config.
     self.rope_type = (rope_type or self.config.rope_type).lower()
+    self.rope_max_timescale = rope_max_timescale if rope_max_timescale is not None else self.config.rope_max_timescale
+    self.partial_rotary_factor = partial_rotary_factor
 
     self.is_qwen2 = self.config.decoder_block == DecoderBlockType.QWEN2
     self.is_qwen3_next = self.config.decoder_block == DecoderBlockType.QWEN3_NEXT
@@ -506,13 +522,13 @@ class Attention(nnx.Module):
     if self.use_qk_norm and not is_llama4_decoder_block:
       # Check if this is Olmo3, which uses a unique "Global" QK Norm strategy.
       # GlobalRMSNorm flattens (Heads, Dim) to normalize across the entire hidden state.
-      use_global_qk_norm = self.config.decoder_block == "olmo3"
+      use_global_qk_norm = self.config.decoder_block in (DecoderBlockType.OLMO3, DecoderBlockType.OLMO3.value)
       qk_norm_cls = GlobalRMSNorm if use_global_qk_norm else RMSNorm
 
       # For RMSNorm use `head_dim` (per-head normalization), while for GlobalRMSNorm use `num_heads * head_dim` (global normalization).
       q_features = (self.num_query_heads * self.head_dim) if use_global_qk_norm else self.head_dim
       k_features = (self.num_kv_heads * self.head_dim) if use_global_qk_norm else self.head_dim
-
+      with_scale = getattr(self.config, "qk_norm_with_scale", True)
       self.query_norm = qk_norm_cls(
           num_features=q_features,
           dtype=self.config.dtype,
@@ -520,6 +536,7 @@ class Attention(nnx.Module):
           shard_mode=self.config.shard_mode,
           epsilon=self.config.normalization_layer_epsilon,
           kernel_axes=("norm",),
+          with_scale=with_scale,
           rngs=self.rngs,
       )
       self.key_norm = qk_norm_cls(
@@ -529,6 +546,7 @@ class Attention(nnx.Module):
           shard_mode=self.config.shard_mode,
           epsilon=self.config.normalization_layer_epsilon,
           kernel_axes=("norm",),
+          with_scale=with_scale,
           rngs=self.rngs,
       )
     elif self.is_qwen3_next:
@@ -549,6 +567,21 @@ class Attention(nnx.Module):
     else:
       self.query_norm = None
       self.key_norm = None
+
+    if self.use_v_norm:
+      with_scale = getattr(self.config, "v_norm_with_scale", True)
+      self.value_norm = RMSNorm(
+          num_features=self.head_dim,
+          dtype=self.config.dtype,
+          weight_dtype=self.config.weight_dtype,
+          shard_mode=self.config.shard_mode,
+          epsilon=self.config.normalization_layer_epsilon,
+          kernel_axes=("norm",),
+          with_scale=with_scale,
+          rngs=self.rngs,
+      )
+    else:
+      self.value_norm = None
 
     self._maybe_shard_with_logical = functools.partial(
         maybe_shard_with_logical,
@@ -576,7 +609,7 @@ class Attention(nnx.Module):
     #       linear transformations, which is equivalent under Adafactor.
     # We disable depth_scaling when using qk_norm or a query_pre_attn_scalar
     # to avoid applying scaling twice.
-    if self.config.use_qk_norm or (self.query_pre_attn_scalar is not None and self.query_pre_attn_scalar != 1.0):
+    if self.use_qk_norm or (self.query_pre_attn_scalar is not None and self.query_pre_attn_scalar != 1.0):
       depth_scaling = 1.0
     else:
       depth_scaling = jnp.sqrt(self.head_dim).astype(self.dtype)
@@ -751,8 +784,9 @@ class Attention(nnx.Module):
 
     rope_type = self.rope_type
     rope_use_scale = self.config.rope_use_scale
+    decoder_block = getattr(self.config.decoder_block, "value", self.config.decoder_block)
     if self.is_vision:
-      if self.config.decoder_block == "qwen3":
+      if decoder_block == DecoderBlockType.QWEN3.value:
         rotary_embedding = Qwen3OmniMoeVisionRotaryEmbedding(
             hidden_size=self.config.hidden_size_for_vit,
             num_attention_heads=self.config.num_attention_heads_for_vit,
@@ -761,7 +795,7 @@ class Attention(nnx.Module):
             fprop_dtype=self.dtype,
             rngs=self.rngs,
         )
-      elif self.config.decoder_block == "llama4":
+      elif decoder_block == DecoderBlockType.LLAMA4.value:
         rotary_embedding = LlamaVisionRotaryEmbedding(
             image_size=self.config.image_size_for_vit,
             patch_size=self.config.patch_size_for_vit,
@@ -778,7 +812,7 @@ class Attention(nnx.Module):
     elif self.use_mrope:
       rotary_embedding = Qwen3OmniMoeThinkerTextRotaryEmbedding(
           min_timescale=self.config.rope_min_timescale,
-          max_timescale=self.config.rope_max_timescale,
+          max_timescale=self.rope_max_timescale,
           embedding_dims=rope_embedding_dims,
           cast_as_fprop_dtype=True,
           fprop_dtype=self.dtype,
@@ -789,7 +823,7 @@ class Attention(nnx.Module):
     elif rope_type.startswith("llama3.1"):
       rotary_embedding = LLaMARotaryEmbedding(
           min_timescale=self.config.rope_min_timescale,
-          max_timescale=self.config.rope_max_timescale,
+          max_timescale=self.rope_max_timescale,
           mesh=self.mesh,
           embedding_dims=rope_embedding_dims,
           fprop_dtype=self.dtype,
@@ -804,7 +838,7 @@ class Attention(nnx.Module):
           original_max_position_embeddings=self.config.original_max_position_embeddings,
           beta_fast=self.config.beta_fast,
           beta_slow=self.config.beta_slow,
-          rope_theta=self.config.rope_max_timescale,
+          rope_theta=self.rope_max_timescale,
           rope_factor=self.config.rope_factor,
           embedding_dims=rope_embedding_dims,
           fprop_dtype=self.dtype,
@@ -817,7 +851,7 @@ class Attention(nnx.Module):
     elif self.is_qwen3_next:
       rotary_embedding = PartialRotaryEmbedding(
           min_timescale=self.config.rope_min_timescale,
-          max_timescale=self.config.rope_max_timescale,
+          max_timescale=self.rope_max_timescale,
           mesh=self.mesh,
           embedding_dims=self.config.head_dim,
           partial_rotary_factor=self.config.partial_rotary_factor,
@@ -826,16 +860,28 @@ class Attention(nnx.Module):
           shard_mode=self.config.shard_mode,
           rngs=self.rngs,
       )
+    elif self.partial_rotary_factor is not None and self.partial_rotary_factor < 1.0:
+      rotary_embedding_cls = (
+          Gemma4PartialRotaryEmbedding
+          if decoder_block == DecoderBlockType.GEMMA4.value
+          else PartialRotaryEmbedding
+      )
+      rotary_embedding = rotary_embedding_cls(
+          min_timescale=self.config.rope_min_timescale,
+          max_timescale=self.rope_max_timescale,
+          mesh=self.mesh,
+          embedding_dims=rope_embedding_dims,
+          partial_rotary_factor=self.partial_rotary_factor,
+          cast_as_fprop_dtype=True,
+          fprop_dtype=self.dtype,
+          shard_mode=self.config.shard_mode,
+          rngs=self.rngs,
+      )
     else:
-      max_timescale = self.config.rope_max_timescale
+      max_timescale = self.rope_max_timescale
       # For local attention use local_rope_max_timescale if it's is positive
       if self.attention_type == AttentionType.LOCAL_SLIDING and self.config.local_rope_max_timescale > 0:
         max_timescale = self.config.local_rope_max_timescale
-
-      rope_linear_scaling_factor = self.config.rope_linear_scaling_factor
-      # In gemma3, linear scaling factor does not apply to local sliding layers.
-      if self.config.decoder_block == "gemma3" and self.attention_type == AttentionType.LOCAL_SLIDING:
-        rope_linear_scaling_factor = 1.0
 
       rotary_embedding = RotaryEmbedding(
           min_timescale=self.config.rope_min_timescale,
@@ -843,7 +889,7 @@ class Attention(nnx.Module):
           mesh=self.mesh,
           embedding_dims=rope_embedding_dims,
           fprop_dtype=self.dtype,
-          rope_linear_scaling_factor=rope_linear_scaling_factor,
+          rope_linear_scaling_factor=self.config.rope_linear_scaling_factor,
           shard_mode=self.config.shard_mode,
           rngs=self.rngs,
       )
@@ -1080,6 +1126,9 @@ class Attention(nnx.Module):
     if (self.use_qk_norm and not is_llama4_decoder_block) or self.is_qwen3_next:
       query = self.query_norm(query)
       key = self.key_norm(key)
+
+    if self.use_v_norm:
+      value = self.value_norm(value)
 
     # NOTE: is_nope_layer should be used in attention mask and also used in attention tuning
     use_rope = not self.is_nope_layer

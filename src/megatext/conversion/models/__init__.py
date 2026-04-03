@@ -5,14 +5,14 @@ from megatext.conversion.utils import ArchSpec
 from megatext.conversion.models.llama import (
     build_llama, build_llama_transforms,
 )
-from megatext.conversion.models.gemma3 import (
-    build_gemma3, build_gemma3_transforms,
+from megatext.conversion.models.gemma4 import (
+    build_gemma4, build_gemma4_transforms, compute_gemma4_shapes,
 )
 from megatext.conversion.models.qwen3 import (
     build_qwen3, build_qwen3_transforms,
 )
 from megatext.conversion.models.qwen3_swa import (
-    build_qwen3_swa, build_qwen3_swa_transforms,
+    build_qwen3_swa, build_qwen3_swa_transforms, compute_qwen3_swa_shapes,
 )
 from megatext.conversion.models.qwen3_moe import (
     build_qwen3_moe, build_qwen3_moe_transforms, compute_qwen3_moe_shapes,
@@ -36,12 +36,19 @@ ARCH_SPECS: dict[str, ArchSpec] = {
         model_type="llama", decoder_block="llama2", template_name="llama3",
         scale_query=True, reorder_rope=True,
     ),
-    "gemma3": ArchSpec(
-        model_type="gemma3", decoder_block="gemma3", template_name="gemma3",
+    "gemma4": ArchSpec(
+        model_type="gemma4", decoder_block="gemma4", template_name="gemma4",
         hf_prefix="model.language_model",
         has_qk_norm=True, has_post_attn_norm=True,
         has_pre_ffw_norm=True, has_post_ffw_norm=True,
-        scale_embedding=True, scale_rmsnorm=True,
+        scale_embedding=True, composite_split="concat",
+    ),
+    "gemma4_text": ArchSpec(
+        model_type="gemma4_text", decoder_block="gemma4", template_name="gemma4",
+        hf_prefix="model",
+        has_qk_norm=True, has_post_attn_norm=True,
+        has_pre_ffw_norm=True, has_post_ffw_norm=True,
+        scale_embedding=True, composite_split="concat",
     ),
     "qwen3": ArchSpec(
         model_type="qwen3", decoder_block="qwen3", template_name="qwen3",
@@ -56,7 +63,7 @@ ARCH_SPECS: dict[str, ArchSpec] = {
         has_qk_norm=True, composite_split="concat",
     ),
     "qwen3_next": ArchSpec(
-        model_type="qwen3_next", decoder_block="qwen3_next", template_name="qwen3-next-moe",
+        model_type="qwen3_next", decoder_block="qwen3_next", template_name="qwen3-next",
         composite_split="concat",
     ),
     "deepseek_v3": ArchSpec(
@@ -64,14 +71,15 @@ ARCH_SPECS: dict[str, ArchSpec] = {
         composite_split="concat",
     ),
     "gpt_oss": ArchSpec(
-        model_type="gpt_oss", decoder_block="gpt_oss", template_name="gpt_oss",
+        model_type="gpt_oss", decoder_block="gpt_oss", template_name="gpt-oss",
         composite_split="interleave_last",
     ),
 }
 
 MAPPING_BUILDERS = {
     "llama": build_llama,
-    "gemma3": build_gemma3,
+    "gemma4": build_gemma4,
+    "gemma4_text": build_gemma4,
     "qwen3": build_qwen3,
     "qwen3_swa": build_qwen3_swa,
     "qwen3_moe": build_qwen3_moe,
@@ -82,7 +90,8 @@ MAPPING_BUILDERS = {
 
 TRANSFORM_BUILDERS = {
     "llama": build_llama_transforms,
-    "gemma3": build_gemma3_transforms,
+    "gemma4": build_gemma4_transforms,
+    "gemma4_text": build_gemma4_transforms,
     "qwen3": build_qwen3_transforms,
     "qwen3_swa": build_qwen3_swa_transforms,
     "qwen3_moe": build_qwen3_moe_transforms,
@@ -92,6 +101,9 @@ TRANSFORM_BUILDERS = {
 }
 
 SHAPE_BUILDERS = {
+    "gemma4": compute_gemma4_shapes,
+    "gemma4_text": compute_gemma4_shapes,
+    "qwen3_swa": compute_qwen3_swa_shapes,
     "qwen3_moe": compute_qwen3_moe_shapes,
     "qwen3_next": compute_qwen3_next_shapes,
     "deepseek_v3": compute_deepseek_shapes,

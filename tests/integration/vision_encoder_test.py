@@ -26,7 +26,7 @@ from megatext.configs import pyconfig
 from megatext.utils.constants import MEGATEXT_ASSETS_ROOT, MEGATEXT_TEST_ASSETS_ROOT
 from megatext.inference.maxengine import maxengine
 from megatext.models import models
-from megatext.multimodal import processor_gemma3
+from megatext.multimodal import processor_gemma4
 from megatext.multimodal import utils as mm_utils
 from tests.utils.test_helpers import get_test_config_path
 import numpy as np
@@ -34,20 +34,20 @@ import pytest
 
 pytestmark = [pytest.mark.external_serving, pytest.mark.integration_test]
 
-# 4b with vit
+# Dense Gemma4 with ViT.
 DEFAULT_LOAD_PARAMETERS_PATH = (
-    "gs://megatext-model-checkpoints/gemma3-4b/multimodal/2025-04-25-18-06-04/checkpoints/0/items"
+    "gs://megatext-model-checkpoints/gemma4-31b/multimodal/2025-04-25-18-06-04/checkpoints/0/items"
 )
 
 
 class VisionEncoderEmbeddingTest(unittest.TestCase):
 
   CONFIGS = {
-      "gemma3-4b": [  # tests decode with multimodal gemma-4b
+      "gemma4": [  # tests decode with multimodal dense Gemma4
           None,
           get_test_config_path(),
-          "model=gemma3-4b",
-          rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.gemma3')}",
+          "model=gemma4",
+          rf"tokenizer_path={os.path.join(MEGATEXT_ASSETS_ROOT, 'tokenizers', 'tokenizer.gemma4')}",
           "use_multimodal=True",
           "run_name=runner_test",
           f"load_parameters_path={DEFAULT_LOAD_PARAMETERS_PATH}",
@@ -66,11 +66,11 @@ class VisionEncoderEmbeddingTest(unittest.TestCase):
 
   @pytest.mark.skip(reason="until b/416335384 is fixed")
   @pytest.mark.tpu_only
-  def test_image_embedding_gemma3_4b_tpu(self):
+  def test_image_embedding_gemma4_tpu(self):
     os.environ["TF_CPP_MIN_LOG_LEVEL"] = "0"
-    """Correctness test for the gemma3-4b image embedding."""
+    """Correctness test for the dense Gemma4 image embedding."""
     # Load weights from reference checkpoint
-    config = pyconfig.initialize(VisionEncoderEmbeddingTest.CONFIGS["gemma3-4b"])
+    config = pyconfig.initialize(VisionEncoderEmbeddingTest.CONFIGS["gemma4"])
     engine = maxengine.MaxEngine(config)
     rng = jax.random.PRNGKey(1234)
     rng, rng_load_params = jax.random.split(rng)
@@ -78,8 +78,8 @@ class VisionEncoderEmbeddingTest(unittest.TestCase):
 
     # Load and preprocess the image
     images = mm_utils.load_image_from_path(config.image_path)
-    images = processor_gemma3.preprocess_mm_data_gemma3(images).pixel_values
-    input_images = images[jnp.newaxis, jnp.newaxis, ...]  # pytype: disable=unsupported-operands
+    images = processor_gemma4.preprocess_mm_data_gemma4(images).pixel_values
+    input_images = images[jnp.newaxis, ...]  # pytype: disable=unsupported-operands
 
     # Initialize only the vision encoder part and extract the corresponding params
     vision_encoder_model = models.VisionEncoder(config, engine.mesh, rngs=engine.rng)
@@ -94,8 +94,8 @@ class VisionEncoderEmbeddingTest(unittest.TestCase):
     )
     image_embeddings = jitted_apply_vision_encoder_fn(vision_encoder_params, input_images)  # pylint: disable=not-callable
 
-    # Load golden image embeddings generated from HuggingFace Gemma3-4b
-    input_golden_data_path = os.path.join(MEGATEXT_TEST_ASSETS_ROOT, "golden_logits", "golden_data_gemma3_vit.jsonl")
+    # Load golden image embeddings generated from HuggingFace Gemma4.
+    input_golden_data_path = os.path.join(MEGATEXT_TEST_ASSETS_ROOT, "golden_logits", "golden_data_gemma4_vit.jsonl")
     with jsonlines.open(input_golden_data_path, mode="r") as reader:
       loaded_data = next(iter(reader))
     golden_image_embeddings = np.asarray(loaded_data["soft_embeddings"], dtype=np.float32)

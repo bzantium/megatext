@@ -23,7 +23,7 @@ class ArchSpec:
     decoder_block: str
     template_name: str
 
-    # HF key prefix (most: "model", gemma3: "model.language_model")
+    # HF key prefix (most: "model", multimodal Gemma4 text tower: "model.language_model")
     hf_prefix: str = "model"
 
     # Per-layer component flags
@@ -372,7 +372,7 @@ def _build_rmsnorm_transforms(
     to_hf: bool,
     norm_suffixes: list[str],
 ) -> dict[str, TransformFn]:
-    """RMSNorm ±1 transforms for gemma3-style models."""
+    """RMSNorm ±1 transforms for Gemma-style models with folded offsets."""
     if not arch.scale_rmsnorm:
         return {}
     fn = scale_rmsnorm_inv if to_hf else scale_rmsnorm_fwd

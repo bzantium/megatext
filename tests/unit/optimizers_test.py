@@ -128,39 +128,6 @@ DEEPSEEK3_DIMENSION_NUMBER = {
     }
 }
 
-# gemma3
-_GEMMA3_LAYER = {
-    "mlp": {
-        "wi_0": {"kernel": mdn(reduction_axis=(0,), output_axis=(-1,))},
-        "wi_1": {"kernel": mdn(reduction_axis=(0,), output_axis=(-1,))},
-        "wo": {"kernel": mdn(reduction_axis=(0,), output_axis=(-1,))},
-    },
-    "post_ffw_norm": {"scale": None},
-    "pre_ffw_norm": {"scale": None},
-    "self_attention": {
-        "query": {"kernel": mdn(reduction_axis=(0,), output_axis=(-2, -1))},
-        "key": {"kernel": mdn(reduction_axis=(0,), output_axis=(-2, -1))},
-        "value": {"kernel": mdn(reduction_axis=(0,), output_axis=(-2, -1))},
-        "out": {"kernel": mdn(reduction_axis=(0, -2), output_axis=(-1,))},
-        "key_norm": {"scale": None},
-        "query_norm": {"scale": None},
-    },
-    "post_self_attention_norm": {"scale": None},
-    "pre_self_attention_norm": {"scale": None},
-}
-
-GEMMA3_DIMENSION_NUMBER = {
-    "params": {
-        "decoder": {
-            "decoder_norm": {"scale": None},
-            "layers": {f"layers_{i}": _GEMMA3_LAYER for i in range(6)},
-            "layers_remainder": {f"layers_{i}": _GEMMA3_LAYER for i in range(4)},
-        },
-        "token_embedder": {"embedding": None},
-    }
-}
-
-
 # llama2 (also llama3)
 LLAMA2_DIMENSION_NUMBER = {
     "params": {
@@ -232,7 +199,6 @@ class MuonDimensionTest(parameterized.TestCase):
       ("llama3-8b", "llama3-8b", LLAMA2_DIMENSION_NUMBER),
       ("llama3.1-8b", "llama3.1-8b", LLAMA2_DIMENSION_NUMBER),
       ("llama3.3-70b", "llama3.3-70b", LLAMA2_DIMENSION_NUMBER),
-      ("gemma3-4b", "gemma3-4b", GEMMA3_DIMENSION_NUMBER),
       ("qwen3-0.6b", "qwen3-0.6b", QWEN3_DIMENSION_NUMBER),
   )
   @pytest.mark.tpu_only

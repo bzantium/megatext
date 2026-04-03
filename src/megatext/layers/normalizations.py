@@ -44,6 +44,7 @@ class RMSNorm(nnx.Module):
       scale_init: Initializer = nn.initializers.ones,
       parameter_memory_host_offload: bool = False,
       scale_offset: float = 0.0,
+      with_scale: bool = True,
       *,
       rngs: nnx.Rngs,
   ):
@@ -56,28 +57,38 @@ class RMSNorm(nnx.Module):
     self.scale_init = scale_init
     self.parameter_memory_host_offload = parameter_memory_host_offload
     self.scale_offset = scale_offset
-    self.scale = nnx.Param(
-        scale_init(rngs.params(), (num_features,), weight_dtype),
-        sharding=kernel_axes,
-    )
+    self.with_scale = with_scale
+    if self.with_scale:
+      self.scale = nnx.Param(
+          scale_init(rngs.params(), (num_features,), weight_dtype),
+          sharding=kernel_axes,
+      )
+    else:
+      self.scale = None
 
   def __call__(self, x: jnp.ndarray, out_sharding: NamedSharding | None = None) -> jnp.ndarray:
     """Applies layer normalization on the input."""
     x = jnp.asarray(x, jnp.float32)
     mean2 = jnp.mean(lax.square(x), axis=-1, keepdims=True)
     y = jnp.asarray(x * lax.rsqrt(mean2 + self.epsilon), self.dtype)
+    # out_sharding must be None in auto shard mode
+    if self.shard_mode != ShardMode.EXPLICIT:
+      out_sharding = None
+
+    if not self.with_scale:
+      if out_sharding is not None:
+        y = jax.lax.with_sharding_constraint(y, out_sharding)
+      return y
+
     scale = self.scale.value
     # Move scale to device if parameter offloading is enabled
     if self.parameter_memory_host_offload:
       max_logging.log("normalizations.py: Moving scale parameter to device")
       scale = jax.device_put(scale, device_space())
-    # out_sharding must be None in auto shard mode
-    if self.shard_mode != ShardMode.EXPLICIT:
-      out_sharding = None
 
     scale = jnp.asarray(scale, self.dtype)
     effective_scale = scale + self.scale_offset  # Apply offset
-    return jnp.einsum("i...k,...k->i...k", y, effective_scale, out_sharding=out_sharding)
+    return jnp.einsum("...k,k->...k", y, effective_scale, out_sharding=out_sharding)
 
 
 class GlobalRMSNorm(RMSNorm):
@@ -102,7 +113,18 @@ class GlobalRMSNorm(RMSNorm):
     return y_flat.reshape(input_shape)
 
 
-def Qwen3NextRMSNorm(num_features: int, eps: float, dtype: DType, weight_dtype: DType, *, rngs: nnx.Rngs):
+def Qwen3NextRMSNorm(
+    num_features: int,
+    eps: float | None = None,
+    dtype: DType = jnp.float32,
+    weight_dtype: DType = jnp.float32,
+    shard_mode: ShardMode = ShardMode.AUTO,
+    epsilon: float | None = None,
+    kernel_axes: tuple[None | str, ...] = (),
+    parameter_memory_host_offload: bool = False,
+    *,
+    rngs: nnx.Rngs,
+):
   """
   Used for input and post attention layernorms
   in Qwen3NextDecoderLayer.
@@ -112,13 +134,17 @@ def Qwen3NextRMSNorm(num_features: int, eps: float, dtype: DType, weight_dtype: 
   2.  The scale is applied as `(1.0 + self.scale)`, making the initial scale effectively 1.0.
       This matches the PyTorch implementation of Qwen3NextRMSNorm.
   """
+  epsilon = 1e-6 if eps is None and epsilon is None else (eps if epsilon is None else epsilon)
   return nnx.data(
       RMSNorm(
           num_features=num_features,
-          epsilon=eps,
+          epsilon=epsilon,
           dtype=dtype,
           weight_dtype=weight_dtype,
+          shard_mode=shard_mode,
+          kernel_axes=kernel_axes,
           scale_init=linen_initializers.zeros,
+          parameter_memory_host_offload=parameter_memory_host_offload,
           scale_offset=1.0,
           rngs=rngs,
       )
@@ -186,6 +212,7 @@ def rms_norm(
     scale_init: Initializer = nn.initializers.ones,
     name: None | str = None,
     parameter_memory_host_offload: bool = False,
+    with_scale: bool = True,
 ):
   """Creates a RMSNorm module."""
   module = nnx_wrappers.to_linen(
@@ -198,6 +225,7 @@ def rms_norm(
       kernel_axes=kernel_axes,
       scale_init=scale_init,
       parameter_memory_host_offload=parameter_memory_host_offload,
+      with_scale=with_scale,
       name=name,
       metadata_fn=variable_to_logically_partitioned,
   )

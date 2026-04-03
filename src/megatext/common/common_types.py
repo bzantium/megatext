@@ -91,7 +91,7 @@ class DecoderBlockType(enum.Enum):
   DEEPSEEK = "deepseek"
   GEMMA = "gemma"
   GEMMA2 = "gemma2"
-  GEMMA3 = "gemma3"
+  GEMMA4 = "gemma4"
   QWEN2 = "qwen2"
   QWEN3 = "qwen3"
   QWEN3_MOE = "qwen3_moe"

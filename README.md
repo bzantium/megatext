@@ -165,12 +165,13 @@ python -m megatext.trainers.pretrain \
 | `qwen3` | Qwen3 dense | QK-norm, SwiGLU |
 | `qwen3-moe` | Qwen3 MoE | Routed experts |
 | `qwen3-swa` | Qwen3 SWA | Sliding window + global attention cycles |
-| `qwen3-next-dense` | Qwen3-Next | Gated delta net + full attention hybrid |
+| `qwen3-next` | Qwen3-Next | Gated delta net + full attention hybrid |
 | `qwen3-next-moe` | Qwen3-Next MoE | Same with routed experts |
 | `llama3` | LLaMA 2/3 | GQA, RoPE |
 | `deepseek` | DeepSeek V2/V3 | MLA attention, MoE |
-| `gemma3` | Gemma 3 | Sliding window + global, post-norms |
-| `gpt_oss` | GPT-OSS | Attention sinks, MoE |
+| `gemma4-moe` | Gemma 4 26B | 5-local/1-global cycle, multimodal MoE |
+| `gemma4` | Gemma 4 31B | 5-local/1-global cycle, multimodal dense |
+| `gpt-oss` | GPT-OSS | Attention sinks, MoE |
 
 ---
 
@@ -245,7 +246,7 @@ python -m megatext.conversion.convert \
   --to-hf
 ```
 
-Supported model types: `qwen3`, `qwen3-swa`, `qwen3-moe`, `qwen3-next`, `llama3`, `deepseek`, `gemma3`, `gpt_oss`
+Supported model types: `qwen3`, `qwen3-swa`, `qwen3-moe`, `qwen3-next`, `llama3`, `deepseek`, `gemma4`, `gemma4_text`, `gpt_oss`
 
 ---
 

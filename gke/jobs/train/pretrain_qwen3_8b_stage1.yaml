@@ -1,0 +1,59 @@
+# Pretrain Qwen3-SWA-8B on TPU v5e-256
+workload_name: pretrain-qwen3-8b-stage1
+bucket: lmt-tpu-datasets
+mount_path: /mnt/bucket
+
+vars:
+  BUCKET_PREFIX: gs://lmt-tpu-datasets
+  DATA_ROOT: /mnt/bucket/datasets/kanana-2-corpus/4096
+
+config:
+  model: qwen3
+  dataset_type: fixed_arecord
+  dataset_path: >-
+    419.9 ${DATA_ROOT}/tpt-hq-csgk-en
+    204.5 ${DATA_ROOT}/tpt-hq-nemomath-dedup
+    113.7 ${DATA_ROOT}/tpt-hq-codenl-en
+    1657.4 ${DATA_ROOT}/nemotron-cc-v2-high-synthetic
+    355.9 ${DATA_ROOT}/finepdfs-edu
+    503.3 ${DATA_ROOT}/dq-csgk-ko
+    88.6 ${DATA_ROOT}/dq-csgk-ja
+    102.7 ${DATA_ROOT}/dq-csgk-zh
+    35.2 ${DATA_ROOT}/dq-csgk-vi
+    25.2 ${DATA_ROOT}/dq-csgk-th
+    32.4 ${DATA_ROOT}/finewiki-en
+    1.8 ${DATA_ROOT}/finewiki-ko
+    9.4 ${DATA_ROOT}/finewiki-ja
+    4.2 ${DATA_ROOT}/finewiki-zh
+    1.8 ${DATA_ROOT}/finewiki-vi
+    0.9 ${DATA_ROOT}/finewiki-th
+    251.7 ${DATA_ROOT}/dq-academic
+    503.3 ${DATA_ROOT}/dq-mathnl-enko-v2
+    377.5 ${DATA_ROOT}/dq-codenl-enko
+    1082.1 ${DATA_ROOT}/dq-codescr-entire-v2
+  data_cache_dir: ${BUCKET_PREFIX}/cache/indices
+  jax_cache_dir: ${BUCKET_PREFIX}/cache/jax
+  steps: 240000
+  per_device_batch_size: 5
+  global_batch_size: 7680
+  learning_rate: 1.23e-4
+  warmup_steps: 2400
+  final_learning_rate: 1.23e-5
+  remat_policy: full
+  scan_layers: true
+  sa_use_fused_bwd_kernel: true
+  adam_b1: 0.9
+  adam_b2: 0.95
+  gradient_clipping_threshold: 1.0
+  z_loss_multiplier: 5e-6
+  max_target_length: 4096
+  attention: flash
+  dtype: bfloat16
+  weight_dtype: bfloat16
+  checkpoint_period: 400
+  log_period: 1
+  opt_type: muon
+  muon_weight_decay: 0.1
+  muon_consistent_rms: 0.2
+  run_name: pretrain-qwen3-8b-stage1
+  base_output_directory: ${BUCKET_PREFIX}/experiments/ryan

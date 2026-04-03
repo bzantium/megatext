@@ -226,6 +226,11 @@ class GptOssScannableBlock(ScannableBlock):
     used with `nn.scan` for efficient compilation.
   """
 
+  @classmethod
+  def scan_body_layer_count(cls, config: Config) -> int:
+    del config
+    return len(GPT_OSS_ATTENTION_PATTERN)
+
   def __init__(
       self,
       config: Config,
@@ -240,9 +245,3 @@ class GptOssScannableBlock(ScannableBlock):
         layer_kwargs_fn=_gpt_oss_layer_kwargs,
         rngs=rngs,
     )
-
-
-GptOssScannableBlockToLinen = nnx_wrappers.to_linen_class(
-    GptOssScannableBlock,
-    base_metadata_fn=initializers.variable_to_logically_partitioned,
-)

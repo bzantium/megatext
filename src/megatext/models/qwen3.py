@@ -806,7 +806,7 @@ class Qwen3NextSparseMoeBlock(nnx.Module):
         dtype=cfg.dtype,
         weight_dtype=cfg.weight_dtype,
         quant=self.quant,
-        model_mode=config.model_call_mode,
+        model_mode=getattr(config, "model_call_mode", MODEL_MODE_TRAIN),
         rngs=rngs,
     )
 
@@ -864,7 +864,15 @@ class Qwen3NextScannableBlock(ScannableBlock):
   decoder stack efficiently.
   """
 
-  def __init__(self, config: Config, mesh: Mesh, model_mode: str, quant: None | Quant = None, *, rngs: nnx.Rngs):
+  def __init__(
+      self,
+      config: Config,
+      mesh: Mesh,
+      model_mode: str,
+      quant: None | Quant = None,
+      *,
+      rngs: nnx.Rngs,
+  ):
     super().__init__(
         config, mesh, model_mode, quant,
         layer_cls=Qwen3NextDecoderLayer,
@@ -2174,11 +2182,6 @@ Qwen3MoeDecoderLayerToLinen = nnx_wrappers.to_linen_class(
 
 Qwen3NextDecoderLayerToLinen = nnx_wrappers.to_linen_class(
     Qwen3NextDecoderLayer,
-    base_metadata_fn=max_initializers.variable_to_logically_partitioned,
-)
-
-Qwen3NextScannableBlockToLinen = nnx_wrappers.to_linen_class(
-    Qwen3NextScannableBlock,
     base_metadata_fn=max_initializers.variable_to_logically_partitioned,
 )
 

@@ -329,6 +329,16 @@ class TestNNXDecoderGetNormLayer(unittest.TestCase):
     decoder = NNXDecoder(config=cfg, mesh=mesh, rngs=nnx.Rngs(params=0, dropout=1))
     self.assertIsInstance(decoder.decoder_norm, Gpt3LayerNorm)
 
+  def test_qwen3_next_returns_instantiable_qwen3_next_rms_norm(self):
+    cfg = _make_config(model="qwen3-next")
+    mesh = _make_mesh(cfg)
+    decoder = NNXDecoder(config=cfg, mesh=mesh, rngs=nnx.Rngs(params=0, dropout=1))
+
+    norm_ctor = decoder.get_norm_layer(num_features=128, rngs=nnx.Rngs(params=0))
+    norm = norm_ctor(eps=1e-6, dtype=cfg.dtype, weight_dtype=cfg.weight_dtype)
+
+    self.assertIsNotNone(norm)
+
 
 # ---------------------------------------------------------------------------
 # 5. NNXDecoder.get_remat_policy / minimal_policy

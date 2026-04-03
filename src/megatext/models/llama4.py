@@ -301,6 +301,14 @@ def determine_is_moe_layer(layer_id: int, interleave_moe_layer_step: int) -> boo
   )
 
 
+def _llama4_layer_kwargs(layer_id: int, config: Config) -> dict[str, bool]:
+  """Return per-layer kwargs for Llama4 decoder layers."""
+  return {
+      "is_nope_layer": determine_is_nope_layer(layer_id, config.nope_layer_interval),
+      "is_moe_layer": determine_is_moe_layer(layer_id, config.interleave_moe_layer_step),
+  }
+
+
 # -----------------------------------------
 # The Decoder Layer specific for LLama4
 # -----------------------------------------
@@ -526,8 +534,6 @@ class Llama4ScannableBlock(ScannableBlock):
       mesh: Mesh,
       model_mode: str,
       quant: None | Quant = None,
-      nope_layer_interval: int = 1,
-      interleave_moe_layer_step: int = 1,
       *,
       rngs: nnx.Rngs,
   ):
@@ -539,15 +545,7 @@ class Llama4ScannableBlock(ScannableBlock):
       model_mode: One of MODEL_MODE_TRAIN, MODEL_MODE_PREFILL, or MODEL_MODE_AUTOREGRESSIVE.
       rngs: An `nnx.Rngs` object to provide random numbers for initialization.
       quant: An optional configuration for quantization. Defaults to None.
-      nope_layer_interval: Specifies the interval for inserting a NoPE layer.
-      interleave_moe_layer_step: Specifies the interval for inserting a MoE layer.
     """
-
-    def _llama4_layer_kwargs(i, config):
-      return {
-          "is_nope_layer": determine_is_nope_layer(i, nope_layer_interval),
-          "is_moe_layer": determine_is_moe_layer(i, interleave_moe_layer_step),
-      }
 
     super().__init__(
         config, mesh, model_mode, quant,
@@ -555,13 +553,6 @@ class Llama4ScannableBlock(ScannableBlock):
         layer_kwargs_fn=_llama4_layer_kwargs,
         rngs=rngs,
     )
-
-
-Llama4ScannableBlockToLinen = nnx_wrappers.to_linen_class(
-    Llama4ScannableBlock,
-    base_metadata_fn=initializers.variable_to_logically_partitioned,
-)
-
 
 class Llama4VisionEncoderLayer(nnx.Module):
   """Transformer encoder layer for Llama4 vision model."""

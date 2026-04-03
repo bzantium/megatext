@@ -28,7 +28,7 @@ import jax.numpy as jnp
 
 import omegaconf
 
-from megatext.utils.constants import MEGATEXT_CONFIGS_DIR, MEGATEXT_ASSETS_ROOT, HF_IDS, MEGATEXT_PKG_DIR
+from megatext.utils.constants import MEGATEXT_CONFIGS_DIR, MEGATEXT_ASSETS_ROOT, MEGATEXT_PKG_DIR
 from megatext.common.common_types import DecoderBlockType, ShardMode
 from megatext.configs import types
 from megatext.configs.types import MegaTextConfig
@@ -49,6 +49,7 @@ KEYS_NO_LOGGING = ("hf_access_token",)
 # Module paths to their default config file (relative to MEGATEXT_CONFIGS_DIR).
 _CONFIG_FILE_MAPPING: dict[str, str] = {
     "megatext.trainers.pretrain": "base.yaml",
+    "megatext.trainers.profile": "base.yaml",
 }
 
 
@@ -182,17 +183,6 @@ def _prepare_for_pydantic(raw_keys: dict[str, Any]) -> dict[str, Any]:
 
     if key == "run_name" and new_value is None:
       new_value = ""
-
-    if key == "tokenizer_path" and new_value is None:
-      try:
-        new_value = HF_IDS[raw_keys["model"]]
-      except KeyError:
-        new_value = os.path.join(MEGATEXT_ASSETS_ROOT, "tokenizers/tokenizer.llama2")
-        max_logging.warning(
-            "tokenizer_path not found in HF_IDS in megatext/src/megatext/utils/constants.py. \
-          Using the default src/megatext/assets/tokenizers/tokenizer.llama2 instead. \
-          Please pass tokenizer_path in your command if this is not intended."
-        )
 
     # Preprocess muon_consistent_rms to be None or float
     if key == "muon_consistent_rms":

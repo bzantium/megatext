@@ -13,20 +13,19 @@
 # limitations under the License.
 
 """ Tests for the common MaxText utilities """
-import os
+from types import SimpleNamespace
 import unittest
 import numpy as np
 
-from megatext.configs import pyconfig
-from megatext.utils.constants import MEGATEXT_REPO_ROOT
+from megatext.common.common_types import DecoderBlockType
 from megatext.multimodal import processor as mm_processor
 from megatext.multimodal import utils as mm_utils
-from megatext.multimodal import processor_gemma3
+from megatext.multimodal import processor_gemma4
 from megatext.multimodal import processor_llama4
 
 
-class TestTextImageFusionGemma3(unittest.TestCase):
-  """Test inserting place_holder tokens for image"""
+class TestTextImageFusionGemma4(unittest.TestCase):
+  """Test inserting placeholder tokens for image."""
 
   def setUp(self):
     super().setUp()
@@ -36,7 +35,7 @@ class TestTextImageFusionGemma3(unittest.TestCase):
   def test_add_zero_image(self):
     tokens = np.asarray([1, 2, 3, 4, 5, 6])
     num_images = 0
-    new_tokens = processor_gemma3.insert_sequence(
+    new_tokens = processor_gemma4.insert_sequence(
         at=self.BEGIN_IMAGE_TOKEN, sequence=self.mm_tokens, tokens=tokens, max_num_images=num_images
     )
     np.testing.assert_array_equal(new_tokens, tokens)
@@ -44,7 +43,7 @@ class TestTextImageFusionGemma3(unittest.TestCase):
   def test_add_single_image(self):
     tokens = np.asarray([1, 2, 3, self.BEGIN_IMAGE_TOKEN, 5, 6])
     num_images = 1
-    new_tokens = processor_gemma3.insert_sequence(
+    new_tokens = processor_gemma4.insert_sequence(
         at=self.BEGIN_IMAGE_TOKEN, sequence=self.mm_tokens, tokens=tokens, max_num_images=num_images
     )
     expected = np.asarray([1, 2, 3] + self.mm_tokens + [5, 6])
@@ -53,7 +52,7 @@ class TestTextImageFusionGemma3(unittest.TestCase):
   def test_add_two_images(self):
     tokens = np.asarray([1, self.BEGIN_IMAGE_TOKEN, 3, 4, self.BEGIN_IMAGE_TOKEN, 6])
     num_images = 2
-    new_tokens = processor_gemma3.insert_sequence(
+    new_tokens = processor_gemma4.insert_sequence(
         at=self.BEGIN_IMAGE_TOKEN, sequence=self.mm_tokens, tokens=tokens, max_num_images=num_images
     )
     expected = np.asarray([1] + self.mm_tokens + [3, 4] + self.mm_tokens + [6])
@@ -64,7 +63,7 @@ class TestTextImageFusionGemma3(unittest.TestCase):
         [[1, 2, 3, self.BEGIN_IMAGE_TOKEN, 5, 6], [1, self.BEGIN_IMAGE_TOKEN, 3, 4, self.BEGIN_IMAGE_TOKEN, 6]]
     )
     num_images = 2
-    new_tokens = processor_gemma3.insert_sequence(
+    new_tokens = processor_gemma4.insert_sequence(
         at=self.BEGIN_IMAGE_TOKEN, sequence=self.mm_tokens, tokens=tokens, max_num_images=num_images
     )
     expected = np.asarray(
@@ -198,11 +197,7 @@ class TestLlama4PostProcessing(unittest.TestCase):
         pixel_values=dummy_pixel_values,
         aspect_ratios=dummy_aspect_ratios,
     )
-    base_config_path = os.path.join(MEGATEXT_REPO_ROOT, "src", "maxtext", "configs", "base.yaml")
-    config = pyconfig.initialize(
-        ["", base_config_path],
-        model="llama4-17b-16e",
-    )
+    config = SimpleNamespace(decoder_block=DecoderBlockType.LLAMA4)
     image_offsets = mm_processor.get_image_offsets(config=config, processor_output=processor_output)
     post_processed_tokens = processor_llama4.add_extra_tokens_for_images_llama4(dummy_tokens, processor_output)
     self.assertEqual(post_processed_tokens.shape[0], dummy_tokens.shape[0] + image_offsets)

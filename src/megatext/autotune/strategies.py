@@ -33,11 +33,20 @@ BATCH_SIZES = list(range(1, 17))
 # Larger = faster but more memory. Ordered ascending.
 SA_BLOCK_SIZES = [512, 1024, 2048, 4096]
 
-# All splash attention params set to the same value.
-SA_BLOCK_KEYS = [
-    "sa_block_q", "sa_block_kv", "sa_block_kv_compute",
-    "sa_block_q_dkv", "sa_block_kv_dkv", "sa_block_kv_dkv_compute",
-    "sa_block_q_dq", "sa_block_kv_dq",
+# Forward-path splash attention params.
+SA_BLOCK_FORWARD_KEYS = [
+    "sa_block_q",
+    "sa_block_kv",
+    "sa_block_kv_compute",
+]
+
+# Backward-path splash attention params.
+SA_BLOCK_BACKWARD_KEYS = [
+    "sa_block_q_dkv",
+    "sa_block_kv_dkv",
+    "sa_block_kv_dkv_compute",
+    "sa_block_q_dq",
+    "sa_block_kv_dq",
 ]
 
 
@@ -54,6 +63,7 @@ class Candidate:
     gradient_accumulation_steps: int = 1
     scan_layers: bool = True
     sa_block_size: int = 512
+    sa_block_backward_size: int | None = None
 
     @classmethod
     def from_config_dict(cls, config_overrides: dict) -> Candidate:
@@ -67,10 +77,12 @@ class Candidate:
             per_device_batch_size=config_overrides.get("per_device_batch_size", 1.0),
             scan_layers=config_overrides.get("scan_layers", True),
             sa_block_size=config_overrides.get("sa_block_q", 512),
+            sa_block_backward_size=config_overrides.get("sa_block_q_dkv", config_overrides.get("sa_block_q", 512)),
         )
 
     def to_overrides(self) -> dict[str, Any]:
         """Convert to config override dict."""
+        sa_block_backward_size = self.sa_block_backward_size or self.sa_block_size
         return {
             "ici_data_parallelism": 1,
             "ici_fsdp_parallelism": self.ici_fsdp_parallelism,
@@ -81,16 +93,22 @@ class Candidate:
             "per_device_batch_size": self.per_device_batch_size,
             "scan_layers": self.scan_layers,
             "sa_use_fused_bwd_kernel": True,
-            **{k: self.sa_block_size for k in SA_BLOCK_KEYS},
+            **{k: self.sa_block_size for k in SA_BLOCK_FORWARD_KEYS},
+            **{k: sa_block_backward_size for k in SA_BLOCK_BACKWARD_KEYS},
         }
 
     def __repr__(self) -> str:
+        sa_block_repr = (
+            f"sa_block=(fwd={self.sa_block_size},bwd={self.sa_block_backward_size})"
+            if self.sa_block_backward_size is not None and self.sa_block_backward_size != self.sa_block_size
+            else f"sa_block={self.sa_block_size}"
+        )
         return (
             f"Candidate(ici=(fsdp={self.ici_fsdp_parallelism},"
             f"tp={self.ici_tensor_parallelism}), "
             f"dcn=({self.dcn_data_parallelism},{self.dcn_fsdp_parallelism}), "
             f"remat={self.remat_policy}, batch={self.per_device_batch_size}, "
-            f"sa_block={self.sa_block_size})"
+            f"{sa_block_repr})"
         )
 
 

@@ -40,21 +40,8 @@ from megatext.layers.embeddings import attend_on_embedding, embed_as_linen, posi
 from megatext.layers.normalizations import rms_norm
 from megatext.layers.quantizations import AqtQuantization as Quant
 from megatext.models import (
-    deepseek,
     deepseek_batchsplit,
-    gemma,
-    gemma2,
-    gemma3,
     gpt3,
-    gpt_oss,
-    llama2,
-    llama4,
-    mistral,
-    mixtral,
-    olmo3,
-    qwen2,
-    qwen3,
-    simple_layer,
 )
 from megatext.multimodal import utils as mm_utils
 from megatext.utils.sharding import create_sharding
@@ -442,32 +429,48 @@ class Decoder(nn.Module):
     from megatext.common.decoder_registry import get_linen_layers
     return get_linen_layers(self.config.decoder_block, self.config)
 
+  def _get_scannable_block_layer_count(self) -> int | None:
+    from megatext.common.decoder_registry import get_scannable_block_layer_count
+    return get_scannable_block_layer_count(self.config.decoder_block, self.config)
+
+  def _get_scan_iteration_count(self, total_layers: int) -> int:
+    from megatext.common.decoder_registry import get_scan_iteration_count
+    return get_scan_iteration_count(self.config.decoder_block, self.config, total_layers)
+
+  def _get_layer_init_kwargs(self, layer_index: int) -> dict[str, Any]:
+    from megatext.common.decoder_registry import get_layer_init_kwargs
+    return get_layer_init_kwargs(self.config.decoder_block, self.config, layer_index)
+
+  def _get_layer_call_kwargs(self, **context) -> dict[str, Any]:
+    from megatext.common.decoder_registry import get_layer_call_kwargs
+    return get_layer_call_kwargs(self.config.decoder_block, self.config, **context)
+
+  def _remat_block_layer(self, block_layer, policy):
+    if self.config.parameter_memory_host_offload:
+      # Define parameter movement with mesh-based sharding
+      def move_to_device(variables):
+        """Move parameters to device with proper sharding."""
+
+        def map_fn(path, value):
+          max_logging.log(f"models.py: Moving parameter {path} to device")
+          return jax.device_put(value, device_space())
+
+        return jax.tree_util.tree_map_with_path(map_fn, variables)
+
+      block_layer = nn.map_variables(block_layer, ["params"], move_to_device, mutable=True)
+
+    return nn.remat(
+        block_layer,
+        prevent_cse=should_prevent_cse_in_remat(self.config),
+        policy=policy,
+        static_argnums=(4, 5),  # Deterministic and model mode are static arguments.
+    )
+
   def set_remat_policy(self, block_layers, policy):
     """Set remat policy"""
     RemattedBlockLayers = []
     for block_layer in block_layers:
-      if self.config.parameter_memory_host_offload:
-        # Define parameter movement with mesh-based sharding
-        def move_to_device(variables):
-          """Move parameters to device with proper sharding."""
-
-          def map_fn(path, value):
-            max_logging.log(f"models.py: Moving parameter {path} to device")
-            return jax.device_put(value, device_space())
-
-          return jax.tree_util.tree_map_with_path(map_fn, variables)
-
-        # Transform layer class before remat
-        block_layer = nn.map_variables(block_layer, ["params"], move_to_device, mutable=True)
-
-      # Apply remat policy to layer
-      layer = nn.remat(
-          block_layer,
-          prevent_cse=should_prevent_cse_in_remat(self.config),
-          policy=policy,
-          static_argnums=(4, 5),  # Deterministic and model mode are static arguments.
-      )
-      RemattedBlockLayers.append(layer)
+      RemattedBlockLayers.append(self._remat_block_layer(block_layer, policy))
     return RemattedBlockLayers
 
   def get_norm_layer(self, num_features: int):
@@ -565,7 +568,12 @@ class Decoder(nn.Module):
 
     # Merge the image embeddings with the text embeddings for multimodal models
     if image_embeddings is not None and cfg.use_multimodal:
-      if cfg.decoder_block in ["gemma3", "llama4", "qwen3"]:
+      decoder_block = getattr(cfg.decoder_block, "value", cfg.decoder_block)
+      if decoder_block in {
+          DecoderBlockType.GEMMA4.value,
+          DecoderBlockType.LLAMA4.value,
+          DecoderBlockType.QWEN3.value,
+      }:
         y = mm_utils.merge_mm_embeddings(
             text_embeddings=y,
             multimodal_embeddings=image_embeddings,
@@ -577,7 +585,8 @@ class Decoder(nn.Module):
         raise ValueError(f"Unsupported model for multimodal: {cfg.model}")
 
     if audio_embeddings is not None and cfg.use_audio:
-      if cfg.decoder_block == "qwen3":
+      decoder_block = getattr(cfg.decoder_block, "value", cfg.decoder_block)
+      if decoder_block == DecoderBlockType.QWEN3.value:
         y = mm_utils.merge_mm_embeddings(
             text_embeddings=y,
             multimodal_embeddings=audio_embeddings,
@@ -766,15 +775,32 @@ class Decoder(nn.Module):
         if remaining_layers > 0:
           logical_axis_rules_pp_as_dp = sharding.logical_axis_rules_pp_act_as_dp(self.config.logical_axis_rules)
           with self.mesh, nn.partitioning.axis_rules(logical_axis_rules_pp_as_dp):
-            y, _ = self.scan_decoder_layers(
-                cfg,
-                RemattedBlockLayers[0],
-                remaining_layers,
-                "layers_outside_pipeline",
-                mesh,
-                in_axes_tuple=(nn.broadcast,) * len(broadcast_args),
-                model_mode=model_mode,
-            )(y, *broadcast_args)
+            if self._get_scannable_block_layer_count() is not None:
+              scan_length = self._get_scan_iteration_count(remaining_layers)
+              scan_broadcast_args = broadcast_args
+              layer_call_kwargs = self._get_layer_call_kwargs(bidirectional_mask=bidirectional_mask)
+              if layer_call_kwargs:
+                scan_broadcast_args = (*scan_broadcast_args, layer_call_kwargs)
+              y, _ = self.scan_decoder_layers(
+                  cfg,
+                  RemattedBlockLayers[0],
+                  scan_length,
+                  "layers_outside_pipeline",
+                  mesh,
+                  in_axes_tuple=(nn.broadcast,) * len(scan_broadcast_args),
+                  model_mode=model_mode,
+              )(y, *scan_broadcast_args)
+            else:
+              scan_length = self._get_scan_iteration_count(remaining_layers)
+              y, _ = self.scan_decoder_layers(
+                  cfg,
+                  RemattedBlockLayers[0],
+                  scan_length,
+                  "layers_outside_pipeline",
+                  mesh,
+                  in_axes_tuple=(nn.broadcast,) * len(broadcast_args),
+                  model_mode=model_mode,
+              )(y, *broadcast_args)
     else:
       if cfg.scan_layers:
         if cfg.decoder_block == DecoderBlockType.DEEPSEEK:
@@ -864,27 +890,24 @@ class Decoder(nn.Module):
                   in_axes_tuple=(nn.broadcast,) * len(broadcast_args),
                   model_mode=model_mode,
               )(y, *broadcast_args)
-        elif cfg.decoder_block == DecoderBlockType.GEMMA3:
-          y = self._apply_gemma3_scanned_blocks(
-              y,
-              decoder_segment_ids,
-              decoder_positions,
-              deterministic,
-              model_mode,
-              bidirectional_mask,
-              previous_chunk,
-              page_state,
-              slot,
-          )
+        elif self._get_scannable_block_layer_count() is not None:
+          scan_length = self._get_scan_iteration_count(cfg.num_decoder_layers)
+          scan_broadcast_args = broadcast_args
+          layer_call_kwargs = self._get_layer_call_kwargs(bidirectional_mask=bidirectional_mask)
+          if layer_call_kwargs:
+            scan_broadcast_args = (*scan_broadcast_args, layer_call_kwargs)
+          y, _ = self.scan_decoder_layers(
+              cfg,
+              RemattedBlockLayers[0],
+              scan_length,
+              "layers",
+              mesh,
+              in_axes_tuple=(nn.broadcast,) * len(scan_broadcast_args),
+              model_mode=model_mode,
+          )(y, *scan_broadcast_args)
         else:
           RemattedBlockLayer = RemattedBlockLayers[0]
-          scan_length = int(cfg.num_decoder_layers / cfg.inhomogeneous_layer_cycle_interval)
-          layer_kwargs = {}
-          if cfg.decoder_block == DecoderBlockType.LLAMA4:
-            layer_kwargs = {
-                "nope_layer_interval": self.config.nope_layer_interval,
-                "interleave_moe_layer_step": self.config.interleave_moe_layer_step,
-            }
+          scan_length = self._get_scan_iteration_count(cfg.num_decoder_layers)
           y, _ = self.scan_decoder_layers(
               cfg,
               RemattedBlockLayer,
@@ -893,7 +916,6 @@ class Decoder(nn.Module):
               mesh,
               in_axes_tuple=(nn.broadcast,) * len(broadcast_args),
               model_mode=model_mode,
-              **layer_kwargs,
           )(y, *broadcast_args)
       else:
         if cfg.decoder_block == DecoderBlockType.DEEPSEEK:
@@ -938,19 +960,11 @@ class Decoder(nn.Module):
         else:
           for lyr in range(cfg.num_decoder_layers):
             RemattedBlockLayer = RemattedBlockLayers[0]
-            layer_kwargs = {}
-            layer_call_kwargs = {}
-            if cfg.decoder_block == DecoderBlockType.GEMMA3:
-              # Gemma3 uses both global and sliding window attention depending on the layer index.
-              layer_kwargs = {"attention_type": gemma3.get_attention_type(layer_id=lyr)}
-              layer_call_kwargs = {"bidirectional_mask": bidirectional_mask}
-            if cfg.decoder_block == DecoderBlockType.LLAMA4:
-              layer_kwargs = {
-                  "is_nope_layer": llama4.determine_is_nope_layer(lyr, self.config.nope_layer_interval),
-                  "is_moe_layer": llama4.determine_is_moe_layer(lyr, self.config.interleave_moe_layer_step),
-              }
-            if cfg.decoder_block == DecoderBlockType.QWEN3_NEXT:
-              layer_kwargs = {"layer_idx": lyr}
+            layer_kwargs = self._get_layer_init_kwargs(lyr)
+            layer_call_kwargs = self._get_layer_call_kwargs(
+                layer_index=lyr,
+                bidirectional_mask=bidirectional_mask,
+            )
             kv_cache = None
             if kv_caches is not None and cfg.decoder_block != DecoderBlockType.QWEN3_NEXT:
               kv_cache = kv_caches[lyr]
@@ -958,11 +972,6 @@ class Decoder(nn.Module):
               # For Qwen3Next, kv_caches is a dictionary of lists of caches.
               if (lyr + 1) % cfg.inhomogeneous_layer_cycle_interval == 0:
                 kv_cache = (kv_caches["key_cache"][lyr], kv_caches["value_cache"][lyr])
-
-            if cfg.decoder_block == DecoderBlockType.GPT_OSS:
-              layer_kwargs = {"attention_type": gpt_oss.get_attention_type(layer_id=lyr)}
-            if cfg.decoder_block == DecoderBlockType.OLMO3:
-              layer_kwargs = {"attention_type": olmo3.get_attention_type(layer_id=lyr)}
             layer = RemattedBlockLayer(
                 config=cfg, mesh=mesh, name=f"layers_{lyr}", quant=self.quant, model_mode=self.model_mode, **layer_kwargs
             )
@@ -1025,73 +1034,6 @@ class Decoder(nn.Module):
     # The API of the Decoder is now a tuple, providing both the main output
     # and the raw hidden state needed for auxiliary tasks.
     return logits, hidden_state, kv_caches
-
-  def _apply_gemma3_scanned_blocks(
-      self,
-      y,
-      decoder_segment_ids,
-      decoder_positions,
-      deterministic,
-      model_mode,
-      bidirectional_mask,
-      previous_chunk,
-      page_state,
-      slot,
-  ):
-    """Applies Gemma3 scanned decoder blocks, handling main scan and remainders."""
-
-    cfg = self.config
-    mesh = self.mesh
-
-    # Define the repeating pattern length and calculate how many full blocks to scan
-    attention_pattern_length = len(gemma3.GEMMA3_ATTENTION_PATTERN)
-    scan_length = cfg.num_decoder_layers // attention_pattern_length
-
-    policy = self.get_remat_policy()
-    RemattedGemma3Block = self.set_remat_policy([gemma3.Gemma3ScannableBlockToLinen], policy)[0]
-
-    layer_call_kwargs = {"bidirectional_mask": bidirectional_mask}
-    layer_kwargs = {"num_of_layers": attention_pattern_length}
-
-    # Apply the main scan over the full blocks
-    if scan_length > 0:
-      broadcast_args = (
-          decoder_segment_ids,
-          decoder_positions,
-          deterministic,
-          model_mode,
-      )
-      y, _ = self.scan_decoder_layers(
-          cfg,
-          RemattedGemma3Block,
-          scan_length,
-          "layers",
-          mesh,
-          in_axes_tuple=(nn.broadcast,) * len(broadcast_args),
-          model_mode=self.model_mode,
-          **layer_kwargs,
-      )(y, *broadcast_args, **layer_call_kwargs)
-
-    # Apply any remaining layers that did not fit into a full scanned block
-    num_remaining_layers = cfg.num_decoder_layers % attention_pattern_length
-    if num_remaining_layers > 0:
-      # We name the remainder block with a 'remainder' suffix to avoid parameter name collisions
-      rem_layer_kwargs = {"num_of_layers": num_remaining_layers}
-      layer = RemattedGemma3Block(
-          config=cfg, mesh=mesh, quant=self.quant, model_mode=self.model_mode, name="layers_remainder", **rem_layer_kwargs
-      )  # pytype: disable=wrong-keyword-args
-      y, _ = layer(
-          y,
-          decoder_segment_ids,
-          decoder_positions,
-          deterministic,
-          model_mode,
-          previous_chunk=previous_chunk,
-          page_state=page_state,
-          slot=slot,
-          **layer_call_kwargs,
-      )
-    return y
 
   # TODO(b/490118813): Relocate the following functions to their designated directories
   # once the plug-in strategy is implemented: _find_next_boundary(), _apply_single_engram_layer()
