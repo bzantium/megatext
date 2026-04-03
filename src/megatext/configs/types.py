@@ -362,6 +362,7 @@ class ModelArchitecture(BaseModel):
   base_mlp_dim: int = Field(7168, description="Base dimension of the MLP layer.")
   base_num_decoder_layers: int = Field(16, description="Base number of decoder layers.")
   head_dim: int = Field(128, description="Dimension of each attention head.")
+  global_head_dim: int = Field(0, description="Optional head dimension override for global-attention layers.")
   mlp_activations: list[str] = Field(["silu", "linear"], description="Activation functions in the MLP layer.")
   mlp_activations_limit: float = Field(
       -1.0,
@@ -414,11 +415,18 @@ class Attention(BaseModel):
       "autoselected",
       description="The attention algorithm to use (dot_product, flash, etc).",
   )
+  global_num_kv_heads: int = Field(0, description="Optional KV-head override for global-attention layers.")
   share_kv_projections: bool = Field(False, description="If True, Key and Value use the same projection.")
+  qk_norm_with_scale: bool = Field(True, description="Whether query/key RMSNorm keeps a learned scale parameter.")
+  v_norm_with_scale: bool = Field(True, description="Whether value RMSNorm keeps a learned scale parameter.")
   attention_type: Literal["global", "local_sliding", "chunk", "mla", "full"] = Field(
       "global", description="The variant of attention to use."
   )
   attention_sink: bool = Field(False, description="If True, enables attention sinks.")
+  attention_sinks: NonNegativeInt = Field(
+      0,
+      description="Compatibility field for architectures that configure a fixed number of attention sink tokens.",
+  )
   float32_qk_product: bool = Field(False, description="In dot-product attention, cast query-key product to fp32.")
   float32_logits: bool = Field(
       False,
@@ -641,12 +649,20 @@ class DeepSeekMoE(BaseModel):
   """Configuration specific to DeepSeek-style MoE layers."""
 
   base_moe_mlp_dim: int = Field(7168, description="Intermediate dimension at MoE layer (DeepSeek style).")
+  first_k_dense_replace: NonNegativeInt = Field(
+      0,
+      description="Compatibility field for DeepSeek configs that specify the number of initial dense layers.",
+  )
   first_num_dense_layers: NonNegativeInt = Field(0, description="Number of initial dense layers in the model.")
   shared_experts: PositiveInt = Field(1, description="Number of shared experts.")
   routed_scaling_factor: float = Field(1.0, description="Scaling factor for routing scores.")
   routed_score_func: str = Field("", description="Scoring function for routing (e.g., 'softmax', 'sigmoid').")
   routed_bias: bool = Field(False, description="Whether to add a bias term for routing.")
   routed_bias_update_rate: float = Field(0.0, description="Update rate applied to the router bias term.")
+  float32_gate_logits: bool = Field(
+      False,
+      description="Whether to cast MoE gate inputs to float32 before computing router logits.",
+  )
   mlp_bias: bool = Field(
       False,
       description="Whether to add a learnable bias for MLP matmul, "
@@ -1128,6 +1144,9 @@ class Rope(BaseModel):
   rope_max_timescale: int = Field(10_000, description="The maximum timescale for global attention RoPE.")
   rope_linear_scaling_factor: float = Field(1.0, description="Linear scaling factor for 'default' RoPE implementation.")
   local_rope_max_timescale: int = Field(-1, description="If positive, used for local window attention RoPE.")
+  global_rope_max_timescale: int = Field(-1, description="If positive, used for global attention RoPE overrides.")
+  global_rope_proportion: float = Field(1.0, description="Fraction of global-attention head dims using RoPE.")
+  local_rope_proportion: float = Field(1.0, description="Fraction of local-attention head dims using RoPE.")
 
 
 class YarnRope(BaseModel):
@@ -1341,7 +1360,7 @@ class MultimodalGeneral(BaseModel):
   freeze_vision_encoder_params: bool = Field(True, description="Freeze the parameters of the vision encoder.")
   freeze_audio_encoder_params: bool = Field(True, description="Freeze the parameters of the audio encoder.")
   use_audio: bool = Field(False, description="Enable audio encoder for multimodal models.")
-  image_size_for_vit: int = Field(896, description="Input image size for the Vision Transformer.")
+  image_size_for_vit: int | list[int] = Field(896, description="Input image size for the Vision Transformer.")
   image_path: PathStr = Field("", description="Path to an image for decoding.")
   image_placeholder: str = Field("<|image|>", description="Placeholder string for images in text prompts.")
   posemb_type_for_vit: str = Field("learn", description="Positional embedding type for the vision encoder.")
@@ -1373,6 +1392,7 @@ class VisionTower(BaseModel):
   )
   num_hidden_layers_for_vit: int = Field(34, description="Number of hidden layers in the Vision Transformer.")
   rope_theta_for_vit: int = Field(10000, description="RoPE theta value for the Vision Transformer.")
+  vision_output_length: int = Field(280, description="Number of pooled soft vision tokens emitted by the encoder.")
   vision_output_dim_for_vit: int = Field(4096, description="Final output dimension of the vision-to-language projection.")
   spatial_merge_size_for_vit: int = Field(2, description="Spatial merge factor for vision patches.")
   out_hidden_size_for_vit: int = Field(512, description="Output dimension of ViT.")
@@ -1672,6 +1692,11 @@ class MegaTextConfig(
   @model_validator(mode="after")
   def set_derived_and_validate_values(self) -> "MegaTextConfig":
     """Computes all derived values and runs all cross-field validations after initial parsing."""
+    if self.attention_sinks > 0:
+      self.attention_sink = True
+    if self.first_num_dense_layers == 0 and self.first_k_dense_replace > 0:
+      self.first_num_dense_layers = self.first_k_dense_replace
+
     if self.custom_mesh_and_rule:
       custom_mesh_path = os.path.join(
           os.path.dirname(os.path.abspath(__file__)),
@@ -2152,6 +2177,8 @@ class MegaTextConfig(
           self.base_mlp_dim = self.base_moe_mlp_dim
           _, _, mlp_dim_scale, _ = get_individual_scales(self.global_parameter_scale)
           self.mlp_dim = (2**mlp_dim_scale) * self.base_mlp_dim
+        elif self.decoder_block == DecoderBlockType.GEMMA4:
+          pass
         else:
           raise ValueError(
               "For a fully MoE model, base_mlp_dim must equal base_moe_mlp_dim. "
@@ -2163,9 +2190,8 @@ class MegaTextConfig(
         raise ValueError("Loss-free load balancing is only supported for the DeepSeek decoder block.")
     if self.use_multimodal:
       valid_mm_models = (
-          "gemma3-4b",
-          "gemma3-12b",
-          "gemma3-27b",
+          "gemma4-moe",
+          "gemma4",
           "llama4-17b-16e",
           "llama4-17b-128e",
           "qwen3-omni-30b-a3b",
@@ -2264,7 +2290,7 @@ class MegaTextConfig(
         DecoderBlockType.DEEPSEEK,
         DecoderBlockType.QWEN3,
         DecoderBlockType.QWEN3_SWA,
-        DecoderBlockType.GEMMA3,
+        DecoderBlockType.GEMMA4,
         DecoderBlockType.LLAMA2,
     ]:
       raise ValueError(
@@ -2345,5 +2371,5 @@ class MegaTextConfig(
 
     return self
 
-# Alias for naming consistency
-MegaTextConfig = MegaTextConfig
+# Alias for naming consistency with older imports/tests.
+MegatextConfig = MegaTextConfig

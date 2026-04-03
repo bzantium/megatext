@@ -14,7 +14,12 @@
 
 """Multimodal data preprocessor router."""
 
+from megatext.common.common_types import DecoderBlockType
 from megatext.multimodal import utils as mm_utils
+
+
+def _decoder_block_value(decoder_block) -> str:
+  return getattr(decoder_block, "value", decoder_block)
 
 
 def preprocess_mm_data(config):
@@ -29,17 +34,19 @@ def preprocess_mm_data(config):
   """
   processor_outputs = mm_utils.PreprocessorOutput()
 
-  if config.decoder_block == "gemma3":
-    from megatext.multimodal.processor_gemma3 import preprocess_mm_data_gemma3  # pylint: disable=import-outside-toplevel
+  decoder_block = _decoder_block_value(config.decoder_block)
+
+  if decoder_block == DecoderBlockType.GEMMA4.value:
+    from megatext.multimodal.processor_gemma4 import preprocess_mm_data_gemma4  # pylint: disable=import-outside-toplevel
 
     images = [mm_utils.load_image_from_path(p) for p in config.image_path.split(",")]
-    processor_outputs = preprocess_mm_data_gemma3(images)
-  elif config.decoder_block == "llama4":
+    processor_outputs = preprocess_mm_data_gemma4(images)
+  elif decoder_block == DecoderBlockType.LLAMA4.value:
     from megatext.multimodal.processor_llama4 import preprocess_mm_data_llama4  # pylint: disable=import-outside-toplevel
 
     images = [mm_utils.load_image_from_path(p) for p in config.image_path.split(",")]
     processor_outputs = preprocess_mm_data_llama4(images)
-  elif config.decoder_block == "qwen3":
+  elif decoder_block == DecoderBlockType.QWEN3.value:
     from megatext.multimodal.processor_qwen3_omni import preprocess_mm_data_qwen3_omni  # pylint: disable=import-outside-toplevel
 
     processor_outputs = preprocess_mm_data_qwen3_omni(config)
@@ -51,11 +58,12 @@ def preprocess_mm_data(config):
 
 def preprocess_image_for_training(image, decoder_block):
   """Preprocesses a single image for training based on the decoder block type."""
-  if decoder_block == "gemma3":
-    from megatext.multimodal.processor_gemma3 import preprocess_mm_data_gemma3  # pylint: disable=import-outside-toplevel
+  decoder_block = _decoder_block_value(decoder_block)
+  if decoder_block == DecoderBlockType.GEMMA4.value:
+    from megatext.multimodal.processor_gemma4 import preprocess_mm_data_gemma4  # pylint: disable=import-outside-toplevel
 
-    return preprocess_mm_data_gemma3(image)
-  elif decoder_block == "llama4":
+    return preprocess_mm_data_gemma4(image)
+  elif decoder_block == DecoderBlockType.LLAMA4.value:
     from megatext.multimodal.processor_llama4 import preprocess_mm_data_llama4  # pylint: disable=import-outside-toplevel
 
     return preprocess_mm_data_llama4(image)
@@ -65,15 +73,16 @@ def preprocess_image_for_training(image, decoder_block):
 
 def get_image_offsets(config, processor_output: mm_utils.PreprocessorOutput | None):
   """Get the increase in total token count after inserting image token placeholders"""
-  if config.decoder_block == "gemma3":
-    from megatext.multimodal.processor_gemma3 import get_image_offsets_gemma3  # pylint: disable=import-outside-toplevel
+  decoder_block = _decoder_block_value(config.decoder_block)
+  if decoder_block == DecoderBlockType.GEMMA4.value:
+    from megatext.multimodal.processor_gemma4 import get_image_offsets_gemma4  # pylint: disable=import-outside-toplevel
 
-    return get_image_offsets_gemma3(processor_output)
-  elif config.decoder_block == "llama4":
+    return get_image_offsets_gemma4(processor_output)
+  elif decoder_block == DecoderBlockType.LLAMA4.value:
     from megatext.multimodal.processor_llama4 import get_image_offsets_llama4  # pylint: disable=import-outside-toplevel
 
     return get_image_offsets_llama4(processor_output)
-  elif config.decoder_block == "qwen3":
+  elif decoder_block == DecoderBlockType.QWEN3.value:
     from megatext.multimodal.processor_qwen3_omni import get_mm_offsets_qwen3_omni  # pylint: disable=import-outside-toplevel
 
     return get_mm_offsets_qwen3_omni(config, processor_output)
@@ -83,15 +92,16 @@ def get_image_offsets(config, processor_output: mm_utils.PreprocessorOutput | No
 
 def reformat_prompt(prompt, image_placeholder, decoder_block, num_images, video_placeholder="<|video|>", num_videos=0):
   """Reformat prompt for different models."""
-  if decoder_block == "gemma3":
-    from megatext.multimodal.processor_gemma3 import reformat_prompt_gemma3  # pylint: disable=import-outside-toplevel
+  decoder_block = _decoder_block_value(decoder_block)
+  if decoder_block == DecoderBlockType.GEMMA4.value:
+    from megatext.multimodal.processor_gemma4 import reformat_prompt_gemma4  # pylint: disable=import-outside-toplevel
 
-    return reformat_prompt_gemma3(prompt, image_placeholder, num_images)
-  elif decoder_block == "llama4":
+    return reformat_prompt_gemma4(prompt, image_placeholder, num_images)
+  elif decoder_block == DecoderBlockType.LLAMA4.value:
     from megatext.multimodal.processor_llama4 import reformat_prompt_llama4  # pylint: disable=import-outside-toplevel
 
     return reformat_prompt_llama4(prompt, image_placeholder, num_images)
-  elif decoder_block == "qwen3":
+  elif decoder_block == DecoderBlockType.QWEN3.value:
     from megatext.multimodal.processor_qwen3_omni import reformat_prompt_qwen3_omni  # pylint: disable=import-outside-toplevel
 
     return reformat_prompt_qwen3_omni(
@@ -107,13 +117,14 @@ def reformat_prompt(prompt, image_placeholder, decoder_block, num_images, video_
 
 def reformat_response(response, decoder_block):
   """Reformat response for different models."""
-  if decoder_block == "llama4":
+  decoder_block = _decoder_block_value(decoder_block)
+  if decoder_block == DecoderBlockType.LLAMA4.value:
     formatted_response = f"{response}<|eot|>"
     return formatted_response
-  elif decoder_block == "gemma3":
+  elif decoder_block == DecoderBlockType.GEMMA4.value:
     formatted_response = f"{response}<end_of_turn>"
     return formatted_response
-  elif decoder_block == "qwen3":
+  elif decoder_block == DecoderBlockType.QWEN3.value:
     formatted_response = f"{response}<|im_end|>"
     return formatted_response
   else:
@@ -122,15 +133,16 @@ def reformat_response(response, decoder_block):
 
 def prepare_text_for_image_fusion(tokens, config, processor_output=None):
   """Prepare text by adding extra tokens for image fusion based on the model."""
-  if config.decoder_block == "gemma3":
-    from megatext.multimodal.processor_gemma3 import add_extra_tokens_for_images_gemma3  # pylint: disable=import-outside-toplevel
+  decoder_block = _decoder_block_value(config.decoder_block)
+  if decoder_block == DecoderBlockType.GEMMA4.value:
+    from megatext.multimodal.processor_gemma4 import add_extra_tokens_for_images_gemma4  # pylint: disable=import-outside-toplevel
 
-    return add_extra_tokens_for_images_gemma3(tokens, max_num_images=processor_output.num_images)
-  elif config.decoder_block == "llama4":
+    return add_extra_tokens_for_images_gemma4(tokens, max_num_images=processor_output.num_images)
+  elif decoder_block == DecoderBlockType.LLAMA4.value:
     from megatext.multimodal.processor_llama4 import add_extra_tokens_for_images_llama4  # pylint: disable=import-outside-toplevel
 
     return add_extra_tokens_for_images_llama4(tokens, processor_output)
-  elif config.decoder_block == "qwen3":
+  elif decoder_block == DecoderBlockType.QWEN3.value:
     from megatext.multimodal.processor_qwen3_omni import add_extra_tokens_for_qwen3_omni  # pylint: disable=import-outside-toplevel
 
     return add_extra_tokens_for_qwen3_omni(tokens, config, processor_output)
@@ -140,16 +152,17 @@ def prepare_text_for_image_fusion(tokens, config, processor_output=None):
 
 def get_dummy_image_shape_for_init(decoder_block, batch_size=1, num_image_per_sequence=1):
   """Return the shape of the dummy image for specific model's initialization."""
+  decoder_block = _decoder_block_value(decoder_block)
   image_shape = ()
-  if decoder_block == "gemma3":
-    from megatext.multimodal.processor_gemma3 import get_dummy_image_shape_for_init_gemma3  # pylint: disable=import-outside-toplevel
+  if decoder_block == DecoderBlockType.GEMMA4.value:
+    from megatext.multimodal.processor_gemma4 import get_dummy_image_shape_for_init_gemma4  # pylint: disable=import-outside-toplevel
 
-    image_shape = get_dummy_image_shape_for_init_gemma3(batch_size, num_image_per_sequence)
-  elif decoder_block == "llama4":
+    image_shape = get_dummy_image_shape_for_init_gemma4(batch_size, num_image_per_sequence)
+  elif decoder_block == DecoderBlockType.LLAMA4.value:
     from megatext.multimodal.processor_llama4 import get_dummy_image_shape_for_init_llama4  # pylint: disable=import-outside-toplevel
 
     image_shape = get_dummy_image_shape_for_init_llama4(batch_size, num_image_per_sequence)
-  elif decoder_block == "qwen3":
+  elif decoder_block == DecoderBlockType.QWEN3.value:
     from megatext.multimodal.processor_qwen3_omni import get_dummy_image_shape_for_init_qwen3_omni  # pylint: disable=import-outside-toplevel
 
     image_shape = get_dummy_image_shape_for_init_qwen3_omni(batch_size)
@@ -167,7 +180,7 @@ def get_dummy_audio_shape_for_init(config):
     Returns empty tuple if audio is not configured for the model
   """
   audio_shape = ()
-  if config.decoder_block == "qwen3":
+  if _decoder_block_value(config.decoder_block) == DecoderBlockType.QWEN3.value:
     from megatext.multimodal.processor_qwen3_omni import get_dummy_audio_shape_for_init_qwen3_omni  # pylint: disable=import-outside-toplevel
 
     audio_shape = get_dummy_audio_shape_for_init_qwen3_omni(config)
@@ -178,15 +191,16 @@ def get_dummy_audio_shape_for_init(config):
 def get_bidirectional_mask_vision(config, decoder_input_tokens):
   """Get the bidirectional mask for specific models."""
   bidirectional_mask_vision = None
-  if config.decoder_block == "gemma3":
-    from megatext.multimodal.processor_gemma3 import GEMMA_TOKEN_PLACEHOLDER  # pylint: disable=import-outside-toplevel
+  decoder_block = _decoder_block_value(config.decoder_block)
+  if decoder_block == DecoderBlockType.GEMMA4.value:
+    from megatext.multimodal.processor_gemma4 import GEMMA4_TOKEN_PLACEHOLDER  # pylint: disable=import-outside-toplevel
 
-    bidirectional_mask_vision = decoder_input_tokens == GEMMA_TOKEN_PLACEHOLDER
-  elif config.decoder_block == "llama4":
+    bidirectional_mask_vision = decoder_input_tokens == GEMMA4_TOKEN_PLACEHOLDER
+  elif decoder_block == DecoderBlockType.LLAMA4.value:
     from megatext.multimodal.processor_llama4 import LLAMA4_PATCH_TOKEN  # pylint: disable=import-outside-toplevel
 
     bidirectional_mask_vision = decoder_input_tokens == LLAMA4_PATCH_TOKEN
-  elif config.decoder_block == "qwen3":
+  elif decoder_block == DecoderBlockType.QWEN3.value:
     from megatext.multimodal.processor_qwen3_omni import QWEN3_OMNI_IMAGE_TOKEN, QWEN3_OMNI_VIDEO_TOKEN  # pylint: disable=import-outside-toplevel
 
     # Create bidirectional_mask for vision/video token merging
@@ -200,7 +214,7 @@ def get_bidirectional_mask_vision(config, decoder_input_tokens):
 def get_bidirectional_mask_audio(config, decoder_input_tokens):
   """Get the bidirectional mask for specific models."""
   bidirectional_mask_audio = None
-  if config.decoder_block == "qwen3":
+  if _decoder_block_value(config.decoder_block) == DecoderBlockType.QWEN3.value:
     from megatext.multimodal.processor_qwen3_omni import QWEN3_OMNI_AUDIO_TOKEN  # pylint: disable=import-outside-toplevel
 
     # Create bidirectional_mask for audio token merging

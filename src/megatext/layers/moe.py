@@ -457,6 +457,15 @@ class RoutedMoE(nnx.Module):
       self.wi_1_bias = None
       self.wo_bias = None
 
+    decoder_block = getattr(self.config.decoder_block, "value", self.config.decoder_block)
+    if decoder_block == ctypes.DecoderBlockType.GEMMA4.value:
+      self.per_expert_scale = nnx.Param(
+          jnp.ones((self.num_experts,), dtype=self.weight_dtype),
+          sharding=("exp",),
+      )
+    else:
+      self.per_expert_scale = None
+
   def _maybe_shard_with_logical(self, inputs, logical_name):
     return maybe_shard_with_logical(
         inputs,
@@ -504,14 +513,23 @@ class RoutedMoE(nnx.Module):
       top_k_weights, top_k_indices = random_routing(rng, gate_logits, self.num_experts_per_tok)
       return top_k_weights, top_k_indices
 
-    if self.config.decoder_block == "deepseek":
+    decoder_block = getattr(self.config.decoder_block, "value", self.config.decoder_block)
+
+    if decoder_block == ctypes.DecoderBlockType.DEEPSEEK.value:
       top_k_weights, top_k_indices = self.deepseek_routing(gate_logits, pre_bias_logits)
+    elif decoder_block == ctypes.DecoderBlockType.GEMMA4.value:
+      router_probs = jax.nn.softmax(gate_logits.astype(jnp.float32), axis=-1)
+      _, top_k_indices = jax.lax.top_k(gate_logits, self.num_experts_per_tok)
+      top_k_weights = jnp.take_along_axis(router_probs, top_k_indices, axis=-1).astype(self.dtype)
     else:
       top_k_weights, top_k_indices = jax.lax.top_k(gate_logits, self.num_experts_per_tok)
 
-    if self.config.decoder_block == ctypes.DecoderBlockType.DEEPSEEK:
+    if decoder_block == ctypes.DecoderBlockType.DEEPSEEK.value:
       top_k_weights = self.deepseek_scale_weights(top_k_weights)
-    elif self.config.decoder_block != ctypes.DecoderBlockType.LLAMA4:
+    elif decoder_block not in (
+        ctypes.DecoderBlockType.LLAMA4.value,
+        ctypes.DecoderBlockType.GEMMA4.value,
+    ):
       top_k_weights = jax.nn.softmax(top_k_weights.astype(jnp.float32), axis=-1).astype(self.dtype)
 
     # This is the Qwen3-specific normalization of router weights.
@@ -1640,11 +1658,12 @@ class RoutedMoE(nnx.Module):
       einsum_name: str | None = None,
   ):
     """Get the Einstein summation."""
+    model_call_mode = getattr(self.config, "model_call_mode", "train")
 
     # the check is to prevent aqteinsum as einsum op for dispatch and combine
     # einsums in ase when capacity_factor > 0
     # this is necessary to load pre-quantized weights in case of inference
-    if self.config.model_call_mode == "inference" and einsum_name in (
+    if model_call_mode == "inference" and einsum_name in (
         DISPATCH,
         COMBINE,
     ):
@@ -1690,6 +1709,7 @@ class RoutedMoE(nnx.Module):
       wo_bias,
   ) -> tuple[jax.Array, Optional[jax.Array], Optional[jax.Array]]:
     """Dense matrix multiplication."""
+    model_call_mode = getattr(self.config, "model_call_mode", "train")
     # gate_logits: batch, length, expert
     gate_logits = self._maybe_shard_with_logical(
         gate_logits, ("activation_batch_moe", "activation_length_no_exp_moe", None)
@@ -1709,7 +1729,7 @@ class RoutedMoE(nnx.Module):
     matmul_precision = jax.lax.Precision(self.config.matmul_precision)
 
     # Calculate load balance loss
-    if self.config.model_call_mode != "inference":
+    if model_call_mode != "inference":
       softmax_probs = jax.nn.softmax(gate_logits.astype(jnp.float32), axis=-1).astype(self.dtype)
       lb_loss = (
           self.load_balance_loss(top_k_indices, softmax_probs) if self.config.load_balance_loss_weight > 0.0 else None
@@ -1732,7 +1752,7 @@ class RoutedMoE(nnx.Module):
 
     if self.config.capacity_factor > 0:
       # token dropping if needed
-      if self.config.model_call_mode != "inference":
+      if model_call_mode != "inference":
         # TODO(b/425930949): remove this pylint by refactoring the logic here.
         dispatch_mask, combine_mask = self.generate_masks(
             top_k_indices, weights  # pylint: disable=undefined-variable,possibly-used-before-assignment
@@ -1894,7 +1914,7 @@ class RoutedMoE(nnx.Module):
           intermediate_layer = intermediate_layer + wo_bias
         if self.config.activations_in_float32:
           intermediate_layer = intermediate_layer.astype(jnp.float32)
-        if self.config.model_call_mode != "inference":
+        if model_call_mode != "inference":
           intermediate_layer = self._maybe_shard_with_logical(
               intermediate_layer,
               (
@@ -2004,15 +2024,22 @@ class RoutedMoE(nnx.Module):
     return w0_kernel, w1_kernel, wo_kernel
 
   def __call__(
-      self, inputs: jax.Array, out_sharding: NamedSharding | None = None
+      self,
+      inputs: jax.Array,
+      gate_inputs: jax.Array | None = None,
+      out_sharding: NamedSharding | None = None,
   ) -> tuple[jax.Array, Optional[jax.Array], Optional[jax.Array]]:
     cfg = self.config
     inputs = inputs.astype(cfg.dtype)
-    gate_logits, pre_bias_logits = self.gate(inputs)
+    gate_dtype = jnp.float32 if cfg.float32_gate_logits else cfg.dtype
+    gate_source = (inputs if gate_inputs is None else gate_inputs).astype(gate_dtype)
+    gate_logits, pre_bias_logits = self.gate(gate_source)
 
     w0_kernel = jnp.asarray(self.wi_0[...], self.dtype)
     w1_kernel = jnp.asarray(self.wi_1[...], self.dtype)
     wo_kernel = jnp.asarray(self.wo[...], self.dtype)
+    if self.per_expert_scale is not None:
+      wo_kernel = wo_kernel * jnp.asarray(self.per_expert_scale[...], self.dtype)[:, None, None]
 
     if cfg.mlp_bias:
       w0_bias = jnp.asarray(self.wi_0_bias[...], self.dtype)
@@ -2096,7 +2123,12 @@ class RoutedAndSharedMoE(nnx.Module):
     self.shared_experts = linears.MlpBlock(
         mesh=self.mesh,
         in_features=self.config.emb_dim,
-        intermediate_dim=self.config.shared_experts * self.config.moe_mlp_dim,
+        intermediate_dim=self.config.shared_experts
+        * (
+            self.config.mlp_dim
+            if self.config.decoder_block in (ctypes.DecoderBlockType.GEMMA4, ctypes.DecoderBlockType.GEMMA4.value)
+            else self.config.moe_mlp_dim
+        ),
         activations=self.config.mlp_activations,
         intermediate_dropout_rate=self.config.dropout_rate,
         dtype=self.config.dtype,
@@ -2113,10 +2145,17 @@ class RoutedAndSharedMoE(nnx.Module):
   def __call__(
       self,
       inputs: jax.Array,
+      original_inputs: jax.Array | None = None,
+      gate_inputs: jax.Array | None = None,
       intermediate_sharding: NamedSharding | None = None,
       out_sharding: NamedSharding | None = None,
   ) -> tuple[jax.Array, Optional[jax.Array], Optional[jax.Array]]:
-    routed_experts, load_balance_loss, moe_bias_updates = self.routed_moe(inputs, out_sharding=out_sharding)
+    del original_inputs
+    routed_experts, load_balance_loss, moe_bias_updates = self.routed_moe(
+        inputs,
+        gate_inputs=gate_inputs,
+        out_sharding=out_sharding,
+    )
     shared_experts = self.shared_experts(inputs, intermediate_sharding=intermediate_sharding, out_sharding=out_sharding)
     return routed_experts + shared_experts, load_balance_loss, moe_bias_updates
 

@@ -135,6 +135,70 @@ class FlopCalculation(unittest.TestCase):
 
     return (full_attn_flops + linear_attn_flops) / 1e12
 
+  def compute_ffn_matmul_flops_per_device(self, batch_size, seq_len, emb_dim, mlp_dim, num_activations=2) -> float:
+    ffn1_flops = 2 * batch_size * seq_len * mlp_dim * emb_dim * num_activations
+    ffn2_flops = 2 * batch_size * seq_len * mlp_dim * emb_dim
+    return ffn1_flops + ffn2_flops
+
+  def compute_gemma4_tflops_per_device(self, kwargs: dict):
+    """Computes Gemma4 training TFLOPs/device for dense and MoE variants."""
+    B = kwargs["per_device_batch_size"]
+    S = kwargs["max_target_length"]
+    E = kwargs["base_emb_dim"]
+    N = kwargs["base_num_decoder_layers"]
+    H_q = kwargs["base_num_query_heads"]
+    H_kv = kwargs["base_num_kv_heads"]
+    D_local = kwargs["head_dim"]
+    D_global = kwargs.get("global_head_dim", 0) or D_local
+    H_kv_global = kwargs.get("global_num_kv_heads", 0) or H_kv
+    window = min(kwargs["sliding_window_size"], S)
+    share_kv = kwargs.get("share_kv_projections", False)
+
+    num_global_layers = N // 6
+    num_local_layers = N - num_global_layers
+
+    def projection_flops(*, num_kv_heads, head_dim, share_kv_projections):
+      query_flops = 2 * B * S * E * H_q * head_dim
+      key_flops = 2 * B * S * E * num_kv_heads * head_dim
+      value_flops = 0 if share_kv_projections else key_flops
+      out_flops = 2 * B * S * E * H_q * head_dim
+      return query_flops + key_flops + value_flops + out_flops
+
+    local_projection_flops = projection_flops(
+        num_kv_heads=H_kv,
+        head_dim=D_local,
+        share_kv_projections=False,
+    )
+    global_projection_flops = projection_flops(
+        num_kv_heads=H_kv_global,
+        head_dim=D_global,
+        share_kv_projections=share_kv,
+    )
+
+    local_attention_flops = 2 * 3 * num_local_layers * B * S * window * H_q * D_local
+    global_attention_flops = 2 * 3 * num_global_layers * B * (S**2) * H_q * D_global
+    attention_tflops = (local_attention_flops + global_attention_flops) / 1e12
+
+    if kwargs.get("num_experts", 1) > 1:
+      moe_mlp_dim = kwargs["base_moe_mlp_dim"]
+      num_experts = kwargs["num_experts"]
+      num_experts_per_tok = kwargs["num_experts_per_tok"]
+      shared_experts = kwargs["shared_experts"]
+      gate_flops = 2 * B * S * E * num_experts
+      expert_flops = self.compute_ffn_matmul_flops_per_device(B, S, E, moe_mlp_dim)
+      total_ffn_flops = (gate_flops + expert_flops * (shared_experts + num_experts_per_tok)) * N
+    else:
+      total_ffn_flops = self.compute_ffn_matmul_flops_per_device(B, S, E, kwargs["base_mlp_dim"]) * N
+
+    embedding_flops = 2 * B * S * E * kwargs["vocab_size"]
+    projection_weight_flops = (
+        num_local_layers * local_projection_flops
+        + num_global_layers * global_projection_flops
+    )
+    learnable_weight_tflops = 3 * (total_ffn_flops + projection_weight_flops + embedding_flops) / 1e12
+
+    return learnable_weight_tflops + attention_tflops, learnable_weight_tflops, attention_tflops
+
   @pytest.mark.cpu_only
   def test_qwen3_next_flops(self):
     """Test Qwen3-Next Flops calculation"""
@@ -436,6 +500,76 @@ class FlopCalculation(unittest.TestCase):
     )
     calculated_tflops, _, _ = calculate_tflops_training_per_device(cfg)
     self.assertFlopsAlmostEqual(calculated_tflops, golden_tflops)
+
+  @pytest.mark.cpu_only
+  def test_gemma4_dense_flops(self):
+    """Test Gemma4 dense TFLOPs with local/global attention-specific projections."""
+    kwargs = {
+        "model": "gemma4",
+        "override_model_config": True,
+        "per_device_batch_size": 2,
+        "max_target_length": 1024,
+        "gradient_accumulation_steps": 1,
+        "decoder_block": "gemma4",
+        "base_emb_dim": 512,
+        "base_mlp_dim": 2048,
+        "base_num_query_heads": 8,
+        "base_num_kv_heads": 4,
+        "base_num_decoder_layers": 6,
+        "head_dim": 64,
+        "global_head_dim": 128,
+        "global_num_kv_heads": 2,
+        "share_kv_projections": True,
+        "sliding_window_size": 256,
+        "vocab_size": 32000,
+        "mlp_activations": ["gelu", "linear"],
+        "skip_jax_distributed_system": True,
+    }
+
+    golden_tflops, golden_weight_tflops, golden_attention_tflops = self.compute_gemma4_tflops_per_device(kwargs)
+    cfg = pyconfig.initialize([None, get_test_config_path()], **kwargs)
+    calculated_tflops, calculated_weight_tflops, calculated_attention_tflops = calculate_tflops_training_per_device(cfg)
+
+    self.assertFlopsAlmostEqual(calculated_tflops, golden_tflops, rel_tol=1e-6)
+    self.assertFlopsAlmostEqual(calculated_weight_tflops, golden_weight_tflops, rel_tol=1e-6)
+    self.assertFlopsAlmostEqual(calculated_attention_tflops, golden_attention_tflops, rel_tol=1e-6)
+
+  @pytest.mark.cpu_only
+  def test_gemma4_moe_flops(self):
+    """Test Gemma4 MoE TFLOPs without double-counting model-level FFN FLOPs."""
+    kwargs = {
+        "model": "gemma4-moe",
+        "override_model_config": True,
+        "per_device_batch_size": 2,
+        "max_target_length": 1024,
+        "gradient_accumulation_steps": 1,
+        "decoder_block": "gemma4",
+        "base_emb_dim": 512,
+        "base_moe_mlp_dim": 256,
+        "base_mlp_dim": 512,
+        "base_num_query_heads": 8,
+        "base_num_kv_heads": 4,
+        "base_num_decoder_layers": 6,
+        "head_dim": 64,
+        "global_head_dim": 128,
+        "global_num_kv_heads": 2,
+        "share_kv_projections": True,
+        "sliding_window_size": 256,
+        "num_experts": 16,
+        "num_experts_per_tok": 2,
+        "shared_experts": 1,
+        "vocab_size": 32000,
+        "mlp_activations": ["gelu", "linear"],
+        "skip_jax_distributed_system": True,
+    }
+
+    golden_tflops, golden_weight_tflops, golden_attention_tflops = self.compute_gemma4_tflops_per_device(kwargs)
+    cfg = pyconfig.initialize([None, get_test_config_path()], **kwargs)
+    calculated_tflops, calculated_weight_tflops, calculated_attention_tflops = calculate_tflops_training_per_device(cfg)
+
+    self.assertFlopsAlmostEqual(calculated_tflops, golden_tflops, rel_tol=1e-6)
+    self.assertFlopsAlmostEqual(calculated_weight_tflops, golden_weight_tflops, rel_tol=1e-6)
+    self.assertFlopsAlmostEqual(calculated_attention_tflops, golden_attention_tflops, rel_tol=1e-6)
 
   @pytest.mark.cpu_only
   def test_deepseek32_671b_flops(self):

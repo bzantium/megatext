@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any
 
 import numpy as np
@@ -92,25 +93,61 @@ def _load_hf_config(
     )
 
 
+def _is_multimodal_hf_model(model_type: str, hf_config: Any) -> bool:
+    return model_type == "gemma4" and getattr(hf_config, "vision_config", None) is not None
+
+
+def _load_hf_model_for_conversion(
+    hf_model_path: str,
+    hf_config: Any,
+    *,
+    hf_token: str | None = None,
+):
+    import torch
+    from transformers import AutoModelForCausalLM, AutoModelForImageTextToText
+
+    common_kwargs = dict(
+        token=hf_token,
+        torch_dtype=torch.bfloat16,
+        low_cpu_mem_usage=True,
+        trust_remote_code=True,
+    )
+    model_type = _resolve_model_type(hf_config)
+    if _is_multimodal_hf_model(model_type, hf_config):
+        return AutoModelForImageTextToText.from_pretrained(hf_model_path, **common_kwargs)
+    return AutoModelForCausalLM.from_pretrained(hf_model_path, **common_kwargs)
+
+
+def _init_hf_model_for_save(hf_config: Any):
+    import torch
+    from transformers import AutoModelForCausalLM, AutoModelForImageTextToText
+
+    model_type = _resolve_model_type(hf_config)
+    if _is_multimodal_hf_model(model_type, hf_config):
+        return AutoModelForImageTextToText.from_config(hf_config, torch_dtype=torch.bfloat16)
+    return AutoModelForCausalLM.from_config(hf_config, torch_dtype=torch.bfloat16)
+
+
 # ── Shape computation ────────────────────────────────────────────────────────
 
 
 def compute_megatext_shapes(
-    cfg: Any, arch: ArchSpec, scan_layers: bool,
+    hf_config: Any, arch: ArchSpec, scan_layers: bool,
     *, tie_word_embeddings: bool = False,
 ) -> dict[str, tuple]:
     """Compute Megatext param shapes from HF config dims."""
     builder = SHAPE_BUILDERS.get(arch.model_type)
     if builder is not None:
-        return builder(cfg, arch, scan_layers, tie_word_embeddings=tie_word_embeddings)
-    return _compute_dense_shapes(cfg, arch, scan_layers, tie_word_embeddings=tie_word_embeddings)
+        return builder(hf_config, arch, scan_layers, tie_word_embeddings=tie_word_embeddings)
+    return _compute_dense_shapes(hf_config, arch, scan_layers, tie_word_embeddings=tie_word_embeddings)
 
 
 def _compute_dense_shapes(
-    cfg: Any, arch: ArchSpec, scan_layers: bool,
+    hf_config: Any, arch: ArchSpec, scan_layers: bool,
     *, tie_word_embeddings: bool = False,
 ) -> dict[str, tuple]:
-    """Shape computation for dense models (qwen3, llama, gemma3)."""
+    """Shape computation for dense models (qwen3, llama, gemma4)."""
+    cfg = getattr(hf_config, "text_config", hf_config)
     emb = cfg.hidden_size
     mlp = cfg.intermediate_size
     nq = cfg.num_attention_heads
@@ -207,9 +244,6 @@ def hf_to_megatext(
     Returns:
         Path to the converted checkpoint directory.
     """
-    import torch
-    from transformers import AutoModelForCausalLM
-
     hf_config = _load_hf_config(hf_model_path, hf_token)
     model_type = _resolve_model_type(hf_config)
     cfg = getattr(hf_config, "text_config", hf_config)
@@ -218,18 +252,12 @@ def hf_to_megatext(
     tie = getattr(cfg, "tie_word_embeddings", False)
     mapping_builder = MAPPING_BUILDERS[model_type]
     transform_builder = TRANSFORM_BUILDERS[model_type]
-    mapping = build_mapping(arch, cfg, scan_layers, mapping_builder)
+    mapping = build_mapping(arch, hf_config, scan_layers, mapping_builder)
     transforms = build_transforms(arch, hf_config.to_dict(), to_hf=False, builder=transform_builder)
-    shapes = compute_megatext_shapes(cfg, arch, scan_layers, tie_word_embeddings=tie)
+    shapes = compute_megatext_shapes(hf_config, arch, scan_layers, tie_word_embeddings=tie)
 
     max_logging.log(f"Loading HF model {hf_model_path} (model_type={model_type})...")
-    model = AutoModelForCausalLM.from_pretrained(
-        hf_model_path,
-        token=hf_token,
-        torch_dtype=torch.bfloat16,
-        low_cpu_mem_usage=True,
-        trust_remote_code=True,
-    )
+    model = _load_hf_model_for_conversion(hf_model_path, hf_config, hf_token=hf_token)
     state_dict = model.state_dict()
     del model
 
@@ -349,9 +377,6 @@ def megatext_to_hf(
     Returns:
         Path to the converted HuggingFace checkpoint directory.
     """
-    import torch
-    from transformers import AutoModelForCausalLM
-
     hf_config = _load_hf_config(hf_model_path, hf_token)
     model_type = _resolve_model_type(hf_config)
     cfg = getattr(hf_config, "text_config", hf_config)
@@ -361,9 +386,9 @@ def megatext_to_hf(
 
     mapping_builder = MAPPING_BUILDERS[model_type]
     transform_builder = TRANSFORM_BUILDERS[model_type]
-    mapping = build_mapping(arch, cfg, scan_layers, mapping_builder)
+    mapping = build_mapping(arch, hf_config, scan_layers, mapping_builder)
     transforms = build_transforms(arch, hf_config.to_dict(), to_hf=True, builder=transform_builder)
-    shapes = compute_megatext_shapes(cfg, arch, scan_layers, tie_word_embeddings=tie)
+    shapes = compute_megatext_shapes(hf_config, arch, scan_layers, tie_word_embeddings=tie)
 
     checkpoint_path = os.path.abspath(checkpoint_path)
     output_dir = os.path.abspath(output_dir)
@@ -373,13 +398,13 @@ def megatext_to_hf(
 
     hf_state_dict: dict[str, Any] = {}
     merge_fn = _get_composite_merge_fn(arch)
-    _convert_mt_to_hf(mapping, transforms, shapes, mt_weights, hf_state_dict, cfg,
+    _convert_mt_to_hf(mapping, transforms, shapes, mt_weights, hf_state_dict, hf_config,
                       composite_merge_fn=merge_fn)
 
     del mt_weights
 
     max_logging.log(f"Saving HF model to {output_dir}...")
-    model = AutoModelForCausalLM.from_config(hf_config, torch_dtype=torch.bfloat16)
+    model = _init_hf_model_for_save(hf_config)
     model.load_state_dict(hf_state_dict, strict=False)
     model.save_pretrained(output_dir, safe_serialization=True)
 
@@ -395,7 +420,7 @@ def _convert_mt_to_hf(
     shapes: dict[str, tuple],
     mt_weights: dict[str, np.ndarray],
     hf_state_dict: dict,
-    cfg: Any,
+    hf_config: Any,
     *,
     composite_merge_fn=interleave,
 ) -> None:
@@ -412,7 +437,7 @@ def _convert_mt_to_hf(
 
         if isinstance(hf_keys, str):
             tensor = mt_weights.pop(mt_key)
-            hf_shape = _infer_hf_shape_from_key(hf_keys, cfg)
+            hf_shape = _infer_hf_shape_from_key(hf_keys, hf_config)
             result = xform(tensor, hf_shape) if xform else tensor
             hf_state_dict[hf_keys] = _to_torch(result)
 
@@ -421,7 +446,7 @@ def _convert_mt_to_hf(
             for e_idx, expert_layer_keys in enumerate(hf_keys):
                 for l_idx, hf_key in enumerate(expert_layer_keys):
                     tensor = stacked[e_idx, l_idx]
-                    hf_shape = _infer_hf_shape_from_key(hf_key, cfg)
+                    hf_shape = _infer_hf_shape_from_key(hf_key, hf_config)
                     result = xform(tensor, hf_shape) if xform else tensor
                     hf_state_dict[hf_key] = _to_torch(result)
 
@@ -429,7 +454,7 @@ def _convert_mt_to_hf(
             stacked = mt_weights.pop(mt_key)
             for i, hf_key in enumerate(hf_keys):
                 tensor = stacked[i]
-                hf_shape = _infer_hf_shape_from_key(hf_key, cfg)
+                hf_shape = _infer_hf_shape_from_key(hf_key, hf_config)
                 result = xform(tensor, hf_shape) if xform else tensor
                 hf_state_dict[hf_key] = _to_torch(result)
 
@@ -468,8 +493,10 @@ def _convert_composite_mt_to_hf(
         hf_state_dict[hf_keys] = _to_torch(merge_fn(parts, ()))
 
 
-def _infer_hf_shape_from_key(hf_key: str, cfg: Any) -> tuple:
+def _infer_hf_shape_from_key(hf_key: str, hf_config: Any) -> tuple:
     """Infer HF tensor shape from key name and config."""
+    cfg = getattr(hf_config, "text_config", hf_config)
+    vcfg = getattr(hf_config, "vision_config", None)
     emb = cfg.hidden_size
     mlp = getattr(cfg, "intermediate_size", 0)
     nq = cfg.num_attention_heads
@@ -478,6 +505,90 @@ def _infer_hf_shape_from_key(hf_key: str, cfg: Any) -> tuple:
     vocab = cfg.vocab_size
 
     q_hd_mult = 2 if getattr(cfg, "full_attention_interval", 0) > 0 else 1
+
+    model_type = getattr(hf_config, "model_type", getattr(cfg, "model_type", ""))
+    if model_type == "gemma4" and vcfg is not None:
+        hidden_vit = getattr(vcfg, "hidden_size", 0)
+        mlp_vit = getattr(vcfg, "intermediate_size", 0)
+        num_heads_vit = getattr(vcfg, "num_attention_heads", 0)
+        hd_vit = getattr(vcfg, "head_dim", hidden_vit // num_heads_vit if num_heads_vit else 0)
+        patch_size = getattr(vcfg, "patch_size", 0)
+        pos_emb = getattr(vcfg, "position_embedding_size", 0)
+        if hf_key == "model.vision_tower.patch_embedder.input_proj.weight":
+            return (hidden_vit, patch_size * patch_size * 3)
+        if hf_key == "model.vision_tower.patch_embedder.position_embedding_table":
+            return (2, pos_emb, hidden_vit)
+        if hf_key == "model.embed_vision.embedding_projection.weight":
+            return (emb, hidden_vit)
+        if hf_key in ("model.vision_tower.std_scale", "model.vision_tower.std_bias"):
+            return (hidden_vit,)
+        if "vision_tower.encoder.layers." in hf_key:
+            if "self_attn.q_proj.linear.weight" in hf_key:
+                return (num_heads_vit * hd_vit, hidden_vit)
+            if "self_attn.k_proj.linear.weight" in hf_key:
+                return (num_heads_vit * hd_vit, hidden_vit)
+            if "self_attn.v_proj.linear.weight" in hf_key:
+                return (num_heads_vit * hd_vit, hidden_vit)
+            if "self_attn.o_proj.linear.weight" in hf_key:
+                return (hidden_vit, num_heads_vit * hd_vit)
+            if "self_attn.q_norm.weight" in hf_key or "self_attn.k_norm.weight" in hf_key:
+                return (hd_vit,)
+            if "input_layernorm.weight" in hf_key or "post_attention_layernorm.weight" in hf_key:
+                return (hidden_vit,)
+            if "pre_feedforward_layernorm.weight" in hf_key or "post_feedforward_layernorm.weight" in hf_key:
+                return (hidden_vit,)
+            if "mlp.gate_proj.linear.weight" in hf_key or "mlp.up_proj.linear.weight" in hf_key:
+                return (mlp_vit, hidden_vit)
+            if "mlp.down_proj.linear.weight" in hf_key:
+                return (hidden_vit, mlp_vit)
+
+    layer_match = re.search(r"\.layers\.(\d+)\.", hf_key)
+    if model_type in ("gemma4", "gemma4_text") and layer_match:
+        layer_idx = int(layer_match.group(1))
+        layer_types = list(getattr(cfg, "layer_types", []) or [])
+        is_global = (
+            layer_types[layer_idx % len(layer_types)] in ("full_attention", "global")
+            if layer_types
+            else layer_idx % 6 == 5
+        )
+        q_hd = getattr(cfg, "global_head_dim", hd) if is_global else hd
+        kv_hd = getattr(cfg, "global_head_dim", hd) if is_global else hd
+        nkv_this = getattr(cfg, "num_global_key_value_heads", nkv) if is_global else nkv
+        expert_mlp = getattr(cfg, "expert_intermediate_size", getattr(cfg, "moe_intermediate_size", mlp))
+        if "self_attn.q_proj.weight" in hf_key:
+            return (nq * q_hd, emb)
+        if "self_attn.k_proj.weight" in hf_key:
+            return (nkv_this * kv_hd, emb)
+        if "self_attn.v_proj.weight" in hf_key:
+            return (nkv_this * kv_hd, emb)
+        if "self_attn.o_proj.weight" in hf_key:
+            return (emb, nq * q_hd)
+        if "self_attn.q_norm.weight" in hf_key:
+            return (q_hd,)
+        if "self_attn.k_norm.weight" in hf_key or "self_attn.v_norm.weight" in hf_key:
+            return (kv_hd,)
+        if "input_layernorm.weight" in hf_key or "post_attention_layernorm.weight" in hf_key:
+            return (emb,)
+        if "pre_feedforward_layernorm.weight" in hf_key or "post_feedforward_layernorm.weight" in hf_key:
+            return (emb,)
+        if "pre_feedforward_layernorm_2.weight" in hf_key:
+            return (emb,)
+        if "post_feedforward_layernorm_1.weight" in hf_key:
+            return (emb,)
+        if "post_feedforward_layernorm_2.weight" in hf_key:
+            return (emb,)
+        if hf_key.endswith("router.scale"):
+            return (emb,)
+        if hf_key.endswith("router.per_expert_scale"):
+            return (getattr(cfg, "num_experts", 0),)
+        if hf_key.endswith("layer_scalar"):
+            return (1,)
+        if hf_key.endswith("router.proj.weight"):
+            return (getattr(cfg, "num_experts", 0), emb)
+        if hf_key.endswith("experts.gate_up_proj"):
+            return (getattr(cfg, "num_experts", 0), 2 * expert_mlp, emb)
+        if hf_key.endswith("experts.down_proj"):
+            return (getattr(cfg, "num_experts", 0), emb, expert_mlp)
 
     if "q_proj.weight" in hf_key or "wq.weight" in hf_key:
         return (nq * q_hd_mult * hd, emb)

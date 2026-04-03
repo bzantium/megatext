@@ -1,3 +1,5 @@
+# model config for qwen3-next (dense)
+
 decoder_block: "qwen3_next"
 mlp_activations: ["silu", "linear"]
 normalization_layer_epsilon: 1.0e-6

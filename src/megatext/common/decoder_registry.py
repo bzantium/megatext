@@ -9,9 +9,13 @@ New decoder blocks only need to be registered here with a uniform interface:
     ))
 
 The registry automatically:
-- Resolves NNX layers (scannable block if scan_layers, else single layer)
+- Resolves NNX layers (explicit scan body if provided, else scans nnx_layer directly)
 - Generates Linen wrappers via to_linen_class() for models with only NNX classes
 - Handles multi-layer models (e.g. DeepSeek dense+MoE) via nnx_layers/linen_layers lists
+
+All registered decoder blocks are scan-compatible. `nnx_scannable` is only
+needed when one scan iteration should represent multiple logical decoder
+layers or otherwise requires a custom scan body.
 """
 
 from __future__ import annotations
@@ -26,17 +30,23 @@ from megatext.common.common_types import DecoderBlockType
 class DecoderBlockSpec:
     """Specification for a decoder block type.
 
-    For most models, provide nnx_layer (+ optional nnx_scannable).
-    For multi-layer models (e.g. DeepSeek), use nnx_layers_fn instead.
+    For most models, provide nnx_layer.
+    Provide nnx_scannable only when the scanned path needs an explicit scan
+    body instead of directly scanning the single-layer class.
+    For multi-stack models (e.g. DeepSeek), use nnx_layers_fn instead.
     """
 
-    # Single NNX layer class (used when scan_layers=False, or when no scannable block)
+    # Single logical decoder layer class.
     nnx_layer: type | None = None
-    # NNX scannable block class (used when scan_layers=True). If None, nnx_layer is scanned directly.
+    # Optional explicit scan body class. If None, nnx_layer is scanned directly.
     nnx_scannable: type | None = None
     # For multi-layer models: callable(config) -> list[type] (overrides nnx_layer/nnx_scannable)
     nnx_layers_fn: Callable[..., list[type]] | None = None
     linen_layers_fn: Callable[..., list[type]] | None = None
+    # Optional per-layer init kwargs used by unscanned stacks.
+    layer_kwargs_fn: Callable[[int, Any], dict[str, Any]] | None = None
+    # Optional per-layer/per-block call kwargs from runtime context.
+    layer_call_kwargs_fn: Callable[..., dict[str, Any]] | None = None
     # Norm type: "rmsnorm" (default), "gpt3_layernorm", "qwen3_next_rmsnorm"
     norm_type: str = "rmsnorm"
 
@@ -75,16 +85,63 @@ def get_nnx_layers(block_type: DecoderBlockType, config) -> list[type]:
 
 
 def get_linen_layers(block_type: DecoderBlockType, config) -> list[type]:
-    """Get Linen layer classes for a decoder block.
-
-    For models with nnx_scannable, auto-generates Linen wrapper via to_linen_class().
-    """
+    """Get Linen layer classes for a decoder block."""
     spec = get_spec(block_type)
     if spec.linen_layers_fn is not None:
         return spec.linen_layers_fn(config)
-    # Auto-generate Linen wrapper
     cls = spec.nnx_scannable if (config.scan_layers and spec.nnx_scannable) else spec.nnx_layer
     return [_to_linen(cls)]
+
+
+def get_scannable_block_cls(block_type: DecoderBlockType, config) -> type | None:
+    """Get the underlying NNX scannable block class when scan_layers=True."""
+    spec = get_spec(block_type)
+    if config.scan_layers and spec.nnx_scannable is not None:
+        return spec.nnx_scannable
+    return None
+
+
+def get_scannable_block_layer_count(block_type: DecoderBlockType, config) -> int | None:
+    """Get the number of logical layers represented by one scanned block iteration."""
+    scannable_cls = get_scannable_block_cls(block_type, config)
+    if scannable_cls is None:
+        return None
+    helper = getattr(scannable_cls, "scan_body_layer_count", None)
+    if callable(helper):
+        return int(helper(config))
+    return None
+
+
+def get_scan_iteration_count(block_type: DecoderBlockType, config, total_layers: int) -> int:
+    """Convert logical layer count to scan iteration count for a decoder block."""
+    block_layer_count = get_scannable_block_layer_count(block_type, config)
+    if block_layer_count is None:
+        return total_layers
+    if total_layers % block_layer_count != 0:
+        raise ValueError(
+            f"{block_type} scan body covers {block_layer_count} layers, "
+            f"but total_layers={total_layers} is not divisible by it."
+        )
+    return total_layers // block_layer_count
+
+
+def get_layer_init_kwargs(block_type: DecoderBlockType, config, layer_index: int) -> dict[str, Any]:
+    """Get per-layer constructor kwargs for a logical decoder layer."""
+    spec = get_spec(block_type)
+    if spec.layer_kwargs_fn is None:
+        return {}
+    return dict(spec.layer_kwargs_fn(layer_index, config))
+
+
+def get_layer_call_kwargs(block_type: DecoderBlockType, config, **context) -> dict[str, Any]:
+    """Get per-layer or per-block call kwargs from runtime context."""
+    spec = get_spec(block_type)
+    if spec.layer_call_kwargs_fn is None:
+        return {}
+    kwargs = spec.layer_call_kwargs_fn(config=config, **context)
+    if kwargs is None:
+        return {}
+    return dict(kwargs)
 
 
 # ── Linen wrapper cache ─────────────────────────────────────────────────────
@@ -111,7 +168,7 @@ def _populate_registry():
     from megatext.layers.nnx_decoders import NNXDecoderLayer
     from megatext.models import (
         deepseek, deepseek_batchsplit,
-        gemma, gemma2, gemma3,
+        gemma, gemma2, gemma4,
         gpt3, gpt_oss,
         llama2, llama4,
         mistral, mixtral,
@@ -119,7 +176,7 @@ def _populate_registry():
         simple_layer,
     )
 
-    # ── Simple models (single layer, no scannable block) ─────────────────
+    # ── Single-layer scan-body models (scan nnx_layer directly) ──────────
 
     register(DecoderBlockType.DEFAULT, DecoderBlockSpec(
         nnx_layer=NNXDecoderLayer,
@@ -135,12 +192,6 @@ def _populate_registry():
     ))
     register(DecoderBlockType.GEMMA, DecoderBlockSpec(
         nnx_layer=gemma.GemmaDecoderLayer,
-    ))
-    register(DecoderBlockType.GEMMA2, DecoderBlockSpec(
-        nnx_layer=gemma2.Gemma2DecoderLayer,
-    ))
-    register(DecoderBlockType.GEMMA3, DecoderBlockSpec(
-        nnx_layer=gemma3.Gemma3DecoderLayer,
     ))
     register(DecoderBlockType.GPT3, DecoderBlockSpec(
         nnx_layer=gpt3.Gpt3DecoderLayer,
@@ -162,28 +213,45 @@ def _populate_registry():
         nnx_layer=simple_layer.SimpleMlpDecoderLayer,
     ))
 
-    # ── Scannable models (layer + scannable block) ───────────────────────
+    # ── Explicit multi-layer scan-body models ────────────────────────────
+
+    register(DecoderBlockType.GEMMA2, DecoderBlockSpec(
+        nnx_layer=gemma2.Gemma2DecoderLayer,
+        nnx_scannable=gemma2.Gemma2ScannableBlock,
+        layer_kwargs_fn=gemma2._gemma2_layer_kwargs,
+    ))
+    register(DecoderBlockType.GEMMA4, DecoderBlockSpec(
+        nnx_layer=gemma4.Gemma4DecoderLayer,
+        nnx_scannable=gemma4.Gemma4ScannableBlock,
+        layer_kwargs_fn=gemma4._gemma4_layer_kwargs,
+        layer_call_kwargs_fn=gemma4._gemma4_layer_call_kwargs,
+    ))
 
     register(DecoderBlockType.QWEN3_SWA, DecoderBlockSpec(
         nnx_layer=qwen3_swa.Qwen3SWADecoderLayer,
         nnx_scannable=qwen3_swa.Qwen3SWAScannableBlock,
+        layer_kwargs_fn=qwen3_swa._qwen3_swa_layer_kwargs,
     ))
     register(DecoderBlockType.QWEN3_NEXT, DecoderBlockSpec(
         nnx_layer=qwen3.Qwen3NextDecoderLayer,
         nnx_scannable=qwen3.Qwen3NextScannableBlock,
+        layer_kwargs_fn=qwen3._qwen3_next_layer_kwargs,
         norm_type="qwen3_next_rmsnorm",
     ))
     register(DecoderBlockType.GPT_OSS, DecoderBlockSpec(
         nnx_layer=gpt_oss.GptOssDecoderLayer,
         nnx_scannable=gpt_oss.GptOssScannableBlock,
+        layer_kwargs_fn=gpt_oss._gpt_oss_layer_kwargs,
     ))
     register(DecoderBlockType.LLAMA4, DecoderBlockSpec(
         nnx_layer=llama4.Llama4DecoderLayer,
         nnx_scannable=llama4.Llama4ScannableBlock,
+        layer_kwargs_fn=llama4._llama4_layer_kwargs,
     ))
     register(DecoderBlockType.OLMO3, DecoderBlockSpec(
         nnx_layer=olmo3.Olmo3DecoderLayer,
         nnx_scannable=olmo3.Olmo3ScannableBlock,
+        layer_kwargs_fn=olmo3._olmo3_layer_kwargs,
     ))
 
     # ── Multi-layer models (custom resolution) ───────────────────────────

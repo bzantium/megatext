@@ -235,6 +235,11 @@ class Olmo3ScannableBlock(ScannableBlock):
     used with `nn.scan` for efficient compilation.
   """
 
+  @classmethod
+  def scan_body_layer_count(cls, config: Config) -> int:
+    del config
+    return len(OLMO3_ATTENTION_PATTERN)
+
   def __init__(
       self,
       config: Config,
@@ -249,9 +254,3 @@ class Olmo3ScannableBlock(ScannableBlock):
         layer_kwargs_fn=_olmo3_layer_kwargs,
         rngs=rngs,
     )
-
-
-Olmo3ScannableBlockToLinen = nnx_wrappers.to_linen_class(
-    Olmo3ScannableBlock,
-    base_metadata_fn=initializers.variable_to_logically_partitioned,
-)

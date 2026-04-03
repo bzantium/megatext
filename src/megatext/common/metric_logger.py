@@ -175,10 +175,11 @@ class MetricLogger:
         [
             f"total_weights: {scalars['learning/total_weights']}",
             f"loss: {loss:.3f}",
-            f"lr: {scalars['learning/current_learning_rate']:.3e}",
-            f"grad_norm: {scalars['learning/grad_norm']:.3e}",
+            f"lr: {float(scalars['learning/current_learning_rate']):.3e}",
         ]
     )
+    if "learning/grad_norm" in scalars:
+      log_parts.append(f"grad_norm: {float(scalars['learning/grad_norm']):.3e}")
 
     if self.config.mtp_num_layers > 0:
       mtp_loss = scalars.get("learning/mtp_loss", 0.0)

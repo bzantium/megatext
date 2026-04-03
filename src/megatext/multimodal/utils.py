@@ -38,7 +38,7 @@ class PreprocessorOutput:
   Args:
     pixel_values: A JAX array containing the processed image pixel data.
                   The shape and format depend on the specific model and
-                  preprocessing steps (e.g., [H, W, C] for Gemma3 or
+                  preprocessing steps (e.g., [H, W, C] for Gemma4 or
                   [NUM_TILES, C, TILE_SIZE, TILE_SIZE] for Llama4).
     pixel_mask: An optional JAX array of shape (NUM_TILES,) indicating valid
                 tiles in the image.
@@ -109,7 +109,7 @@ def merge_mm_embeddings(
   1. Tiled Format (e.g., Llama4 vision): Embeddings are provided as a batch of
      images and their tiles, with shape (B * N, T, K, D). These are flattened
      into a single sequence of tokens per batch item.
-  2. Simple Format (e.g., Gemma3 vision, Qwen3-Omni audio): Embeddings are provided as
+  2. Simple Format (e.g., Gemma4 vision, Qwen3-Omni audio): Embeddings are provided as
      (B, N, K, D) and are flattened into a sequence of tokens.
 
   Args:

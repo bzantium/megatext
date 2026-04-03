@@ -130,8 +130,6 @@ def loss_fn(model, config, data, dropout_rng, params, is_train=True):
   if isinstance(model, nn.Module):
     # inputs, targets, segments, positions = apply_args
     rng1, aqt_rng = jax.random.split(dropout_rng)
-
-    # Flax Linen model
     logits, intermediate_outputs = model.apply(
         params,
         data["inputs"],

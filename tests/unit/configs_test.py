@@ -124,15 +124,20 @@ def test_base_configs(config_file):
 
 MODEL_CONFIGS = [
     os.path.join(CONFIGS_DIR, "models", "deepseek.yaml"),
-    os.path.join(CONFIGS_DIR, "models", "gemma3.yaml"),
-    os.path.join(CONFIGS_DIR, "models", "gpt_oss.yaml"),
+    os.path.join(CONFIGS_DIR, "models", "gpt-oss.yaml"),
     os.path.join(CONFIGS_DIR, "models", "llama3.yaml"),
     os.path.join(CONFIGS_DIR, "models", "qwen3.yaml"),
     os.path.join(CONFIGS_DIR, "models", "qwen3-moe.yaml"),
     os.path.join(CONFIGS_DIR, "models", "qwen3-swa.yaml"),
-    os.path.join(CONFIGS_DIR, "models", "qwen3-next-dense.yaml"),
+    os.path.join(CONFIGS_DIR, "models", "qwen3-next.yaml"),
     os.path.join(CONFIGS_DIR, "models", "qwen3-next-moe.yaml"),
 ]
+MODEL_CONFIGS.extend([
+    path for path in [
+        os.path.join(CONFIGS_DIR, "models", "gemma4-moe.yaml"),
+        os.path.join(CONFIGS_DIR, "models", "gemma4.yaml"),
+    ] if os.path.exists(path)
+])
 
 
 @pytest.mark.parametrize("config_file", MODEL_CONFIGS)

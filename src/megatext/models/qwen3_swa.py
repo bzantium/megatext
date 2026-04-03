@@ -1,7 +1,7 @@
 """Qwen3 decoder block with sliding window + global attention pattern.
 
 Alternates between LOCAL_SLIDING and GLOBAL attention layers using
-inhomogeneous_layer_cycle_interval, similar to Gemma3's pattern.
+inhomogeneous_layer_cycle_interval.
 The last layer in each cycle uses global attention; the rest use sliding window.
 
 Usage:
@@ -180,7 +180,15 @@ class Qwen3SWAScannableBlock(ScannableBlock):
   - All others: sliding window attention
   """
 
-  def __init__(self, config: Config, mesh: Mesh, model_mode: str, quant: None | Quant = None, *, rngs: nnx.Rngs):
+  def __init__(
+      self,
+      config: Config,
+      mesh: Mesh,
+      model_mode: str,
+      quant: None | Quant = None,
+      *,
+      rngs: nnx.Rngs,
+  ):
     super().__init__(
         config, mesh, model_mode, quant,
         layer_cls=Qwen3SWADecoderLayer,

@@ -507,6 +507,55 @@ class PartialRotaryEmbedding(RotaryEmbedding):
     return inputs
 
 
+class Gemma4PartialRotaryEmbedding(RotaryEmbedding):
+  """Gemma 4 partial rotary embedding with inf-padded non-rotary dimensions."""
+
+  def __init__(
+      self,
+      min_timescale: int,
+      max_timescale: int,
+      mesh: Mesh,
+      embedding_dims: int = 0,
+      cast_as_fprop_dtype: bool = True,
+      fprop_dtype: DType = jnp.bfloat16,
+      partial_rotary_factor: float = 0.25,
+      shard_mode: ShardMode = ShardMode.AUTO,
+      rngs: nnx.Rngs = None,
+  ):
+    self.head_dim = embedding_dims
+    self.partial_rotary_factor = partial_rotary_factor
+    self.rotary_dim = int(self.head_dim * self.partial_rotary_factor)
+
+    super().__init__(
+        min_timescale=min_timescale,
+        max_timescale=max_timescale,
+        mesh=mesh,
+        embedding_dims=self.head_dim,
+        cast_as_fprop_dtype=cast_as_fprop_dtype,
+        fprop_dtype=fprop_dtype,
+        shard_mode=shard_mode,
+        rngs=rngs,
+    )
+
+  @property
+  def timescale(self) -> jax.Array:
+    """Returns the Gemma 4 timescale with inf-padded passthrough dimensions."""
+    half_rotary_dim = self.rotary_dim // 2
+    fraction = 2 * jnp.arange(0, half_rotary_dim) / self.head_dim
+    timescale = self.min_timescale * (self.max_timescale / self.min_timescale) ** fraction
+
+    if getattr(self, "rope_linear_scaling_factor", 1.0) != 1.0:
+      timescale = timescale * self.rope_linear_scaling_factor
+
+    noop_angles = (self.head_dim // 2) - half_rotary_dim
+    return jnp.pad(
+        timescale,
+        pad_width=(0, noop_angles),
+        mode="constant",
+        constant_values=(0.0, jnp.inf),
+    )
+
+
 class LLaMARotaryEmbedding(RotaryEmbedding):
   """LLaMA variant of ROPE."""
 

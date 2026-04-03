@@ -14,6 +14,7 @@
 """Mixture of Experts (MoE) tests."""
 
 import unittest
+from types import SimpleNamespace
 
 from flax import nnx
 import flax.linen as nn
@@ -282,6 +283,63 @@ class DeepSeekRoutingTest(unittest.TestCase):
     actual_updates = moe.calculate_load_balance_updates(top_k_indices, num_experts, rate)
 
     self.assertTrue(jax.numpy.allclose(expected_updates, actual_updates, rtol=1e-05, atol=1e-05, equal_nan=False))
+
+
+class RoutedMoeBehaviorTest(unittest.TestCase):
+
+  def test_gemma4_topk_uses_full_softmax_weights(self):
+    fake = SimpleNamespace(
+        config=SimpleNamespace(
+            use_random_routing=False,
+            decoder_block="gemma4",
+            norm_topk_prob=False,
+        ),
+        num_experts_per_tok=2,
+        dtype=jnp.bfloat16,
+    )
+    gate_logits = jnp.array([[[1.0, 2.0, 0.0]]], dtype=jnp.bfloat16)
+
+    top_k_weights, top_k_indices = moe.RoutedMoE.get_topk(fake, gate_logits, None)
+
+    expected_indices = jnp.array([[[1, 0]]], dtype=jnp.int32)
+    router_probs = jax.nn.softmax(gate_logits.astype(jnp.float32), axis=-1).astype(jnp.bfloat16)
+    expected_weights = jnp.take_along_axis(router_probs, expected_indices, axis=-1)
+
+    self.assertTrue(jnp.array_equal(expected_indices, top_k_indices))
+    self.assertTrue(jnp.allclose(expected_weights, top_k_weights))
+
+  def test_float32_gate_logits_casts_router_inputs_even_without_gate_inputs(self):
+    captured = {}
+
+    def fake_gate(x):
+      captured["dtype"] = x.dtype
+      return jnp.zeros((1, 1, 2), dtype=jnp.float32), None
+
+    def fake_dense_matmul(inputs, gate_logits, pre_bias_logits, w0_kernel, w1_kernel, wo_kernel, w0_bias, w1_bias, wo_bias):
+      del gate_logits, pre_bias_logits, w0_kernel, w1_kernel, wo_kernel, w0_bias, w1_bias, wo_bias
+      return inputs, None, None
+
+    fake = SimpleNamespace(
+        config=SimpleNamespace(
+            dtype=jnp.bfloat16,
+            float32_gate_logits=True,
+            mlp_bias=False,
+            sparse_matmul=False,
+        ),
+        dtype=jnp.bfloat16,
+        gate=fake_gate,
+        wi_0=jnp.zeros((1, 1, 1), dtype=jnp.bfloat16),
+        wi_1=jnp.zeros((1, 1, 1), dtype=jnp.bfloat16),
+        wo=jnp.zeros((1, 1, 1), dtype=jnp.bfloat16),
+        per_expert_scale=None,
+        dense_matmul=fake_dense_matmul,
+    )
+
+    inputs = jnp.ones((1, 1, 1), dtype=jnp.bfloat16)
+    output, _, _ = moe.RoutedMoE.__call__(fake, inputs)
+
+    self.assertEqual(captured["dtype"], jnp.float32)
+    self.assertEqual(output.dtype, jnp.bfloat16)
 
 
 class MoeLoopBlock(nnx.Module):

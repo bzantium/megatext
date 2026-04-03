@@ -1,9 +1,14 @@
-"""Generic scannable block for inhomogeneous decoder layer patterns.
+"""Generic scannable block for multi-layer decoder scan bodies.
 
-Provides a single ScannableBlock class that replaces model-specific scannable
-block implementations. Each model supplies a `layer_cls` and a
-`layer_kwargs_fn(i, config)` that returns per-layer keyword arguments
-(e.g. attention_type, is_moe_layer).
+Models with a scan body that covers more than one logical decoder layer can
+subclass ``ScannableBlock`` and supply a ``layer_cls`` together with a
+``layer_kwargs_fn(i, config)`` that selects per-layer arguments such as
+attention type or MoE layout.
+
+The default body size still falls back to
+``config.inhomogeneous_layer_cycle_interval`` for existing alternating-layer
+models, but subclasses can override ``scan_body_layer_count`` when the body
+size is model-specific.
 """
 
 from __future__ import annotations
@@ -19,14 +24,11 @@ Quant = Any
 
 
 class ScannableBlock(nnx.Module):
-  """Generic scannable block that wraps N sub-layers into one scan iteration.
+  """Generic scannable block that wraps N sub-layers into one scan iteration."""
 
-  Each sub-layer is created from ``layer_cls`` with per-layer kwargs determined
-  by ``layer_kwargs_fn(i, config)``.
-
-  Subclasses only need to provide ``layer_cls`` and ``layer_kwargs_fn`` via
-  ``__init__`` — the ``__call__`` loop is fully generic.
-  """
+  @classmethod
+  def scan_body_layer_count(cls, config: Config) -> int:
+    return getattr(config, "inhomogeneous_layer_cycle_interval", 1)
 
   def __init__(
       self,
@@ -41,8 +43,8 @@ class ScannableBlock(nnx.Module):
   ):
     self.config = config
     self.mesh = mesh
-    cycle = config.inhomogeneous_layer_cycle_interval
-    for i in range(cycle):
+    self._scan_body_layer_count = self.scan_body_layer_count(config)
+    for i in range(self._scan_body_layer_count):
       kwargs = layer_kwargs_fn(i, config)
       layer = layer_cls(
           config=config,
@@ -54,6 +56,28 @@ class ScannableBlock(nnx.Module):
       )
       setattr(self, f"layers_{i}", layer)
 
+  def _apply_layer(
+      self,
+      layer: nnx.Module,
+      inputs: jnp.ndarray,
+      decoder_segment_ids: jnp.ndarray | None,
+      decoder_positions: jnp.ndarray | None,
+      deterministic: bool,
+      model_mode: str,
+      runtime_context: dict[str, Any] | None = None,
+      **kwargs,
+  ):
+    if runtime_context is not None:
+      kwargs = {**runtime_context, **kwargs}
+    return layer(
+        inputs,
+        decoder_segment_ids,
+        decoder_positions,
+        deterministic,
+        model_mode,
+        **kwargs,
+    )
+
   def __call__(
       self,
       inputs: jnp.ndarray,
@@ -61,19 +85,22 @@ class ScannableBlock(nnx.Module):
       decoder_positions: jnp.ndarray | None,
       deterministic: bool,
       model_mode: str,
+      runtime_context: dict[str, Any] | None = None,
       **kwargs,
   ):
     y = inputs
     if isinstance(y, tuple):
       y = y[0]
-    for i in range(self.config.inhomogeneous_layer_cycle_interval):
+    for i in range(self._scan_body_layer_count):
       layer = getattr(self, f"layers_{i}")
-      y = layer(
+      y = self._apply_layer(
+          layer,
           y,
           decoder_segment_ids,
           decoder_positions,
           deterministic,
           model_mode,
+          runtime_context=runtime_context,
           **kwargs,
       )
       if self.config.scan_layers:

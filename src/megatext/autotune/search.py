@@ -9,8 +9,9 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, replace
+from typing import Callable
 
-from megatext.autotune.profiler import ProfileResult, profile_candidate
+from megatext.autotune.profiler import ProfileResult, _first_error_line, profile_candidate
 from megatext.autotune.strategies import (
     BATCH_SIZES,
     REMAT_POLICIES,
@@ -19,6 +20,38 @@ from megatext.autotune.strategies import (
     ModelConstraints,
 )
 from megatext.autotune.topology import TPUTopology, detect_topology
+
+CandidateEvaluator = Callable[[dict, Candidate, int, int], ProfileResult]
+
+
+def _parse_positive_int(value, default: int) -> int:
+    """Best-effort parser for positive integer config values."""
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _effective_sa_block_limit(config_overrides: dict, refine_sa_backward: bool = False) -> int:
+    """Return the largest sa_block worth searching for the current config."""
+    seq_len = _parse_positive_int(config_overrides.get("max_target_length", 4096), 4096)
+    sliding_window = _parse_positive_int(config_overrides.get("sliding_window_size", 0), 0)
+    if sliding_window > 0:
+        factor = 2 if refine_sa_backward else 1
+        return min(seq_len, sliding_window * factor)
+    return seq_len
+
+
+def _backward_sa_block_candidates(sa_block_size: int, refine_sa_backward: bool = False) -> list[int]:
+    """Return staged backward block candidates for a forward sa_block."""
+    candidates = [sa_block_size]
+    if not refine_sa_backward:
+        return candidates
+    half = sa_block_size // 2
+    if half >= 512 and half != sa_block_size:
+        candidates.append(half)
+    return candidates
 
 
 @dataclass
@@ -29,6 +62,7 @@ class AutoTuneConfig:
     warmup_steps: int = 3
     num_profile_steps: int = 3
     include_sa_block: bool = False
+    refine_sa_backward: bool = False
 
 
 @dataclass
@@ -40,25 +74,19 @@ class SearchResult:
     all_results: list[ProfileResult]
     topology: TPUTopology
     search_time_seconds: float
-    total_candidates: int = 0
-    search_space: str = ""
 
     def summary(self) -> str:
         """Human-readable summary of search results."""
         evaluated = len(self.all_results)
-        pruned = self.total_candidates - evaluated
+        valid = [r for r in self.all_results if r.succeeded]
+        failed = [r for r in self.all_results if not r.succeeded]
         lines = [
             f"Auto-tune Search Results",
             f"{'=' * 50}",
             f"Topology: {self.topology.platform} {self.topology.chip_name}, "
             f"{self.topology.device_count} devices, {self.topology.num_slices} slice(s)",
-            f"Search space: {self.search_space}",
-            f"Total candidates: {self.total_candidates}, "
-            f"evaluated: {evaluated}" + (f" ({pruned} pruned)" if pruned > 0 else ""),
+            f"Evaluated: {evaluated} ({len(valid)} succeeded, {len(failed)} failed)",
             f"Search time: {self.search_time_seconds:.1f}s",
-            f"",
-            f"Fixed settings: dataset=synthetic, checkpointing=off, "
-            f"allow_split_physical_axes=true, ga=1",
             f"",
         ]
 
@@ -71,30 +99,35 @@ class SearchResult:
                 f"  Peak memory: {self.best_result.peak_memory_gb:.1f} GB",
             ]
         else:
-            lines.append("No feasible configuration found. All candidates OOM.")
+            lines.append("No feasible configuration found.")
 
-        lines += [
-            f"",
-            f"All results (sorted by TFLOPs/s/device):",
-        ]
+        if valid:
+            valid.sort(key=lambda r: r.tflops_per_device, reverse=True)
+            frontier = pareto_frontier(valid)
+            lines += [f"", f"Pareto frontier (memory asc):"]
+            for r in sorted(frontier, key=lambda item: (item.peak_memory_gb, -item.tflops_per_device)):
+                lines.append(
+                    f"  mem={r.peak_memory_gb:.1f}GB, "
+                    f"{r.tflops_per_device:.1f} TFLOPs/s - {r.candidate}"
+                )
+            lines += [f"", f"All feasible results (by TFLOPs/s):"]
+            for i, r in enumerate(valid):
+                lines.append(
+                    f"  {i + 1}. {r.tflops_per_device:.1f} TFLOPs/s, "
+                    f"{r.mean_step_time_seconds:.3f}s, "
+                    f"mem={r.peak_memory_gb:.1f}GB - "
+                    f"{r.candidate}"
+                )
 
-        valid = [r for r in self.all_results if not r.oom and r.error is None]
-        valid.sort(key=lambda r: r.tflops_per_device, reverse=True)
-        for i, r in enumerate(valid[:10]):
-            lines.append(
-                f"  {i + 1}. {r.tflops_per_device:.1f} TFLOPs/s, "
-                f"{r.mean_step_time_seconds:.3f}s, "
-                f"mem={r.peak_memory_gb:.1f}GB - {r.candidate}"
-            )
-
-        oom_count = sum(1 for r in self.all_results if r.oom)
-        err_results = [r for r in self.all_results if r.error and not r.oom]
-        if oom_count > 0:
-            lines.append(f"\nOOM: {oom_count} candidates")
-        if err_results:
-            lines.append(f"\nErrors ({len(err_results)}):")
-            for r in err_results:
-                lines.append(f"  {r.error} - {r.candidate}")
+        if failed:
+            lines += [f"", f"Failed candidates:"]
+            for r in failed:
+                detail = _first_error_line(r.error) or r.returncode_detail or r.exit_class
+                stage = f", stage={r.failure_stage}" if r.failure_stage else ""
+                lines.append(
+                    f"  {r.candidate} - {detail}{stage} "
+                    f"(mem={r.peak_memory_gb:.1f}GB)"
+                )
 
         return "\n".join(lines)
 
@@ -104,6 +137,7 @@ def run_search(
     autotune_config: AutoTuneConfig | None = None,
     topology: TPUTopology | None = None,
     max_batch_size: int = 8,
+    evaluator: CandidateEvaluator | None = None,
 ) -> SearchResult:
     """Run auto-tuning search. Always optimizes for TFLOPs/s/device.
 
@@ -121,6 +155,8 @@ def run_search(
     """
     if autotune_config is None:
         autotune_config = AutoTuneConfig()
+    if evaluator is None:
+        evaluator = profile_candidate
 
     start_time = time.monotonic()
 
@@ -132,8 +168,6 @@ def run_search(
     num_steps = autotune_config.num_profile_steps
     warmup_steps = autotune_config.warmup_steps
     best_result: ProfileResult | None = None
-    total_candidates = 0
-    search_space_parts = []
 
     scope = autotune_config.scope
     batch_sizes = [b for b in BATCH_SIZES if b <= max_batch_size]
@@ -141,45 +175,58 @@ def run_search(
     # -- Stage 1: Batch + remat (+ optional sa_block) --------------------
     if scope in ("batch_remat", "all"):
         include_sa = autotune_config.include_sa_block
-        seq_len = int(config_overrides.get("max_target_length", 4096))
+        sa_block_limit = _effective_sa_block_limit(
+            config_overrides,
+            refine_sa_backward=autotune_config.refine_sa_backward,
+        )
 
         if include_sa:
-            valid_sa_blocks = [s for s in SA_BLOCK_SIZES if s <= seq_len] or [SA_BLOCK_SIZES[0]]
+            valid_sa_blocks = [s for s in SA_BLOCK_SIZES if s <= sa_block_limit] or [SA_BLOCK_SIZES[0]]
         else:
             valid_sa_blocks = [int(config_overrides.get("sa_block_q", 512))]
 
-        stage_total = len(valid_sa_blocks) * len(batch_sizes) * len(REMAT_POLICIES)
-        total_candidates += stage_total
-        search_space_parts.append(
-            f"sa_blocks={valid_sa_blocks}, batch_sizes={batch_sizes}, remat_policies={REMAT_POLICIES}"
+        logging.info(
+            "=== Batch + remat search (sa_blocks=%s, sa_block_limit=%s, max_batch=%s) ===",
+            valid_sa_blocks,
+            sa_block_limit,
+            batch_sizes[-1],
         )
-        stage_name = "SA block + batch + remat" if include_sa else "Batch + remat"
-        logging.info(f"=== {stage_name} search ===")
-        logging.info(f"Search space: {stage_total} combinations")
 
-        best_result = _search_batch_remat(config_overrides, all_results, num_steps, warmup_steps, valid_sa_blocks=valid_sa_blocks, batch_sizes=batch_sizes)
+        best_result = _search_batch_remat(
+            config_overrides,
+            all_results,
+            num_steps,
+            warmup_steps,
+            valid_sa_blocks=valid_sa_blocks,
+            batch_sizes=batch_sizes,
+            refine_sa_backward=autotune_config.refine_sa_backward,
+            evaluator=evaluator,
+        )
 
         if best_result is None:
-            logging.warning("All batch+remat combinations failed (OOM). Try reducing model size or max_target_length.")
+            logging.warning("All batch+remat combinations failed (OOM).")
 
     # -- Stage 2: Parallelism --------------------------------------------
     if scope in ("parallelism", "all"):
         tp_values = constraints.valid_tp_values()
-        total_candidates += len(tp_values)
-        search_space_parts.append(f"tp_values={tp_values}")
-        logging.info(f"=== Parallelism search ===")
-        logging.info(f"Search space: {len(tp_values)} TP values: {tp_values}")
+        logging.info(f"=== Parallelism search (TP={tp_values}) ===")
 
-        # Use best from stage 1 as base (for 'all'), or user config (for 'parallelism')
         if best_result is not None:
             base = best_result.candidate
         else:
             base = Candidate.from_config_dict(config_overrides)
 
-        # scope=all: base was already profiled in stage 1, skip it
-        # scope=parallelism: base hasn't been profiled, include it
         skip_base_tp = scope == "all"
-        stage_best = _search_parallelism(config_overrides, base, tp_values, all_results, num_steps, warmup_steps, skip_base_tp)
+        stage_best = _search_parallelism(
+            config_overrides,
+            base,
+            tp_values,
+            all_results,
+            num_steps,
+            warmup_steps,
+            skip_base_tp,
+            evaluator=evaluator,
+        )
 
         if stage_best is not None:
             if best_result is None or stage_best.tflops_per_device > best_result.tflops_per_device:
@@ -192,40 +239,53 @@ def run_search(
 
     search_time = time.monotonic() - start_time
 
-    if best_result is None:
-        logging.error("No feasible configuration found. All candidates OOM.")
-        return SearchResult(
-            best_candidate=None,
-            best_result=None,
-            all_results=all_results,
-            topology=topology,
-            search_time_seconds=search_time,
-            total_candidates=total_candidates,
-            search_space="; ".join(search_space_parts),
-        )
-
     return SearchResult(
-        best_candidate=best_result.candidate,
+        best_candidate=best_result.candidate if best_result else None,
         best_result=best_result,
         all_results=all_results,
         topology=topology,
         search_time_seconds=search_time,
-        total_candidates=total_candidates,
-        search_space="; ".join(search_space_parts),
     )
 
 
-_SEP = "=" * 70
+def _fmt_result(result: ProfileResult) -> str:
+    """Format a profile result for logging."""
+    stage = f", stage={result.failure_stage}" if result.failure_stage else ""
+    detail = _first_error_line(result.error)
+    memory_detail = ""
+    if result.compile_peak_memory_gb > 0.0 or result.runtime_peak_hbm_gb > 0.0:
+        memory_detail = (
+            f", compile={result.compile_peak_memory_gb:.1f}, "
+            f"runtime={result.runtime_peak_hbm_gb:.1f}"
+        )
+    if result.infra_error:
+        return (
+            f"{result.candidate}: FAILED "
+            f"({result.returncode_detail or detail or result.error}{stage})"
+        )
+    if result.confirmed_oom or result.error:
+        return (
+            f"{result.candidate}: FAILED "
+            f"({memory_detail[2:] if memory_detail else ''}"
+            f"{stage}"
+            f"{', reason=' + detail if detail else ''})"
+        )
+    return (
+        f"{result.candidate}: "
+        f"{result.tflops_per_device:.1f} TFLOPs/s, "
+        f"mem={result.peak_memory_gb:.1f}GB"
+    )
 
 
-def _log_result(msg: str, eval_count: int, remaining: int, pruned: int = 0) -> None:
-    logging.info(_SEP)
-    logging.info(msg)
-    parts = [f"evaluated={eval_count}", f"remaining={remaining}"]
-    if pruned > 0:
-        parts.append(f"pruned={pruned}")
-    logging.info(f"({', '.join(parts)})")
-    logging.info(_SEP)
+def pareto_frontier(results: list[ProfileResult]) -> list[ProfileResult]:
+    """Return non-dominated feasible points maximizing TFLOPs and minimizing memory."""
+    frontier: list[ProfileResult] = []
+    best_tflops = float("-inf")
+    for result in sorted(results, key=lambda item: (item.peak_memory_gb, -item.tflops_per_device)):
+        if result.tflops_per_device > best_tflops:
+            frontier.append(result)
+            best_tflops = result.tflops_per_device
+    return frontier
 
 
 def _search_batch_remat(
@@ -235,119 +295,129 @@ def _search_batch_remat(
     warmup_steps: int = 3,
     valid_sa_blocks: list[int] | None = None,
     batch_sizes: list[int] | None = None,
+    refine_sa_backward: bool = False,
+    evaluator: CandidateEvaluator | None = None,
 ) -> ProfileResult | None:
-    """2-phase search over sa_block_size × batch_size × remat_policy.
+    """Search over sa_block × remat × batch with OOM-monotone ceiling shrink.
 
-    Phase 1: SA block binary search — find max feasible sa_block (probe: remat=full, batch=1)
-    Phase 2: Batch binary search — find max feasible batch (remat=full, sa_block=best)
-    Phase 3: Remat sweep — for each remat policy, find max feasible batch (shrinking ceiling),
-             profile it, track best TFLOPs/s. Stop when no remat can fit batch=1.
+    Memory is monotonically increasing along all 3 axes:
+      sa_block_sizes: ascending (larger block = more memory)
+      BATCH_SIZES:    ascending (larger batch = more memory)
+      REMAT_POLICIES: [full, ..., minimal] (ascending memory)
 
-    Memory ordering (ascending): full < save_out_proj < ... < minimal_with_context
-    Higher-memory remat can only have equal or lower max_batch than lower-memory remat.
+    Performance (TFLOPs) is monotone for sa_block and remat, but NOT for batch
+    (can peak then drop). So we linear-scan all feasible batches per remat.
+
+    Algorithm:
+      Phase 1: Binary search for max feasible sa_block (OOM is monotone).
+      Phase 2: For each feasible sa_block (largest first):
+        For each remat (least memory first), scan batches 1..ceiling.
+        OOM breaks the scan (batch OOM is monotone).
+        Ceiling shrinks across remats (remat OOM is monotone).
     """
     best_result: ProfileResult | None = None
-    eval_count = 0
-    oom_count = 0
-
-    # Cache to avoid re-profiling identical candidates.
-    _cache: dict[tuple, ProfileResult] = {}
-
-    def _profile(candidate):
-        nonlocal eval_count, oom_count
-        cache_key = (
-            candidate.ici_fsdp_parallelism, candidate.ici_tensor_parallelism,
-            candidate.dcn_data_parallelism, candidate.dcn_fsdp_parallelism,
-            candidate.remat_policy, candidate.per_device_batch_size,
-            candidate.sa_block_size, candidate.scan_layers,
-            candidate.gradient_accumulation_steps,
-        )
-        if cache_key in _cache:
-            return _cache[cache_key]
-        result = profile_candidate(config_overrides, candidate, num_steps=num_steps, warmup_steps=warmup_steps)
-        _cache[cache_key] = result
-        eval_count += 1
-        all_results.append(result)
-        if result.oom or result.error:
-            oom_count += 1
-            _log_result(f"{candidate}: OOM", eval_count, 0, 0)
-        else:
-            _log_result(f"{candidate}: {result.tflops_per_device:.1f} TFLOPs/s", eval_count, 0, 0)
-        return result
 
     if valid_sa_blocks is None:
         valid_sa_blocks = [512]
     if batch_sizes is None:
         batch_sizes = BATCH_SIZES
+    if evaluator is None:
+        evaluator = profile_candidate
 
-    # ── Phase 1: SA block binary search ──────────────────────────────────
-    best_sa_block = valid_sa_blocks[0]
+    _cache: dict[tuple, ProfileResult] = {}
+
+    def _evaluate(candidate: Candidate) -> ProfileResult:
+        result = evaluator(config_overrides, candidate, num_steps=num_steps, warmup_steps=warmup_steps)
+        all_results.append(result)
+        logging.info(_fmt_result(result))
+        return result
+
+    def _probe(candidate: Candidate) -> ProfileResult:
+        key = (
+            candidate.remat_policy,
+            candidate.per_device_batch_size,
+            candidate.sa_block_size,
+            candidate.sa_block_backward_size,
+        )
+        if key in _cache:
+            return _cache[key]
+        result = _evaluate(candidate)
+        _cache[key] = result
+        return result
+
+    # ── Phase 1: Binary search for max feasible forward sa_block ──────────
+    max_sa_idx = len(valid_sa_blocks) - 1
     if len(valid_sa_blocks) > 1:
-        logging.info("Phase 1: SA block binary search")
-        lo, hi = 0, len(valid_sa_blocks) - 1
+        logging.info("Phase 1: Forward SA block binary search")
+        lo, hi = 0, max_sa_idx
         best_sa_idx = -1
         while lo <= hi:
             mid = (lo + hi) // 2
-            probe = Candidate(
+            sa_block = valid_sa_blocks[mid]
+            result = _probe(Candidate(
                 remat_policy=REMAT_POLICIES[0],
                 per_device_batch_size=batch_sizes[0],
-                sa_block_size=valid_sa_blocks[mid],
-            )
-            result = _profile(probe)
-            if result.oom or result.error:
+                sa_block_size=sa_block,
+                sa_block_backward_size=_backward_sa_block_candidates(
+                    sa_block, refine_sa_backward=refine_sa_backward
+                )[-1],
+            ))
+            if not result.succeeded:
                 hi = mid - 1
             else:
                 best_sa_idx = mid
                 lo = mid + 1
         if best_sa_idx < 0:
-            logging.warning("All SA block sizes OOM at batch=1, remat=full.")
+            logging.warning("All SA block sizes infeasible at batch=1, remat=full.")
             return None
-        best_sa_block = valid_sa_blocks[best_sa_idx]
-        logging.info(f"Phase 1 result: best sa_block={best_sa_block}")
+        max_sa_idx = best_sa_idx
+        logging.info(f"Phase 1 result: best sa_block_fwd={valid_sa_blocks[max_sa_idx]}")
 
-    # ── Phase 2: Batch binary search (remat=full, sa_block=best) ─────────
-    logging.info("Phase 2: Batch binary search (remat=full)")
-    lo, hi = 0, len(batch_sizes) - 1
-    max_batch_idx = 0
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        candidate = Candidate(
-            remat_policy=REMAT_POLICIES[0],
-            per_device_batch_size=batch_sizes[mid],
-            sa_block_size=best_sa_block,
+    # ── Phase 2: Backward refinement + remat/batch scan ───────────────────
+    # For each forward block, we only refine backward splash blocks over
+    # {same, half}. That captures the common "forward can stay large, dkv must
+    # shrink" case without exploding the search space.
+    for si in range(max_sa_idx, -1, -1):
+        sa_block = valid_sa_blocks[si]
+        backward_candidates = _backward_sa_block_candidates(
+            sa_block,
+            refine_sa_backward=refine_sa_backward,
         )
-        result = _profile(candidate)
-        if result.oom or result.error:
-            hi = mid - 1
-        else:
-            max_batch_idx = mid
-            lo = mid + 1
-    logging.info(f"Phase 2 result: max batch={batch_sizes[max_batch_idx]} (remat=full)")
 
-    # ── Phase 3: Remat sweep with shrinking batch ceiling ────────────────
-    logging.info("Phase 3: Remat sweep")
-    for remat in REMAT_POLICIES:
-        if max_batch_idx < 0:
-            logging.info(f"  {remat}: skipped (no feasible batch)")
-            break
-
-        # Try max_batch_idx first; if OOM, try lower batches
-        found = False
-        for bi in range(max_batch_idx, -1, -1):
-            candidate = Candidate(
-                remat_policy=remat,
-                per_device_batch_size=batch_sizes[bi],
-                sa_block_size=best_sa_block,
+        for sa_block_bwd in backward_candidates:
+            logging.info(
+                "Phase 2: Scan (sa_block_fwd=%s, sa_block_bwd=%s)",
+                sa_block,
+                sa_block_bwd,
             )
-            result = _profile(candidate)
-            if not result.oom and not result.error:
-                max_batch_idx = bi  # shrink ceiling for next remat
-                if best_result is None or result.tflops_per_device > best_result.tflops_per_device:
-                    best_result = result
-                found = True
-                break
-        if not found:
-            max_batch_idx = -1  # no feasible batch for this remat → stop
+
+            batch_ceiling = len(batch_sizes)  # exclusive upper bound
+
+            for remat in REMAT_POLICIES:
+                if batch_ceiling <= 0:
+                    break
+
+                new_ceiling = 0
+                previous_tflops = None
+                for bi in range(batch_ceiling):
+                    result = _probe(Candidate(
+                        remat_policy=remat,
+                        per_device_batch_size=batch_sizes[bi],
+                        sa_block_size=sa_block,
+                        sa_block_backward_size=sa_block_bwd,
+                    ))
+                    if not result.succeeded:
+                        break  # larger batches are pruned after the first failure
+                    new_ceiling = bi + 1
+                    if best_result is None or result.tflops_per_device > best_result.tflops_per_device:
+                        best_result = result
+                    if previous_tflops is not None and result.tflops_per_device < previous_tflops:
+                        # Batch throughput is assumed unimodal. Once it declines, larger batches
+                        # cannot improve the Pareto frontier because they use more memory too.
+                        break
+                    previous_tflops = result.tflops_per_device
+
+                batch_ceiling = new_ceiling
 
     return best_result
 
@@ -360,28 +430,23 @@ def _search_parallelism(
     num_steps: int,
     warmup_steps: int = 3,
     skip_base_tp: bool = False,
+    evaluator: CandidateEvaluator | None = None,
 ) -> ProfileResult | None:
     """Search TP/FSDP splits with fixed batch and remat."""
     best_result: ProfileResult | None = None
-    total = len(tp_values)
-    eval_count = 0
-    oom_count = 0
+    if evaluator is None:
+        evaluator = profile_candidate
 
     for tp in tp_values:
         if skip_base_tp and tp == base.ici_tensor_parallelism:
-            continue  # skip -- already profiled in stage 1
+            continue
         candidate = replace(base, ici_tensor_parallelism=tp, ici_fsdp_parallelism=-1)
-        eval_count += 1
-        result = profile_candidate(config_overrides, candidate, num_steps, warmup_steps=warmup_steps)
+        result = evaluator(config_overrides, candidate, num_steps, warmup_steps=warmup_steps)
         all_results.append(result)
-        remaining = total - eval_count - oom_count
-        if result.oom or result.error:
-            oom_count += 1
-            _log_result(f"{candidate}: OOM", eval_count, remaining)
-        else:
+        logging.info(_fmt_result(result))
+        if result.succeeded:
             if best_result is None or result.tflops_per_device > best_result.tflops_per_device:
                 best_result = result
-            _log_result(f"{candidate}: {result.tflops_per_device:.1f} TFLOPs/s", eval_count, remaining)
 
     return best_result
 
@@ -515,6 +580,11 @@ def main() -> None:
     parser.add_argument("--warmup-steps", type=int, default=3, help="Warmup steps per candidate (default: 3).")
     parser.add_argument("--include-sa-block", action="store_true",
                         help="Include splash attention block size in batch_remat search.")
+    parser.add_argument(
+        "--refine-sa-backward",
+        action="store_true",
+        help="Refine splash backward blocks with {same, half} candidates. Disabled by default.",
+    )
     parser.add_argument("--max-batch-size", type=int, default=8, help="Max per-device batch size to search (default: 8).")
     parser.add_argument("--output-dir", default=None, help="Output directory (default: temp dir).")
     args = parser.parse_args()
@@ -562,6 +632,7 @@ def main() -> None:
             warmup_steps=args.warmup_steps,
             num_profile_steps=args.num_profile_steps,
             include_sa_block=args.include_sa_block,
+            refine_sa_backward=args.refine_sa_backward,
         )
         result = run_search(config_overrides, autotune_config=autotune_cfg, topology=topology, max_batch_size=args.max_batch_size)
         print()

@@ -195,8 +195,21 @@ def get_data(golden_data_point, config):
     pixel_values = np.asarray(golden_data_point["pixel_values"], dtype=np.float32)
     max_logging.log(f"pixel_values.shape = {pixel_values.shape}")
     model_prefix = config.model.split("-")[0]
-    if model_prefix in ["gemma3"]:
-      pixel_values = np.transpose(pixel_values, (1, 2, 0))
+    # Gemma4 expects (num_images, height, width, channels).
+    if model_prefix in ["gemma4"]:
+      if pixel_values.ndim == 2:
+        image_size = config.image_size_for_vit
+        if isinstance(image_size, (tuple, list)):
+          h, w = image_size
+        else:
+          h = w = image_size
+        p = config.patch_size_for_vit
+        c = pixel_values.shape[-1] // (p * p)
+        pixel_values = np.reshape(pixel_values, (h // p, w // p, p, p, c))
+        pixel_values = np.transpose(pixel_values, (0, 2, 1, 3, 4))
+        pixel_values = np.reshape(pixel_values, (h, w, c))
+      else:
+        pixel_values = np.transpose(pixel_values, (1, 2, 0))
     elif model_prefix in ["llama4"]:
       pixel_values = pixel_values[None, :]
     pixel_values = np.stack([pixel_values for _ in range(config.global_batch_size_to_train_on)])

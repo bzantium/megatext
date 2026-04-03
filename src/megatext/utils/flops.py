@@ -19,38 +19,12 @@ import jax
 from megatext.common.common_types import DecoderBlockType
 from megatext.utils import logging as max_logging
 
+GEMMA4_BLOCK = getattr(DecoderBlockType, "GEMMA4", None)
+
 
 def calculate_tokens_training_per_device(config):
   """Calculate training Tokens per device"""
   return config.max_target_length * config.per_device_batch_size * config.gradient_accumulation_steps
-
-
-def calculate_gemma2_tflops_training_per_device(config, total_ffn_flops, qkv_flops, projection_flops, embedding_flops):
-  """
-  Calculate training TFLOP for Gemma2 as in Gemma2 we combine [local_attention, global_attention] into one decoder
-  layer and we use sliding window attention in local_attention
-  """
-  noncausal_attention_flops = (
-      # global attention
-      4 * config.per_device_batch_size * config.max_target_length**2 * config.num_query_heads * config.head_dim
-      +
-      # local attention
-      4
-      * config.per_device_batch_size
-      * config.max_target_length
-      * min(config.sliding_window_size, config.max_target_length)
-      * config.num_query_heads
-      * config.head_dim
-  )
-  causal_attention_flops = noncausal_attention_flops / 2
-  attention_tflops = causal_attention_flops * config.num_decoder_layers * 3 / 10**12
-
-  # multiply num_decoder_layers by 2 because we combine [local_attention, global_attention] into one decoder layer
-  learnable_weight_tflops = (
-      ((total_ffn_flops + qkv_flops + projection_flops) * config.num_decoder_layers * 2 + embedding_flops) * 3 / 10**12
-  )
-
-  return attention_tflops, learnable_weight_tflops
 
 
 def calculate_mixed_attention_model_tflops_training_per_device(
@@ -58,7 +32,8 @@ def calculate_mixed_attention_model_tflops_training_per_device(
 ):
   """
   Calculate training TFLOPs for models with a mixed attention pattern of local
-  and global attention layers, like Gemma3 and GPT-OSS.
+  and global attention layers that share a single attention head geometry across
+  all layers, like Gemma2, GPT-OSS, and Qwen3-SWA.
   """
   num_layers = config.num_decoder_layers
 
@@ -93,6 +68,74 @@ def calculate_mixed_attention_model_tflops_training_per_device(
 
   # Learnable weights (FFN, QKV, Projections) are present in every layer.
   learnable_weight_tflops = ((total_ffn_flops + qkv_flops + projection_flops) * num_layers + embedding_flops) * 3 / 10**12
+
+  return attention_tflops, learnable_weight_tflops
+
+
+def _calculate_attention_projection_flops_per_layer(
+    *,
+    config,
+    num_kv_heads,
+    head_dim,
+    share_kv_projections,
+):
+  """Returns per-layer QKV and output projection FLOPs for an attention layer."""
+  batch_len = config.per_device_batch_size * config.max_target_length
+  query_flops = 2 * batch_len * config.emb_dim * config.num_query_heads * head_dim
+  key_flops = 2 * batch_len * config.emb_dim * num_kv_heads * head_dim
+  value_flops = 0 if share_kv_projections else key_flops
+  projection_flops = 2 * batch_len * config.emb_dim * config.num_query_heads * head_dim
+  return query_flops + key_flops + value_flops, projection_flops
+
+
+def calculate_gemma4_tflops_training_per_device(config, total_ffn_flops, embedding_flops):
+  """Calculate Gemma4 training TFLOPs with per-pattern attention and projection sizes."""
+  num_layers = config.num_decoder_layers
+  attention_pattern_length = 6
+  num_global_layers = num_layers // attention_pattern_length
+  num_local_layers = num_layers - num_global_layers
+
+  local_qkv_flops, local_projection_flops = _calculate_attention_projection_flops_per_layer(
+      config=config,
+      num_kv_heads=config.num_kv_heads,
+      head_dim=config.head_dim,
+      share_kv_projections=False,
+  )
+  global_num_kv_heads = config.global_num_kv_heads if config.global_num_kv_heads > 0 else config.num_kv_heads
+  global_head_dim = config.global_head_dim if config.global_head_dim > 0 else config.head_dim
+  global_qkv_flops, global_projection_flops = _calculate_attention_projection_flops_per_layer(
+      config=config,
+      num_kv_heads=global_num_kv_heads,
+      head_dim=global_head_dim,
+      share_kv_projections=config.share_kv_projections,
+  )
+
+  total_projection_flops = (
+      num_local_layers * (local_qkv_flops + local_projection_flops)
+      + num_global_layers * (global_qkv_flops + global_projection_flops)
+  )
+  learnable_weight_tflops = (total_ffn_flops + total_projection_flops + embedding_flops) * 3 / 10**12
+
+  local_attention_flops_per_layer = (
+      4
+      * config.per_device_batch_size
+      * config.max_target_length
+      * min(config.sliding_window_size, config.max_target_length)
+      * config.num_query_heads
+      * config.head_dim
+  )
+  global_attention_flops_per_layer = (
+      4
+      * config.per_device_batch_size
+      * config.max_target_length**2
+      * config.num_query_heads
+      * global_head_dim
+  )
+  noncausal_attention_flops = (
+      num_local_layers * local_attention_flops_per_layer
+      + num_global_layers * global_attention_flops_per_layer
+  )
+  attention_tflops = (noncausal_attention_flops / 2) * 3 / 10**12
 
   return attention_tflops, learnable_weight_tflops
 
@@ -288,7 +331,7 @@ def calculate_ffn_mamtul_tflops_per_device(config, mlp_dim):
 
 
 def calculate_routed_and_shared_ffn_tflops_per_device(config):
-  """Helper function to calculate DeepSeek-style ffn TFLOP"""
+  """Helper function to calculate model-level routed/shared FFN FLOPs."""
   gate_flops = 2 * config.per_device_batch_size * config.max_target_length * config.emb_dim * config.num_experts
   # Due to the mixed decoder layers, the flops is multiplied by num of layers for both dense and moe
   num_dense_layers, num_moe_layers = get_dense_moe_layers(config)
@@ -309,11 +352,14 @@ def get_dense_moe_layers(config):
   elif config.decoder_block == DecoderBlockType.LLAMA4:
     num_moe_layers = config.num_decoder_layers // config.interleave_moe_layer_step
     num_dense_layers = config.num_decoder_layers - num_moe_layers
+  elif GEMMA4_BLOCK is not None and config.decoder_block == GEMMA4_BLOCK:
+    num_moe_layers = config.num_decoder_layers
+    num_dense_layers = 0
   elif config.decoder_block == DecoderBlockType.QWEN3_NEXT:
     num_moe_layers = config.num_decoder_layers
     num_dense_layers = 0
   else:
-    raise ValueError("Currently we only support DeepSeek, Llama4, and Qwen3-Next calculation.")
+    raise ValueError("Currently we only support DeepSeek, Llama4, Gemma4, and Qwen3-Next calculation.")
 
   return num_dense_layers, num_moe_layers
 
@@ -369,53 +415,52 @@ def calculate_gated_delta_net_flops_per_device(config):
   return gdn_weight_flops, gdn_attn_flops
 
 
-def calculate_gemma3_vision_layers_tflops_per_device(config):
+def _resolve_vision_hw(config):
+  image_size = config.image_size_for_vit
+  if isinstance(image_size, (list, tuple)):
+    return int(image_size[0]), int(image_size[1])
+  return int(image_size), int(image_size)
+
+
+def calculate_gemma4_vision_layers_tflops_per_device(config):
   """
-  Estimate TFLOPs for Gemma3 vision encoder (ViT-style).
+  Estimate TFLOPs for Gemma4 vision encoder (ViT-style).
   Returns:
       total_tflops: Total TFLOPs (counts for fwd + bwd + optimizer)
       learnable_weight_tflops: TFLOPs from learnable weights (patch embedding, qkv, MLP, projections)
       attention_tflops: TFLOPs from attention multiplications
   """
-  # Config values
   B = config.per_device_batch_size
   C = config.num_channels_for_vit
-  H = W = config.image_size_for_vit  # Gemma3 default 896
-  embed_dim = config.emb_dim  # text embedding dim after projection
-  # Values below are hardcoded in Gemma3VisionEncoderLayer
-  patch_size = 14
-  hidden_dim = 1152
-  intermediate_dim = 4304
-  num_layers = 27
-  vision_exit_pooling_window = 4
+  H, W = _resolve_vision_hw(config)
+  patch_size = config.patch_size_for_vit
+  hidden_dim = config.hidden_size_for_vit
+  intermediate_dim = config.intermediate_size_for_vit
+  num_layers = config.num_hidden_layers_for_vit
+  embed_dim = config.emb_dim
+  output_length = config.vision_output_length
 
-  # 1. Patch embedding (Conv2D)
   num_patches_h = H // patch_size
   num_patches_w = W // patch_size
-  seq_len = num_patches_h * num_patches_w  # 64*64=4096
+  seq_len = num_patches_h * num_patches_w
   patch_embed_flops = 2 * B * seq_len * (C * patch_size * patch_size) * hidden_dim
 
-  # 2. gemma3.Encoder: num_layers * gemma3.Encoder1DBlock
   qkv_flops_per_layer = 3 * (2 * B * seq_len * hidden_dim * hidden_dim)
   attn_flops_per_layer = 4 * B * seq_len * seq_len * hidden_dim
-  projection_flops_per_layer = 2 * B * seq_len * hidden_dim * hidden_dim  # projection after attention multiplication
-  mlp_flops_per_layer = 2 * (2 * B * seq_len * hidden_dim * intermediate_dim)  # two fc layers
+  projection_flops_per_layer = 2 * B * seq_len * hidden_dim * hidden_dim
+  mlp_flops_per_layer = 2 * (2 * B * seq_len * hidden_dim * intermediate_dim)
   total_attn_flops = attn_flops_per_layer * num_layers
-  encoder_flops = (+qkv_flops_per_layer + projection_flops_per_layer + mlp_flops_per_layer) * num_layers
+  encoder_flops = (qkv_flops_per_layer + projection_flops_per_layer + mlp_flops_per_layer) * num_layers
 
-  # 4. VisionEmbedder
-  seq_len_after_pooling = (num_patches_h // vision_exit_pooling_window) * (num_patches_w // vision_exit_pooling_window)
-  vision_embedder_flops = 2 * B * seq_len_after_pooling * hidden_dim * embed_dim  # One linear projection
+  vision_embedder_flops = 2 * B * output_length * hidden_dim * embed_dim
 
-  # Learnable weights summation
   learnable_weight_flops = patch_embed_flops + encoder_flops + vision_embedder_flops
 
   if config.freeze_vision_encoder_params:
-    learnable_weight_flops += 2 * vision_embedder_flops  # only projector is learnable, add fwd+optimizer
+    learnable_weight_flops += 2 * vision_embedder_flops
   else:
-    learnable_weight_flops *= 3  # multiply by 3 for fwd + bwd + optimizer
+    learnable_weight_flops *= 3
 
-  # Convert to TFLOPs
   learnable_weight_tflops = learnable_weight_flops / 1e12
   total_attn_tflops = total_attn_flops / 1e12
   total_tflops = learnable_weight_tflops + total_attn_tflops
@@ -519,11 +564,11 @@ def calculate_engram_tflops(config):
 
 def calculate_vision_encoder_tflops(config):
   """Calculate vision encoder TFLOPs per prefill step per device."""
-  if config.decoder_block == "gemma3":
-    mm_total_tflops, mm_learnable_weight_tflops, mm_attention_tflops = calculate_gemma3_vision_layers_tflops_per_device(
+  if GEMMA4_BLOCK is not None and config.decoder_block == GEMMA4_BLOCK:
+    mm_total_tflops, mm_learnable_weight_tflops, mm_attention_tflops = calculate_gemma4_vision_layers_tflops_per_device(
         config
     )
-  elif config.decoder_block == "llama4":
+  elif config.decoder_block == DecoderBlockType.LLAMA4:
     mm_total_tflops, mm_learnable_weight_tflops, mm_attention_tflops = calculate_llama4_vision_layers_tflops_per_device(
         config
     )
@@ -541,7 +586,9 @@ def calculate_tflops_training_per_device(config, log=True):
   # MLP flops
   if config.num_experts > 1:
     # calculation based on dropless implementation
-    if config.decoder_block in (DecoderBlockType.DEEPSEEK, DecoderBlockType.LLAMA4, DecoderBlockType.QWEN3_NEXT):
+    if config.decoder_block in (DecoderBlockType.DEEPSEEK, DecoderBlockType.LLAMA4, DecoderBlockType.QWEN3_NEXT) or (
+        GEMMA4_BLOCK is not None and config.decoder_block == GEMMA4_BLOCK
+    ):
       total_ffn_flops = calculate_routed_and_shared_ffn_tflops_per_device(config)
     else:
       gate_flops = 2 * config.per_device_batch_size * config.max_target_length * config.emb_dim * config.num_experts
@@ -586,12 +633,17 @@ def calculate_tflops_training_per_device(config, log=True):
 
   # Combine flops with number of decoder layers
   if config.decoder_block == DecoderBlockType.GEMMA2:
-    attention_tflops, learnable_weight_tflops = calculate_gemma2_tflops_training_per_device(
-        config, total_ffn_flops, qkv_flops, projection_flops, embedding_flops
-    )
-  elif config.decoder_block == DecoderBlockType.GEMMA3:
     attention_tflops, learnable_weight_tflops = calculate_mixed_attention_model_tflops_training_per_device(
-        config, total_ffn_flops, qkv_flops, projection_flops, embedding_flops, attention_pattern_length=6
+        config, total_ffn_flops, qkv_flops, projection_flops, embedding_flops, attention_pattern_length=2
+    )
+  elif GEMMA4_BLOCK is not None and config.decoder_block == GEMMA4_BLOCK:
+    gemma4_total_ffn_flops = (
+        total_ffn_flops
+        if config.num_experts > 1
+        else total_ffn_flops * config.num_decoder_layers
+    )
+    attention_tflops, learnable_weight_tflops = calculate_gemma4_tflops_training_per_device(
+        config, gemma4_total_ffn_flops, embedding_flops
     )
   elif config.decoder_block == DecoderBlockType.GPT_OSS:
     attention_tflops, learnable_weight_tflops = calculate_mixed_attention_model_tflops_training_per_device(

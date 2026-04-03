@@ -45,21 +45,8 @@ from megatext.layers.embeddings import Embed, PositionalEmbedding, attend_on_emb
 from megatext.layers.normalizations import RMSNorm
 from megatext.layers.quantizations import AqtQuantization as Quant
 from megatext.models import (
-    deepseek,
     deepseek_batchsplit,
-    gemma,
-    gemma2,
-    gemma3,
     gpt3,
-    gpt_oss,
-    llama2,
-    llama4,
-    mistral,
-    mixtral,
-    olmo3,
-    qwen3,
-    qwen3_swa,
-    simple_layer,
 )
 from megatext.multimodal import utils as mm_utils
 from megatext.utils.sharding import create_sharding
@@ -301,8 +288,7 @@ class NNXDecoder(nnx.Module):
 
     self.scanned_layers = None
     self.is_deepseek = self.config.decoder_block == DecoderBlockType.DEEPSEEK
-    self.is_gemma3 = self.config.decoder_block == DecoderBlockType.GEMMA3
-
+    self.layers = nnx.data(nnx.List([]))
     if self.config.scan_layers:
       if self.is_deepseek:
         assert len(decoder_block_classes) == 2
@@ -314,35 +300,16 @@ class NNXDecoder(nnx.Module):
         num_moe = config.num_decoder_layers - config.first_num_dense_layers
 
         self.moe_layer = self._create_scanned_layers(moe_cls, length=num_moe, rngs=rngs)
-      elif self.is_gemma3:
-        attention_pattern_length = len(gemma3.GEMMA3_ATTENTION_PATTERN)
-        scan_length = config.num_decoder_layers // attention_pattern_length
-        num_remaining_layers = config.num_decoder_layers % attention_pattern_length
-        layer_kwargs = {"num_of_layers": attention_pattern_length}
-
-        rem_layer_kwargs = {"num_of_layers": num_remaining_layers}
-
-        RemattedGemma3Block = gemma3.Gemma3ScannableBlock
-
-        if scan_length > 0:
-          self.layers = self._create_scanned_layers(RemattedGemma3Block, length=scan_length, rngs=rngs, **layer_kwargs)
-        self.layers_remainder = RemattedGemma3Block(
-            config=self.config, mesh=mesh, quant=self.quant, model_mode=self.model_mode, **rem_layer_kwargs, rngs=rngs
-        )  # pytype: disable=wrong-keyword-args
       else:
         layer_cls = decoder_block_classes[0]
-        num_layers = int(config.num_decoder_layers / config.inhomogeneous_layer_cycle_interval)
-        layer_kwargs = {}
-        if config.decoder_block == DecoderBlockType.LLAMA4:
-          layer_kwargs = {
-              "nope_layer_interval": self.config.nope_layer_interval,
-              "interleave_moe_layer_step": self.config.interleave_moe_layer_step,
-          }
-
-        self.layers = self._create_scanned_layers(layer_cls, length=num_layers, rngs=rngs, **layer_kwargs)
+        block_layer_count = self._get_scannable_block_layer_count()
+        if block_layer_count is not None:
+          scan_length = self._get_scan_iteration_count(config.num_decoder_layers)
+          self.layers = self._create_scanned_layers(layer_cls, length=scan_length, rngs=rngs)
+        else:
+          num_layers = self._get_scan_iteration_count(config.num_decoder_layers)
+          self.layers = self._create_scanned_layers(layer_cls, length=num_layers, rngs=rngs)
     else:
-      self.layers = nnx.List([])
-
       if self.is_deepseek:
         dense_cls, moe_cls = decoder_block_classes
         for i in range(config.first_num_dense_layers):
@@ -353,21 +320,7 @@ class NNXDecoder(nnx.Module):
         layer_cls = decoder_block_classes[0]
 
         for lyr in range(config.num_decoder_layers):
-          layer_kwargs = {}
-          if config.decoder_block == DecoderBlockType.GEMMA3:
-            layer_kwargs = {"attention_type": gemma3.get_attention_type(layer_id=lyr)}
-          elif config.decoder_block == DecoderBlockType.LLAMA4:
-            layer_kwargs = {
-                "is_nope_layer": llama4.determine_is_nope_layer(lyr, self.config.nope_layer_interval),
-                "is_moe_layer": llama4.determine_is_moe_layer(lyr, self.config.interleave_moe_layer_step),
-            }
-          elif config.decoder_block == DecoderBlockType.QWEN3_NEXT:
-            layer_kwargs = {"layer_idx": lyr}
-          elif config.decoder_block == DecoderBlockType.GPT_OSS:
-            layer_kwargs = {"attention_type": gpt_oss.get_attention_type(layer_id=lyr)}
-          elif config.decoder_block == DecoderBlockType.OLMO3:
-            layer_kwargs = {"attention_type": olmo3.get_attention_type(layer_id=lyr)}
-
+          layer_kwargs = self._get_layer_init_kwargs(lyr)
           self._create_and_register_layer(layer_cls, rngs, "layers", lyr, **layer_kwargs)
 
   def _create_and_register_layer(self, layer_cls, rngs, base_name, i, **layer_kwargs):
@@ -417,21 +370,21 @@ class NNXDecoder(nnx.Module):
 
     return layers_vmapped
 
-  def _apply_layer_with_remat(self, layer: nnx.Module, y: jax.Array, policy: Any, prevent_cse: bool, **kwargs):
-    """Helper to cleanly apply jax.checkpoint to a single unscanned layer or block."""
+  def _get_scannable_block_layer_count(self) -> int | None:
+    from megatext.common.decoder_registry import get_scannable_block_layer_count
+    return get_scannable_block_layer_count(self.config.decoder_block, self.config)
 
-    graphdef, state = nnx.split(layer)
+  def _get_scan_iteration_count(self, total_layers: int) -> int:
+    from megatext.common.decoder_registry import get_scan_iteration_count
+    return get_scan_iteration_count(self.config.decoder_block, self.config, total_layers)
 
-    def pure_layer_fn(state_in, y_in):
-      merged_layer = nnx.merge(graphdef, state_in)
-      out = merged_layer(y_in, **kwargs)
-      return out, nnx.state(merged_layer)
+  def _get_layer_init_kwargs(self, layer_index: int) -> dict[str, Any]:
+    from megatext.common.decoder_registry import get_layer_init_kwargs
+    return get_layer_init_kwargs(self.config.decoder_block, self.config, layer_index)
 
-    checkpointed_fn = jax.checkpoint(pure_layer_fn, policy=policy, prevent_cse=prevent_cse)
-    out, new_state = checkpointed_fn(state, y)
-    nnx.update(layer, new_state)
-
-    return out
+  def _get_layer_call_kwargs(self, **context) -> dict[str, Any]:
+    from megatext.common.decoder_registry import get_layer_call_kwargs
+    return get_layer_call_kwargs(self.config.decoder_block, self.config, **context)
 
   def _apply_layers_sequentially(self, layers, x_in, *args, length: int, **kwargs):
     """Runs the layer stack using nnx.scan."""
@@ -448,11 +401,6 @@ class NNXDecoder(nnx.Module):
 
     layer_cls = layers.__class__
     sig = inspect.signature(layer_cls.__call__)
-    valid_kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters or "kwargs" in sig.parameters}
-
-    layer_cls = layers.__class__  # Access the underlying class
-    sig = inspect.signature(layer_cls.__call__)
-    # Filter kwargs to only include keys that exist in the layer's signature
     valid_kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters or "kwargs" in sig.parameters}
 
     def layer_fn(carry, scanned_vars):
@@ -647,7 +595,12 @@ class NNXDecoder(nnx.Module):
 
     # Merge the image embeddings with the text embeddings for multimodal models
     if image_embeddings is not None and cfg.use_multimodal:
-      if cfg.decoder_block in ["gemma3", "llama4", "qwen3"]:
+      decoder_block = getattr(cfg.decoder_block, "value", cfg.decoder_block)
+      if decoder_block in {
+          DecoderBlockType.GEMMA4.value,
+          DecoderBlockType.LLAMA4.value,
+          DecoderBlockType.QWEN3.value,
+      }:
         y = mm_utils.merge_mm_embeddings(
             text_embeddings=y,
             multimodal_embeddings=image_embeddings,
@@ -659,7 +612,8 @@ class NNXDecoder(nnx.Module):
         raise ValueError(f"Unsupported model for multimodal: {cfg.model}")
 
     if audio_embeddings is not None and cfg.use_audio:
-      if cfg.decoder_block == "qwen3":
+      decoder_block = getattr(cfg.decoder_block, "value", cfg.decoder_block)
+      if decoder_block == DecoderBlockType.QWEN3.value:
         y = mm_utils.merge_mm_embeddings(
             text_embeddings=y,
             multimodal_embeddings=audio_embeddings,
@@ -880,9 +834,7 @@ class NNXDecoder(nnx.Module):
 
     layer_args = (decoder_segment_ids, decoder_positions, deterministic, model_mode)
 
-    layer_kwargs = {}
-    if cfg.decoder_block == DecoderBlockType.GEMMA3:
-      layer_kwargs["bidirectional_mask"] = bidirectional_mask
+    layer_kwargs = self._get_layer_call_kwargs(bidirectional_mask=bidirectional_mask)
 
     if attention_metadata is not None:
       layer_kwargs["attention_metadata"] = attention_metadata
@@ -941,20 +893,17 @@ class NNXDecoder(nnx.Module):
             y, self.moe_layer = self._apply_layers_sequentially(
                 self.moe_layer, y, *layer_args, length=num_moe, **layer_kwargs
             )
-      elif self.is_gemma3:
-        y = self._apply_gemma3_scanned_blocks(
+      elif self._get_scannable_block_layer_count() is not None:
+        scan_length = self._get_scan_iteration_count(cfg.num_decoder_layers)
+        y, self.layers = self._apply_layers_sequentially(
+            self.layers,
             y,
-            decoder_segment_ids,
-            decoder_positions,
-            deterministic,
-            model_mode,
-            bidirectional_mask,
-            previous_chunk,
-            page_state,
-            slot,
+            *layer_args,
+            length=scan_length,
+            **layer_kwargs,
         )
       else:
-        scan_length = int(cfg.num_decoder_layers / cfg.inhomogeneous_layer_cycle_interval)
+        scan_length = self._get_scan_iteration_count(cfg.num_decoder_layers)
         y, self.layers = self._apply_layers_sequentially(self.layers, y, *layer_args, length=scan_length, **layer_kwargs)
     else:
       prevent_cse = should_prevent_cse_in_remat(cfg)
@@ -1013,55 +962,6 @@ class NNXDecoder(nnx.Module):
       logits = self.apply_output_head(shared_embedding, hidden_state, deterministic, model_mode)
 
     return logits, hidden_state, kv_caches
-
-  def _apply_gemma3_scanned_blocks(
-      self,
-      y,
-      decoder_segment_ids,
-      decoder_positions,
-      deterministic,
-      model_mode,
-      bidirectional_mask,
-      previous_chunk,
-      page_state,
-      slot,
-  ):
-    """Applies Gemma3 scanned decoder blocks, handling main scan and remainders."""
-
-    cfg = self.config
-
-    # Define the repeating pattern length and calculate how many full blocks to scan
-    attention_pattern_length = len(gemma3.GEMMA3_ATTENTION_PATTERN)
-    scan_length = cfg.num_decoder_layers // attention_pattern_length
-
-    layer_args = (decoder_segment_ids, decoder_positions, deterministic, model_mode)
-    layer_kwargs = {"bidirectional_mask": bidirectional_mask}
-
-    # Apply the main scan over the full blocks
-    if scan_length > 0:
-      y, self.layers = self._apply_layers_sequentially(self.layers, y, *layer_args, length=scan_length, **layer_kwargs)
-
-    # Apply any remaining layers that did not fit into a full scanned block
-    num_remaining_layers = cfg.num_decoder_layers % attention_pattern_length
-    if num_remaining_layers > 0:
-      policy = self.get_remat_policy()
-      prevent_cse = should_prevent_cse_in_remat(cfg)
-
-      def pure_gemma_fn(graphdef, state_in, y_in):
-        merged_layer = nnx.merge(graphdef, state_in)
-        out_y, _ = merged_layer(
-            y_in, *layer_args, previous_chunk=previous_chunk, page_state=page_state, slot=slot, **layer_kwargs
-        )
-        return out_y, nnx.state(merged_layer)
-
-      checkpointed_gemma_fn = jax.checkpoint(pure_gemma_fn, policy=policy, prevent_cse=prevent_cse)
-
-      graphdef, state = nnx.split(self.layers_remainder)
-      y, new_state = checkpointed_gemma_fn(graphdef, state, y)
-      nnx.update(self.layers_remainder, new_state)
-
-    return y
-
 
 def decoder_as_linen(
     config: Config,
