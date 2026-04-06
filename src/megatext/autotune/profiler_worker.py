@@ -96,7 +96,7 @@ def _run(config_overrides: dict, candidate_dict: dict, num_steps: int, warmup_st
         overrides["enable_checkpointing"] = False
         overrides["dataset_type"] = "synthetic"
         overrides["allow_split_physical_axes"] = True
-        overrides["global_batch_size"] = "None"  # ensures ga_steps=1 in profiling
+        overrides["global_batch_size"] = "None"  # ensures gradient_accumulation_steps=1 in profiling
         overrides["log_config"] = False
         # Never reuse shared compilation cache during autotune profiling. Candidate
         # subprocesses must not observe each other's cache/HBM side effects.

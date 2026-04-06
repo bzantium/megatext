@@ -1892,7 +1892,7 @@ class MegaTextConfig(
           "global_batch_size and gradient_accumulation_steps are mutually exclusive. Set only one."
       )
     if self.global_batch_size is not None:
-      # Derive ga_steps from global_batch_size
+      # Derive gradient_accumulation_steps from global_batch_size
       if self.global_batch_size % micro_batch != 0:
         raise ValueError(
             f"global_batch_size ({self.global_batch_size}) must be divisible by "
@@ -1900,10 +1900,10 @@ class MegaTextConfig(
         )
       self.gradient_accumulation_steps = self.global_batch_size // micro_batch
     elif self.gradient_accumulation_steps is not None:
-      # Derive global_batch_size from ga_steps
+      # Derive global_batch_size from gradient_accumulation_steps
       self.global_batch_size = micro_batch * self.gradient_accumulation_steps
     else:
-      # Both null → ga_steps=1, derive global_batch_size
+      # Both null → gradient_accumulation_steps=1, derive global_batch_size
       self.gradient_accumulation_steps = 1
       self.global_batch_size = micro_batch
 

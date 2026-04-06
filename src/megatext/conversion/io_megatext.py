@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 
+from etils import epath
 import jax
 import numpy as np
 import orbax.checkpoint as ocp
@@ -59,6 +60,10 @@ def _swap_scan_axis(
     }
 
 
+def _add_root_prefix(weights: dict[str, np.ndarray], prefix: str) -> dict[str, np.ndarray]:
+    return {f"{prefix}-{key}": value for key, value in weights.items()}
+
+
 def save_megatext_checkpoint(
     weights: dict[str, np.ndarray],
     output_dir: str,
@@ -107,33 +112,60 @@ def save_megatext_checkpoint(
     return output_dir
 
 
-def load_megatext_checkpoint(checkpoint_path: str) -> dict[str, np.ndarray]:
-    """Load orbax checkpoint → flat dict with '-'-joined keys.
+def load_megatext_checkpoint(checkpoint_path: str, step: int | None = None) -> dict[str, np.ndarray]:
+  """Load orbax checkpoint → flat dict with '-'-joined keys.
 
-    Args:
-        checkpoint_path: Path to checkpoint directory (parent of step dirs).
+  Args:
+    checkpoint_path: Path to checkpoint directory (parent of step dirs).
+    step: Specific checkpoint step to restore. If None, restores the latest step.
 
-    Returns:
-        Flat dict mapping Megatext param keys to numpy arrays.
-    """
-    mgr = ocp.CheckpointManager(
-        checkpoint_path,
-        item_names=("items",),
-        item_handlers={"items": ocp.PyTreeCheckpointHandler()},
-    )
-    step = mgr.latest_step()
-    if step is None:
-        raise FileNotFoundError(f"No checkpoint found in {checkpoint_path}")
+  Returns:
+    Flat dict mapping Megatext param keys to numpy arrays.
+  """
+  mgr = ocp.CheckpointManager(
+      checkpoint_path,
+      item_names=("items",),
+      item_handlers={"items": ocp.PyTreeCheckpointHandler()},
+  )
+  restore_step = mgr.latest_step() if step is None else step
+  if restore_step is None:
+    raise FileNotFoundError(f"No checkpoint found in {checkpoint_path}")
 
-    restored = mgr.restore(
-        step,
-        args=ocp.args.Composite(items=ocp.args.PyTreeRestore()),
-    )
+  return load_megatext_checkpoint_params(
+      os.path.join(checkpoint_path, str(restore_step), "items"),
+  )
 
-    train_state = restored["items"] if "items" in restored else restored
 
-    params = train_state
-    if isinstance(params, dict) and "params" in params:
-        params = params["params"]
+def _cpu_abstract_from_metadata(tree):
+  """Convert Orbax metadata tree to a CPU-restorable abstract pytree."""
+  try:
+    cpu_device = jax.devices("cpu")[0]
+  except (RuntimeError, ValueError, IndexError):
+    cpu_device = jax.devices()[0]
+  cpu_sharding = jax.sharding.SingleDeviceSharding(cpu_device)
+  if isinstance(tree, dict):
+    return {key: _cpu_abstract_from_metadata(value) for key, value in tree.items()}
+  if hasattr(tree, "shape") and hasattr(tree, "dtype"):
+    return jax.ShapeDtypeStruct(shape=tree.shape, dtype=tree.dtype, sharding=cpu_sharding)
+  return tree
 
-    return _swap_scan_axis(_flatten_dict(params), src=1, dst=0)
+
+def load_megatext_checkpoint_params(items_path: str) -> dict[str, np.ndarray]:
+  """Load params subtree from a Megatext Orbax checkpoint step onto CPU."""
+  checkpoint_path = epath.Path(items_path)
+  ckptr = ocp.Checkpointer(ocp.PyTreeCheckpointHandler())
+  metadata = ckptr.metadata(checkpoint_path)
+  abstract_params = _cpu_abstract_from_metadata(metadata.item_metadata.tree["params"])
+  restore_args = ocp.checkpoint_utils.construct_restore_args(abstract_params)
+  restored = ckptr.restore(
+      checkpoint_path,
+      item={"params": abstract_params},
+      transforms={},
+      restore_args={"params": restore_args},
+  )
+
+  params = restored["params"]
+  if isinstance(params, dict) and "params" in params:
+    params = params["params"]
+
+  return _add_root_prefix(_swap_scan_axis(_flatten_dict(params), src=1, dst=0), "params")

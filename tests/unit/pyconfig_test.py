@@ -130,6 +130,5 @@ class PyconfigTest(unittest.TestCase):
     with self.assertRaises(ValueError):
       pyconfig.initialize_pydantic(["/custom_rl/module.py", "run_name=test"])
 
-
 if __name__ == "__main__":
   unittest.main()

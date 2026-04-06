@@ -45,6 +45,12 @@ class MaxUtilsSummaryStats(unittest.TestCase):
     pytree_l2_norm = l2norm_pytree(x)
     self.assertTrue(jax.numpy.allclose(pytree_l2_norm, 7, rtol=1e-05, atol=1e-08, equal_nan=False))
 
+  def test_l2norm_pytree_follows_leaf_dtype(self):
+    x = {"a": jax.numpy.array([1, 2, 3], dtype=jnp.bfloat16)}
+    pytree_l2_norm = l2norm_pytree(x)
+    self.assertEqual(pytree_l2_norm.dtype, jnp.bfloat16)
+    self.assertTrue(jax.numpy.allclose(pytree_l2_norm, jnp.sqrt(14.0), rtol=1e-05, atol=1e-08, equal_nan=False))
+
 
 class MaxUtilsPytree(unittest.TestCase):
   """Tests initialization of training and decode states in megatext.utils"""

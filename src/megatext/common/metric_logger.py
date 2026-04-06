@@ -93,7 +93,10 @@ class MetricLogger:
   """
 
   def __init__(self, config, learning_rate_schedule):
-    self.writer = initialize_summary_writer(config.tensorboard_dir, config.run_name)
+    self.writer = initialize_summary_writer(
+        config.tensorboard_dir,
+        enabled=config.enable_tensorboard,
+    )
     self.config = config
     self.metadata = {}
     self.running_gcs_metrics = [] if config.gcs_metrics else None
@@ -173,13 +176,14 @@ class MetricLogger:
 
     log_parts.extend(
         [
-            f"total_weights: {scalars['learning/total_weights']}",
             f"loss: {loss:.3f}",
             f"lr: {float(scalars['learning/current_learning_rate']):.3e}",
         ]
     )
     if "learning/grad_norm" in scalars:
       log_parts.append(f"grad_norm: {float(scalars['learning/grad_norm']):.3e}")
+    if "learning/update_norm" in scalars:
+      log_parts.append(f"update_norm: {float(scalars['learning/update_norm']):.3e}")
 
     if self.config.mtp_num_layers > 0:
       mtp_loss = scalars.get("learning/mtp_loss", 0.0)
@@ -263,6 +267,8 @@ class MetricLogger:
     if jax.process_index() == 0:
       for metric_name in metrics.get("scalar", []):
         self.writer.add_scalar(metric_name, np.array(metrics["scalar"][metric_name]), step)
+      for metric_name in metrics.get("tensorboard_scalar", []):
+        self.writer.add_scalar(metric_name, np.array(metrics["tensorboard_scalar"][metric_name]), step)
       for metric_name in metrics.get("scalars", []):
         self.writer.add_scalars(metric_name, metrics["scalars"][metric_name], step)
 
@@ -291,6 +297,8 @@ class MetricLogger:
     self.metadata[MetadataKey.PER_DEVICE_TFLOPS], _, _ = calculate_tflops_training_per_device(self.config)
     self.metadata[MetadataKey.PER_DEVICE_TOKENS] = calculate_tokens_training_per_device(self.config)
     max_logging.log(f"number parameters: {num_model_parameters/1e9:.3f} billion")
+    if not self.config.enable_tensorboard:
+      return
     add_text_to_summary_writer("num_model_parameters", str(num_model_parameters), self.writer)
     add_text_to_summary_writer("libtpu_init_args", os.getenv("LIBTPU_INIT_ARGS", ""), self.writer)
     add_config_to_summary_writer(self.config, self.writer)

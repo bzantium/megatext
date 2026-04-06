@@ -87,13 +87,13 @@ def _create_multihost_iterator(config, mesh, split_index: int):
         )
     per_process_batch = global_batch_size // num_processes
 
-    ga_steps = config.gradient_accumulation_steps
+    gradient_accumulation_steps = config.gradient_accumulation_steps
     total_samples = int(config.steps) * global_batch_size
     per_device_bs = int(config.per_device_batch_size)
     max_logging.log(
         f"Data ({['train', 'eval'][split_index]}): {total_samples} samples "
         f"global_batch={global_batch_size}, per_device_batch={per_device_bs}"
-        + (f", ga_steps={ga_steps}" if ga_steps > 1 else "")
+        + (f", gradient_accumulation_steps={gradient_accumulation_steps}" if gradient_accumulation_steps > 1 else "")
     )
 
     # Build grain MapDataset pipeline with mp_prefetch for async data loading
@@ -147,12 +147,12 @@ def _create_fixed_arecord_iterator(config, mesh):
         )
     per_process_batch = global_batch_size // num_processes
 
-    ga_steps = config.gradient_accumulation_steps
+    gradient_accumulation_steps = config.gradient_accumulation_steps
     total_samples = int(config.steps) * global_batch_size
     max_logging.log(
         f"Data (train): {total_samples} samples "
-        f"global_batch={global_batch_size}, per_device_batch={int(config.per_device_batch_size)}"
-        + (f", ga_steps={ga_steps}" if ga_steps > 1 else "")
+        f"global_batch_size={global_batch_size}, per_device_batch_size={int(config.per_device_batch_size)}"
+        + (f", gradient_accumulation_steps={gradient_accumulation_steps}" if gradient_accumulation_steps > 1 else "")
     )
 
     fmt = FormatForMegatext(seq_len=seq_len, add_extra_token=True)

@@ -1,20 +1,15 @@
-<p align="center">
-  <h1 align="center">Megatext</h1>
-  <p align="center">Simple, performant and scalable JAX LLM pretraining</p>
-</p>
-
-<p align="center">
-  <a href="#quickstart">Quickstart</a> &bull;
-  <a href="#architecture">Architecture</a> &bull;
-  <a href="#data-pipeline">Data Pipeline</a> &bull;
-  <a href="#supported-models">Models</a> &bull;
-  <a href="#configuration">Configuration</a> &bull;
-  <a href="#gke-deployment">GKE Deployment</a>
-</p>
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/megatext-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/brand/megatext-light.svg">
+    <img src="assets/brand/megatext-light.svg" width="300" alt="MegaText">
+  </picture>
+  <h3>Simple, performant, and scalable JAX LLM pretraining.</h3>
+</div>
 
 ---
 
-**Megatext** is a streamlined pretraining framework for large language models on TPUs.
+**MegaText** is a streamlined pretraining framework for large language models on TPUs.
 Built on [JAX](https://github.com/jax-ml/jax), inspired by [Google's MaxText](https://github.com/AI-Hypercomputer/maxtext) and [NVIDIA's Megatron-LM](https://github.com/NVIDIA/Megatron-LM).
 
 ### Features
@@ -62,6 +57,16 @@ python gke/submit.py pretrain \
   gke/jobs/train/pretrain_qwen3_swa_8b_stage1.yaml
 ```
 
+### Export a Megatext checkpoint to HF
+
+```bash
+python -m megatext.conversion.convert megatext-to-hf \
+  --megatext-model-path gs://lmt-tpu-datasets/experiments/ryan/pretrain-qwen3-swa-8b-stage1/checkpoints/8000/items \
+  --output-dir /tmp/qwen3_swa_8b_step8000_hf \
+  --hf-config-path /tmp/qwen3_swa_8b_hf_template \
+  --scan-layers
+```
+
 ---
 
 ## Architecture
@@ -95,9 +100,9 @@ Megatext supports four dataset types:
 
 | Type | Description |
 |------|-------------|
-| `mmap` | Memory-mapped tokenized files (Megatron-style) |
+| `mmap` | Memory-mapped tokenized files |
 | `arecord` | Variable-length arecord format |
-| `fixed_arecord` | Fixed-length pre-packed arecord (fastest) |
+| `fixed_arecord` | Fixed-length pre-packed arecord |
 | `synthetic` | Generated data for debugging/profiling |
 
 ### Multi-source blending
@@ -118,15 +123,6 @@ Data blend: weight=10 (55.56%) path=/data/nemotron-cc
 Data blend: weight=5 (27.78%) path=/data/opc-annealing
 Data blend: weight=3 (16.67%) path=/data/code-corpus
 ```
-
-### C++ Packing Helpers
-
-Index building uses C++ with pybind11:
-
-| Algorithm | 19M docs | Description |
-|-----------|----------|-------------|
-| `greedy` | 1.6s | Cross-document concatenation (Megatron-style) |
-| `best_fit` | 7.4s | Segment-tree bin packing, O(N log seq_len) |
 
 ### GCS-Native Caching
 
@@ -221,10 +217,10 @@ python -m megatext.trainers.pretrain \
 
 ### Training Logs
 
-Each step logs performance, loss, learning rate, and gradient norm:
+Each step logs performance, loss, learning rate, gradient norm, and update norm:
 
 ```
-completed step: 5, seconds: 20.585, TFLOP/s/device: 97.566, Tokens/s/device: 1989.820, total_weights: 31457280, loss: 12.409, lr: 3.000e-04, grad_norm: 1.234e+01
+completed step: 5, seconds: 20.585, TFLOP/s/device: 97.566, Tokens/s/device: 1989.820, loss: 12.409, lr: 3.000e-04, grad_norm: 1.234e+01, update_norm: 5.678e-03
 ```
 
 ### Checkpoint Conversion
@@ -233,20 +229,25 @@ Convert HuggingFace checkpoints to Megatext format and back:
 
 ```bash
 # HF -> Megatext
-python -m megatext.conversion.convert \
-  --model-type qwen3 \
-  --hf-path /path/to/hf/model \
-  --mt-path gs://bucket/megatext/model
+python -m megatext.conversion.convert hf-to-megatext \
+  --hf-model-path Qwen/Qwen3-8B \
+  --output-dir gs://bucket/megatext/model \
+  --scan-layers
 
 # Megatext -> HF
-python -m megatext.conversion.convert \
-  --model-type qwen3 \
-  --mt-path gs://bucket/megatext/model \
-  --hf-path /path/to/hf/output \
-  --to-hf
+python -m megatext.conversion.convert megatext-to-hf \
+  --megatext-model-path gs://bucket/megatext/model/checkpoints/8000/items \
+  --output-dir /tmp/qwen3_step8000_hf \
+  --hf-config-path /path/to/prepared/hf-template \
+  --scan-layers
 ```
 
-Supported model types: `qwen3`, `qwen3-swa`, `qwen3-moe`, `qwen3-next`, `llama3`, `deepseek`, `gemma4`, `gemma4_text`, `gpt_oss`
+Notes:
+- `--megatext-model-path` accepts a checkpoint root, step directory, or `items/` directory.
+- `--hf-config-path` must point to a pre-prepared HF config/template readable by `transformers.AutoConfig.from_pretrained(...)`. It is also used as the tokenizer/artifacts source.
+- `qwen3` sliding-window variants are exported through the standard HF `qwen3` runtime config, with Megatext-specific mapping resolved internally.
+
+Supported conversion families: `qwen3`, `qwen3_swa`, `qwen3_moe`, `qwen3_next`, `llama`, `deepseek_v3`, `gemma4`, `gemma4_text`, `gpt_oss`
 
 ---
 
@@ -292,6 +293,12 @@ python gke/submit.py pretrain --infra gke/infra/v5e.yaml --build gke/jobs/train/
 
 # Resubmit (reuse image, replace existing workload)
 python gke/submit.py pretrain --infra gke/infra/v5e.yaml --force gke/jobs/train/job.yaml
+
+# Fast compile/backward sanity check
+python gke/submit.py pretrain --infra gke/infra/v5e.yaml --smoke-run gke/jobs/train/job.yaml
+
+# Short profiling run with synthetic data overrides
+python gke/submit.py profile --infra gke/infra/v5e.yaml gke/jobs/train/job.yaml
 
 # Autotune batch size and remat policy
 python gke/submit.py autotune --infra gke/infra/v5e.yaml gke/jobs/train/job.yaml

@@ -1,8 +1,9 @@
 """Bidirectional HuggingFace <-> Megatext checkpoint conversion.
 
-Fully independent — uses transformers for HF model I/O, applies our own
-mapping + transforms, writes orbax checkpoints. Memory-efficient
-layer-by-layer processing.
+Uses Transformers for HF config/model I/O, applies Megatext-specific
+mapping + transforms, restores Megatext checkpoints from Orbax, and writes
+HF checkpoints via direct sharded safetensors save with meta-device
+validation.
 """
 
 from __future__ import annotations
@@ -10,11 +11,13 @@ from __future__ import annotations
 import logging
 import os
 import re
+import tempfile
 from typing import Any
 
 import numpy as np
 
 from megatext.utils import logging as max_logging
+from megatext.utils import storage as gcs_utils
 from megatext.conversion.io_megatext import (
     load_megatext_checkpoint,
     save_megatext_checkpoint,
@@ -43,7 +46,7 @@ from megatext.conversion.models import (
 
 
 def _resolve_model_type(hf_config: Any) -> str:
-    """Extract model_type, checking root config first then text_config."""
+    """Extract runtime HF model_type, checking root config first then text_config."""
     mt = getattr(hf_config, "model_type", None)
     if mt and mt in ARCH_SPECS:
         return mt
@@ -54,6 +57,24 @@ def _resolve_model_type(hf_config: Any) -> str:
     if mt:
         return mt
     raise ValueError("HF config has no model_type")
+
+
+def _resolve_conversion_model_type(hf_config: Any) -> str:
+    """Resolve conversion family from HF config.
+
+    This may differ from the runtime HF model_type. For example, Qwen3 SWA
+    checkpoints use the standard HF Qwen3 runtime config/model class, but need
+    Qwen3-SWA-specific Megatext checkpoint mapping and shape rules.
+    """
+    runtime_model_type = _resolve_model_type(hf_config)
+    cfg = getattr(hf_config, "text_config", hf_config)
+
+    if runtime_model_type == "qwen3":
+        layer_types = list(getattr(cfg, "layer_types", []) or [])
+        if layer_types and "sliding_attention" in layer_types and "full_attention" in layer_types:
+            return "qwen3_swa"
+
+    return runtime_model_type
 
 
 def _to_numpy(tensor: "torch.Tensor") -> np.ndarray:
@@ -83,14 +104,53 @@ def _to_torch(x: np.ndarray) -> "torch.Tensor":
 
 
 def _load_hf_config(
-    hf_model_path: str, hf_token: str | None = None
+    hf_config_path: str, hf_token: str | None = None
 ) -> Any:
-    """Load HuggingFace model config."""
+    """Load the pre-prepared HF runtime config/template for conversion."""
     from transformers import AutoConfig
 
     return AutoConfig.from_pretrained(
-        hf_model_path, token=hf_token, trust_remote_code=True
+        hf_config_path, token=hf_token, trust_remote_code=True
     )
+
+
+def _normalize_path(path: str) -> str:
+    if path.startswith("gs://"):
+        return path
+    return os.path.abspath(path)
+
+
+def _resolve_megatext_checkpoint_input(
+    megatext_model_path: str,
+    checkpoint_step: int | None = None,
+) -> tuple[str, int | None]:
+    """Resolve a Megatext checkpoint root + optional step from user input.
+
+    Accepted forms:
+    - `<checkpoint_root>`: convert latest step unless `checkpoint_step` is set
+    - `<checkpoint_root>/<step>`: convert that step
+    - `<checkpoint_root>/<step>/items`: convert that step
+    """
+    path = _normalize_path(megatext_model_path).rstrip("/")
+    items_match = re.match(r"^(?P<root>.+)/(?P<step>\d+)/items$", path)
+    if items_match:
+        resolved_step = int(items_match.group("step"))
+        if checkpoint_step is not None and checkpoint_step != resolved_step:
+            raise ValueError(
+                "checkpoint_step does not match step encoded in megatext_model_path."
+            )
+        return items_match.group("root"), resolved_step
+
+    step_match = re.match(r"^(?P<root>.+)/(?P<step>\d+)$", path)
+    if step_match:
+        resolved_step = int(step_match.group("step"))
+        if checkpoint_step is not None and checkpoint_step != resolved_step:
+            raise ValueError(
+                "checkpoint_step does not match step encoded in megatext_model_path."
+            )
+        return step_match.group("root"), resolved_step
+
+    return path, checkpoint_step
 
 
 def _is_multimodal_hf_model(model_type: str, hf_config: Any) -> bool:
@@ -126,6 +186,13 @@ def _init_hf_model_for_save(hf_config: Any):
     if _is_multimodal_hf_model(model_type, hf_config):
         return AutoModelForImageTextToText.from_config(hf_config, torch_dtype=torch.bfloat16)
     return AutoModelForCausalLM.from_config(hf_config, torch_dtype=torch.bfloat16)
+
+
+def _init_hf_model_for_validation(hf_config: Any):
+    import torch
+
+    with torch.device("meta"):
+        return _init_hf_model_for_save(hf_config)
 
 
 # ── Shape computation ────────────────────────────────────────────────────────
@@ -215,7 +282,6 @@ _COMPOSITE_MERGE_FNS = {
     "interleave_last": interleave_last,
 }
 
-
 def _get_composite_split_fn(arch: ArchSpec):
     return _COMPOSITE_SPLIT_FNS[arch.composite_split]
 
@@ -236,7 +302,9 @@ def hf_to_megatext(
     """Convert a HuggingFace checkpoint to Megatext format.
 
     Args:
-        hf_model_path: HF hub model ID or local path.
+        hf_model_path: Pre-prepared HF model/config template path or HF hub ID.
+            This supplies the runtime HF config and tokenizer artifacts used
+            as the conversion source.
         output_dir: Directory to save the converted Megatext checkpoint.
         scan_layers: Whether to use scanned layers (default True for training).
         hf_token: HuggingFace access token for gated models.
@@ -245,7 +313,7 @@ def hf_to_megatext(
         Path to the converted checkpoint directory.
     """
     hf_config = _load_hf_config(hf_model_path, hf_token)
-    model_type = _resolve_model_type(hf_config)
+    model_type = _resolve_conversion_model_type(hf_config)
     cfg = getattr(hf_config, "text_config", hf_config)
 
     arch = resolve(model_type)
@@ -359,26 +427,34 @@ def _per_tensor_shape(full_shape: tuple | None, n_stacked_dims: int) -> tuple | 
 
 
 def megatext_to_hf(
-    checkpoint_path: str,
+    megatext_model_path: str,
     output_dir: str,
-    hf_model_path: str,
+    hf_config_path: str,
     scan_layers: bool = True,
     hf_token: str | None = None,
+    checkpoint_step: int | None = None,
 ) -> str:
     """Convert a Megatext checkpoint to HuggingFace format.
 
     Args:
-        checkpoint_path: Path to the Megatext checkpoint.
+        megatext_model_path: Megatext checkpoint root, step directory, or
+            `items/` directory. If a step is encoded in the path, a separate
+            checkpoint_step is not required.
         output_dir: Directory to save the HF checkpoint.
-        hf_model_path: HF model ID (for model_type detection and config).
+        hf_config_path: Pre-prepared HF model/config template path or HF hub ID.
+            This supplies the runtime HF config/model class and tokenizer
+            artifacts for the exported checkpoint. The conversion mapping
+            family may differ from the runtime HF model_type.
         scan_layers: Whether the checkpoint uses scanned layers.
         hf_token: HuggingFace access token for gated models.
+        checkpoint_step: Optional Megatext checkpoint step override. This is
+            only needed when megatext_model_path points at a checkpoint root.
 
     Returns:
         Path to the converted HuggingFace checkpoint directory.
     """
-    hf_config = _load_hf_config(hf_model_path, hf_token)
-    model_type = _resolve_model_type(hf_config)
+    hf_config = _load_hf_config(hf_config_path, hf_token)
+    model_type = _resolve_conversion_model_type(hf_config)
     cfg = getattr(hf_config, "text_config", hf_config)
 
     arch = resolve(model_type)
@@ -390,25 +466,39 @@ def megatext_to_hf(
     transforms = build_transforms(arch, hf_config.to_dict(), to_hf=True, builder=transform_builder)
     shapes = compute_megatext_shapes(hf_config, arch, scan_layers, tie_word_embeddings=tie)
 
-    checkpoint_path = os.path.abspath(checkpoint_path)
-    output_dir = os.path.abspath(output_dir)
-
-    max_logging.log(f"Loading Megatext checkpoint from {checkpoint_path}...")
-    mt_weights = load_megatext_checkpoint(checkpoint_path)
+    checkpoint_path, checkpoint_step = _resolve_megatext_checkpoint_input(
+        megatext_model_path,
+        checkpoint_step,
+    )
+    output_dir = _normalize_path(output_dir)
 
     hf_state_dict: dict[str, Any] = {}
     merge_fn = _get_composite_merge_fn(arch)
-    _convert_mt_to_hf(mapping, transforms, shapes, mt_weights, hf_state_dict, hf_config,
-                      composite_merge_fn=merge_fn)
-
+    max_logging.log(
+        f"Loading Megatext checkpoint from {checkpoint_path} "
+        f"(step={checkpoint_step if checkpoint_step is not None else 'latest'})..."
+    )
+    mt_weights = load_megatext_checkpoint(checkpoint_path, step=checkpoint_step)
+    _convert_mt_to_hf(
+        mapping,
+        transforms,
+        mt_weights,
+        hf_state_dict,
+        hf_config,
+        composite_merge_fn=merge_fn,
+    )
     del mt_weights
 
     max_logging.log(f"Saving HF model to {output_dir}...")
-    model = _init_hf_model_for_save(hf_config)
-    model.load_state_dict(hf_state_dict, strict=False)
-    model.save_pretrained(output_dir, safe_serialization=True)
-
-    _copy_tokenizer(hf_model_path, output_dir, hf_token)
+    hf_state_dict = _validate_hf_state_dict_for_save(hf_state_dict, hf_config)
+    if output_dir.startswith("gs://"):
+        with tempfile.TemporaryDirectory(prefix="megatext-hf-convert-") as tmp_output_dir:
+            _save_hf_checkpoint_direct(tmp_output_dir, hf_state_dict, hf_config)
+            _copy_tokenizer(hf_config_path, tmp_output_dir, hf_token)
+            gcs_utils.upload_dump(tmp_output_dir, output_dir, delete_local_after=False)
+    else:
+        _save_hf_checkpoint_direct(output_dir, hf_state_dict, hf_config)
+        _copy_tokenizer(hf_config_path, output_dir, hf_token)
 
     max_logging.log(f"Conversion complete: {output_dir}")
     return output_dir
@@ -417,7 +507,6 @@ def megatext_to_hf(
 def _convert_mt_to_hf(
     mapping: Mapping,
     transforms: dict,
-    shapes: dict[str, tuple],
     mt_weights: dict[str, np.ndarray],
     hf_state_dict: dict,
     hf_config: Any,
@@ -491,6 +580,74 @@ def _convert_composite_mt_to_hf(
             xf = _match_transform(transforms, k)
             parts.append(xf(t, ()) if xf else t)
         hf_state_dict[hf_keys] = _to_torch(merge_fn(parts, ()))
+
+
+def _maybe_materialize_tied_hf_weights(
+    hf_state_dict: dict[str, Any],
+    hf_config: Any,
+) -> dict[str, Any]:
+    """Fill common tied HF weights without duplicating storage unnecessarily."""
+    cfg = getattr(hf_config, "text_config", hf_config)
+    if not getattr(cfg, "tie_word_embeddings", False):
+        return hf_state_dict
+    if "lm_head.weight" not in hf_state_dict and "model.embed_tokens.weight" in hf_state_dict:
+        hf_state_dict = dict(hf_state_dict)
+        hf_state_dict["lm_head.weight"] = hf_state_dict["model.embed_tokens.weight"]
+    return hf_state_dict
+
+
+def _validate_hf_state_dict_for_save(
+    hf_state_dict: dict[str, Any],
+    hf_config: Any,
+) -> dict[str, Any]:
+    """Validate converted HF weights against a lightweight runtime model skeleton."""
+    hf_state_dict = _maybe_materialize_tied_hf_weights(hf_state_dict, hf_config)
+    model = _init_hf_model_for_validation(hf_config)
+    expected_state_dict = model.state_dict()
+    expected_keys = list(expected_state_dict.keys())
+    expected_key_set = set(expected_keys)
+    actual_key_set = set(hf_state_dict)
+
+    missing = sorted(expected_key_set - actual_key_set)
+    unexpected = sorted(actual_key_set - expected_key_set)
+    if missing or unexpected:
+        details = []
+        if missing:
+            details.append(f"missing={missing[:10]}")
+        if unexpected:
+            details.append(f"unexpected={unexpected[:10]}")
+        raise ValueError("Converted HF state_dict keys do not match runtime model: " + ", ".join(details))
+
+    ordered_state_dict = {key: hf_state_dict[key] for key in expected_keys}
+    try:
+        model.load_state_dict(ordered_state_dict, strict=False, assign=True)
+    except RuntimeError as exc:
+        raise ValueError("Converted HF state_dict failed runtime-model validation") from exc
+    return ordered_state_dict
+
+
+def _save_hf_checkpoint_direct(
+    output_dir: str,
+    hf_state_dict: dict[str, Any],
+    hf_config: Any,
+) -> None:
+    """Write HF config + sharded safetensors directly without materializing a full HF model."""
+    from huggingface_hub import save_torch_state_dict
+    from transformers import GenerationConfig
+
+    os.makedirs(output_dir, exist_ok=True)
+    hf_config.save_pretrained(output_dir)
+    try:
+        GenerationConfig.from_model_config(hf_config).save_pretrained(output_dir)
+    except Exception:
+        max_logging.debug("Could not derive generation config from HF config (non-fatal)")
+
+    save_torch_state_dict(
+        hf_state_dict,
+        output_dir,
+        safe_serialization=True,
+        metadata={"format": "pt"},
+    )
 
 
 def _infer_hf_shape_from_key(hf_key: str, hf_config: Any) -> tuple:
@@ -738,7 +895,15 @@ def _build_parser() -> "argparse.ArgumentParser":
     sub = parser.add_subparsers(dest="command", required=True)
 
     p1 = sub.add_parser("hf-to-megatext", help="Convert HuggingFace checkpoint to Megatext format.")
-    p1.add_argument("--hf-model-path", required=True, help="HF hub model ID or local path.")
+    p1.add_argument(
+        "--hf-model-path",
+        required=True,
+        help=(
+            "HF model path or hub ID readable by transformers.AutoModelForCausalLM"
+            ".from_pretrained(...) or, for multimodal models, "
+            "transformers.AutoModelForImageTextToText.from_pretrained(...)."
+        ),
+    )
     p1.add_argument("--output-dir", required=True, help="Directory for the converted Megatext checkpoint.")
     p1.add_argument("--scan-layers", action=argparse.BooleanOptionalAction, default=True,
                     help="Use scanned layers (default: True). Use --no-scan-layers to disable.")
@@ -746,9 +911,31 @@ def _build_parser() -> "argparse.ArgumentParser":
                     help="HuggingFace access token (default: $HF_TOKEN env var).")
 
     p2 = sub.add_parser("megatext-to-hf", help="Convert Megatext checkpoint to HuggingFace format.")
-    p2.add_argument("--checkpoint-path", required=True, help="Path to the Megatext checkpoint.")
+    p2.add_argument(
+        "--megatext-model-path",
+        required=True,
+        help=(
+            "Megatext checkpoint root, step directory, or items directory. "
+            "Examples: /tmp/checkpoints, /tmp/checkpoints/8000, "
+            "/tmp/checkpoints/8000/items."
+        ),
+    )
+    p2.add_argument(
+        "--checkpoint-step",
+        type=int,
+        default=None,
+        help="Optional checkpoint step override when --megatext-model-path points at a checkpoint root.",
+    )
     p2.add_argument("--output-dir", required=True, help="Directory for the converted HF checkpoint.")
-    p2.add_argument("--hf-model-path", required=True, help="HF model ID (for model_type detection and config).")
+    p2.add_argument(
+        "--hf-config-path",
+        required=True,
+        help=(
+            "Pre-prepared HF model/config template path or HF hub ID readable by "
+            "transformers.AutoConfig.from_pretrained(...). "
+            "Used for the runtime HF config/model class and tokenizer artifacts."
+        ),
+    )
     p2.add_argument("--scan-layers", action=argparse.BooleanOptionalAction, default=True,
                     help="Whether the checkpoint uses scanned layers (default: True).")
     p2.add_argument("--hf-token", default=os.environ.get("HF_TOKEN"),
@@ -774,11 +961,12 @@ def main() -> None:
         print(f"Done: HF → Megatext: {result}")
     elif args.command == "megatext-to-hf":
         result = megatext_to_hf(
-            checkpoint_path=args.checkpoint_path,
+            megatext_model_path=args.megatext_model_path,
             output_dir=args.output_dir,
-            hf_model_path=args.hf_model_path,
+            hf_config_path=args.hf_config_path,
             scan_layers=args.scan_layers,
             hf_token=args.hf_token,
+            checkpoint_step=args.checkpoint_step,
         )
         print(f"Done: Megatext → HF: {result}")
 
