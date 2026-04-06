@@ -228,7 +228,7 @@ cross_entropy_with_logits.defvjp(_cross_entropy_with_logits_fwd, _cross_entropy_
 
 def l2norm_pytree(x):
   """L2 norm of a pytree of arrays."""
-  return jnp.sqrt(jax.tree_util.tree_reduce(lambda x, y: x + jnp.sum(jnp.square(y)), x, initializer=0.0))
+  return jnp.sqrt(jax.tree_util.tree_reduce(lambda total, leaf: total + jnp.sum(jnp.square(leaf)), x, initializer=0.0))
 
 
 def get_batch_seq_len_for_mode(config, model_mode):

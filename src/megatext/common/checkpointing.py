@@ -14,6 +14,7 @@
 
 """Create an Orbax CheckpointManager with specified (Async or not) Checkpointer."""
 
+import dataclasses
 import time
 from typing import Any, Optional
 
@@ -38,7 +39,6 @@ from orbax.checkpoint._src.checkpoint_managers import save_decision_policy as sa
 import orbax.checkpoint.experimental.emergency.checkpoint_manager as emergency_checkpoint_manager
 import orbax.checkpoint.experimental.emergency.replicator_checkpoint_manager as emergency_replicator_checkpoint_manager
 # pylint: disable=too-many-positional-arguments
-import dataclasses
 import json
 
 import grain

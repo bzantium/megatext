@@ -11,7 +11,7 @@ from flax.traverse_util import flatten_dict
 from jax.sharding import Mesh
 
 from megatext.configs import pyconfig
-from megatext.conversion.convert import compute_megatext_shapes
+from megatext.conversion.convert import compute_megatext_shapes, _resolve_conversion_model_type
 from megatext.conversion.models import ARCH_SPECS
 from megatext.conversion.models.qwen3_swa import build_qwen3_swa
 from megatext.models import models
@@ -28,9 +28,11 @@ def _ns(obj):
 
 
 def _qwen3_swa_hf_config(*, num_layers: int = 8):
+  cycle = ["sliding_attention", "sliding_attention", "sliding_attention", "full_attention"]
+  layer_types = (cycle * ((num_layers + len(cycle) - 1) // len(cycle)))[:num_layers]
   return _ns(
       {
-          "model_type": "qwen3_swa",
+          "model_type": "qwen3",
           "tie_word_embeddings": False,
           "hidden_size": 128,
           "intermediate_size": 256,
@@ -39,7 +41,9 @@ def _qwen3_swa_hf_config(*, num_layers: int = 8):
           "head_dim": 32,
           "vocab_size": 1024,
           "num_hidden_layers": num_layers,
-          "full_attention_interval": 4,
+          "use_sliding_window": True,
+          "sliding_window": 4,
+          "layer_types": layer_types,
       }
   )
 
@@ -99,6 +103,11 @@ def test_compute_qwen3_swa_scanned_shapes_match_nested_cycle_layout():
   assert shapes["params-decoder-layers-layers_3-self_attention-value-kernel"] == (2, 128, 4, 32)
   assert shapes["params-decoder-layers-layers_1-mlp-wi_0-kernel"] == (2, 128, 256)
   assert shapes["params-decoder-logits_dense-kernel"] == (128, 1024)
+
+
+def test_qwen3_swa_variant_resolves_to_qwen3_swa_conversion_family():
+  hf_config = _qwen3_swa_hf_config(num_layers=8)
+  assert _resolve_conversion_model_type(hf_config) == "qwen3_swa"
 
 
 def test_scanned_qwen3_swa_linen_params_match_conversion_layout():

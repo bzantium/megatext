@@ -413,9 +413,12 @@ def train_step(model, config, state_mesh_shardings, params_shardings, state, dat
       scalar_metrics["learning/max_logits"] = global_max_logit
 
   if not config.optimizer_memory_host_offload:
+    param_updates = jax.tree_util.tree_map(lambda new, old: new - old, new_state.params, state.params)
+    param_norm_params = jax.tree_util.tree_map(lambda leaf: leaf.astype(jnp.float32), new_state.params)
     scalar_metrics["learning/grad_norm"] = l2norm_pytree(grads)
     scalar_metrics["learning/raw_grad_norm"] = l2norm_pytree(raw_grads)
-    scalar_metrics["learning/param_norm"] = l2norm_pytree(new_state.params)
+    scalar_metrics["learning/param_norm"] = l2norm_pytree(param_norm_params)
+    scalar_metrics["learning/update_norm"] = l2norm_pytree(param_updates)
   metrics = {
       "scalar": scalar_metrics,
       "scalars": {},

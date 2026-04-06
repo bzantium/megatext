@@ -1,0 +1,30 @@
+<svg width="760" height="132" viewBox="0 14 760 132" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <g transform="translate(88 0)">
+    <rect x="32" y="32" width="96" height="96" rx="24" fill="#F4F4F5"/>
+    <rect x="32" y="32" width="96" height="96" rx="24" stroke="#D4D4D8" stroke-width="2"/>
+
+    <rect x="51" y="51" width="16" height="16" rx="5" fill="#F97316"/>
+    <rect x="72" y="51" width="16" height="16" rx="5" fill="#D4D4D8"/>
+    <rect x="93" y="51" width="16" height="16" rx="5" fill="#F97316"/>
+
+    <rect x="51" y="72" width="16" height="16" rx="5" fill="#F97316"/>
+    <rect x="72" y="72" width="16" height="16" rx="5" fill="#F97316"/>
+    <rect x="93" y="72" width="16" height="16" rx="5" fill="#F97316"/>
+
+    <rect x="51" y="93" width="16" height="16" rx="5" fill="#F97316"/>
+    <rect x="72" y="93" width="16" height="16" rx="5" fill="#D4D4D8"/>
+    <rect x="93" y="93" width="16" height="16" rx="5" fill="#F97316"/>
+
+    <text
+      x="160"
+      y="101"
+      fill="#111827"
+      font-family="Inter, Segoe UI, Helvetica Neue, Arial, sans-serif"
+      font-size="72"
+      font-weight="700"
+      letter-spacing="-2"
+    >
+      MegaText
+    </text>
+  </g>
+</svg>

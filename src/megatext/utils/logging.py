@@ -26,6 +26,28 @@ from megatext.common.gcloud_stub import is_decoupled
 from megatext.common.gcloud_stub import writer, _TENSORBOARDX_AVAILABLE
 
 
+class _NoOpSummaryWriter:
+  """No-op TensorBoard writer used when TensorBoard logging is disabled."""
+
+  def add_text(self, *args, **kwargs):
+    del args, kwargs
+
+  def add_scalar(self, *args, **kwargs):
+    del args, kwargs
+
+  def add_scalars(self, *args, **kwargs):
+    del args, kwargs
+
+  def add_histogram(self, *args, **kwargs):
+    del args, kwargs
+
+  def flush(self):
+    pass
+
+  def close(self):
+    pass
+
+
 
 def log(user_str):
   """Logs a message at the INFO level."""
@@ -71,42 +93,47 @@ class NoisyLogFilter(std_logging.Filter):
 
 
 # ---------------------------------------------------------------------------
-# TensorBoard helpers (moved from max_utils.py)
+# TensorBoard helpers
 # ---------------------------------------------------------------------------
 
 
-def initialize_summary_writer(tensorboard_dir, run_name):
+def initialize_summary_writer(tensorboard_dir, enabled=True):
   """Return a tensorboardX SummaryWriter or a no-op stub.
 
   In decoupled mode (no Google Cloud), this prefers a repo-local
   ``local_tensorboard`` directory when tensorboardX is available.
   """
+  if not enabled:
+    log("TensorBoard disabled; using no-op SummaryWriter.")
+    return _NoOpSummaryWriter()
+
   if jax.process_index() != 0:
     return None
 
   if not _TENSORBOARDX_AVAILABLE:
     log("tensorboardX not available; using no-op SummaryWriter.")
-    return writer.SummaryWriter()
+    return _NoOpSummaryWriter()
 
   if is_decoupled():
     # decoupled and tensorboardX is available -> write to repo-local 'local_tensorboard'
     try:
-      repo_tb = Path(__file__).resolve().parents[2] / "local_tensorboard"
-      repo_tb.mkdir(parents=True, exist_ok=True)
-      summary_writer_path = str(repo_tb / run_name) if run_name else str(repo_tb)
+      if tensorboard_dir:
+        summary_writer_path = tensorboard_dir
+      else:
+        repo_tb = Path(__file__).resolve().parents[2] / "local_tensorboard"
+        repo_tb.mkdir(parents=True, exist_ok=True)
+        summary_writer_path = str(repo_tb)
       log(f"Decoupled: using local tensorboard dir {summary_writer_path}")
       return writer.SummaryWriter(summary_writer_path)
     except Exception as e:  # pylint: disable=broad-exception-caught
       log(f"Decoupled: failed to use local tensorboard dir: {e}; using no-op SummaryWriter.")
-      return writer.SummaryWriter()
+      return _NoOpSummaryWriter()
 
-  # Check if dir or run_name exists!
-  if not tensorboard_dir or not run_name:
-    log("tensorboard_dir or run_name missing; using no-op SummaryWriter to avoid crash.")
-    return writer.SummaryWriter()
+  if not tensorboard_dir:
+    log("tensorboard_dir missing; using no-op SummaryWriter to avoid crash.")
+    return _NoOpSummaryWriter()
 
-  summary_writer_path = os.path.join(tensorboard_dir, run_name)
-  return writer.SummaryWriter(summary_writer_path)
+  return writer.SummaryWriter(tensorboard_dir)
 
 
 def close_summary_writer(summary_writer):

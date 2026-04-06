@@ -36,9 +36,11 @@ config:
   steps: 240000
   per_device_batch_size: 5
   global_batch_size: 7680
-  learning_rate: 1.23e-4
+  learning_rate: 1e-3
+  lr_schedule_type: wsd
   warmup_steps: 2400
-  final_learning_rate: 1.23e-5
+  wsd_decay_steps: 24000
+  final_learning_rate: 1e-4
   remat_policy: full
   scan_layers: true
   sa_use_fused_bwd_kernel: true
@@ -56,5 +58,5 @@ config:
   opt_type: muon
   muon_weight_decay: 0.1
   muon_consistent_rms: 0.2
-  run_name: pretrain-qwen3-swa-8b-stage1
+  run_name: pretrain-qwen3-swa-8b-wsd-1em3-stage1
   base_output_directory: ${BUCKET_PREFIX}/experiments/ryan

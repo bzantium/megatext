@@ -737,7 +737,7 @@ gradient_clipping_threshold: 1.0
 # Mutually exclusive: set one or neither.
 # global_batch_size → auto-derives gradient_accumulation_steps
 # gradient_accumulation_steps → auto-derives global_batch_size
-# Both null → ga_steps=1, global_batch_size = per_device_batch_size * num_devices
+# Both null → gradient_accumulation_steps=1, global_batch_size = per_device_batch_size * num_devices
 global_batch_size: null
 gradient_accumulation_steps: null
 

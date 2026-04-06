@@ -14,7 +14,20 @@ from megatext.conversion.utils import (
 
 
 def _qwen3_swa_cycle(cfg: Any) -> int:
-  return int(getattr(cfg, "full_attention_interval", getattr(cfg, "inhomogeneous_layer_cycle_interval", 4)))
+  interval = getattr(cfg, "full_attention_interval", getattr(cfg, "inhomogeneous_layer_cycle_interval", None))
+  if interval:
+    return int(interval)
+
+  layer_types = list(getattr(cfg, "layer_types", []) or [])
+  if layer_types:
+    for cycle in range(1, len(layer_types) + 1):
+      if len(layer_types) % cycle != 0:
+        continue
+      pattern = layer_types[:cycle]
+      if pattern * (len(layer_types) // cycle) == layer_types:
+        return cycle
+
+  return 4
 
 
 def build_qwen3_swa(arch: ArchSpec, hf_config: Any, scan_layers: bool) -> Mapping:
