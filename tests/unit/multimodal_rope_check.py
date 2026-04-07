@@ -45,7 +45,7 @@ VIDEO_TOKEN = processor_qwen3_omni.QWEN3_OMNI_VIDEO_TOKEN
 AUDIO_TOKEN = processor_qwen3_omni.QWEN3_OMNI_AUDIO_TOKEN
 
 
-def create_pytorch_config(head_dim=128, mrope_section=(24, 20, 20), rope_max_timescale=1_000_000):
+def create_pytorch_config(head_dim=128, mrope_section=(24, 20, 20), rope_theta=1_000_000):
   """Create a unified mock config for PyTorch models.
 
   This config supports both MRoPE embedding and get_rope_index functionality.
@@ -60,7 +60,7 @@ def create_pytorch_config(head_dim=128, mrope_section=(24, 20, 20), rope_max_tim
       self.hidden_size = head_dim
       self.num_attention_heads = 1
       self.max_position_embeddings = 65536
-      self.rope_theta = rope_max_timescale
+      self.rope_theta = rope_theta
       self.mrope_section = mrope_section
       self.rope_scaling = {"mrope_section": list(mrope_section)}
       self.attention_scaling = 1.0
@@ -159,7 +159,7 @@ def assert_mrope_matches_pytorch(
     position_ids,
     err_msg,
     mrope_section=(24, 20, 20),
-    rope_max_timescale=1_000_000,
+    rope_theta=1_000_000,
     head_dim=128,
     rtol=1e-4,
     atol=1e-4,
@@ -171,7 +171,7 @@ def assert_mrope_matches_pytorch(
     position_ids: 3D position IDs. Shape: (3, batch, seq_len)
     err_msg: Error message for assertion failure
     mrope_section: Dimensions for temporal, height, width
-    rope_max_timescale: Max timescale for RoPE
+    rope_theta: Max timescale for RoPE
     head_dim: Dimension of each attention head
     rtol: Relative tolerance for comparison
     atol: Absolute tolerance for comparison
@@ -179,8 +179,7 @@ def assert_mrope_matches_pytorch(
   # JAX version
   rngs = nnx.Rngs(0)
   jax_mrope = JaxMRoPE(
-      min_timescale=1,
-      max_timescale=rope_max_timescale,
+      rope_theta=rope_theta,
       embedding_dims=head_dim,
       cast_as_fprop_dtype=False,
       fprop_dtype=jnp.float32,
@@ -193,7 +192,7 @@ def assert_mrope_matches_pytorch(
   jax_output = jax_mrope(jax_query, jax_position_ids)
 
   # PyTorch version
-  torch_config = create_pytorch_config(head_dim, mrope_section, rope_max_timescale)
+  torch_config = create_pytorch_config(head_dim, mrope_section, rope_theta)
   torch_mrope = PyTorchMRoPE(torch_config)
 
   torch_query = torch.from_numpy(np.array(query_states)).float()

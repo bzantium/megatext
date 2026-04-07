@@ -10,4 +10,4 @@ base_num_kv_heads: 8
 base_num_decoder_layers: 32
 head_dim: 128
 vocab_size: 128256
-rope_max_timescale: 500000
+rope_theta: 500000

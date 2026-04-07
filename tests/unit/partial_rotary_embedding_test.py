@@ -60,8 +60,7 @@ class PartialRotaryEmbeddingTest(unittest.TestCase):
     positions = jnp.arange(seq_len, dtype=jnp.int32).reshape(1, seq_len)
 
     rope_half = PartialRotaryEmbedding(
-        min_timescale=1,
-        max_timescale=10000,
+        rope_theta=10000,
         mesh=self.mesh,
         embedding_dims=head_dim,
         partial_rotary_factor=0.5,
@@ -75,8 +74,7 @@ class PartialRotaryEmbeddingTest(unittest.TestCase):
     inputs_rot, inputs_pass = inputs[..., :rotary_dim], inputs[..., rotary_dim:]
 
     rope_full_for_rot_part = RotaryEmbedding(
-        min_timescale=1,
-        max_timescale=10000,
+        rope_theta=10000,
         mesh=self.mesh,
         embedding_dims=rotary_dim,
         rngs=self.nnx_rng,
@@ -106,8 +104,7 @@ class PartialRotaryEmbeddingTest(unittest.TestCase):
     positions = jnp.arange(seq_len, dtype=jnp.int32).reshape(1, seq_len)
 
     rope_partial = PartialRotaryEmbedding(
-        min_timescale=1,
-        max_timescale=10000,
+        rope_theta=10000,
         mesh=self.mesh,
         embedding_dims=head_dim,
         partial_rotary_factor=1.0,
@@ -116,8 +113,7 @@ class PartialRotaryEmbeddingTest(unittest.TestCase):
     y_partial = rope_partial(inputs, positions)
 
     rope_full = RotaryEmbedding(
-        min_timescale=1,
-        max_timescale=10000,
+        rope_theta=10000,
         mesh=self.mesh,
         embedding_dims=head_dim,
         rngs=self.nnx_rng,
@@ -139,8 +135,7 @@ class PartialRotaryEmbeddingTest(unittest.TestCase):
     positions = jnp.arange(seq_len, dtype=jnp.int32).reshape(1, seq_len)
 
     rope = PartialRotaryEmbedding(
-        min_timescale=1,
-        max_timescale=10000,
+        rope_theta=10000,
         mesh=self.mesh,
         embedding_dims=head_dim,
         partial_rotary_factor=0.5,

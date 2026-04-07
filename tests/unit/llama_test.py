@@ -95,7 +95,7 @@ class RoPETest(unittest.TestCase):
     llama_output = apply_rotary_emb(jnp.asarray(x_q), jnp.asarray(x_k), freqs_cis)
 
     position = jnp.arange(seq_len, dtype=jnp.float32)[jnp.newaxis, :]
-    rope = embeddings.RotaryEmbedding(min_timescale=1, max_timescale=10_000, embedding_dims=dim_per_head, mesh=self.mesh)
+    rope = embeddings.RotaryEmbedding(rope_theta=10_000, embedding_dims=dim_per_head, mesh=self.mesh)
     query_proj = rope(permute_to_match_megatext_rope(x_q), position)
     key_proj = rope(permute_to_match_megatext_rope(x_k), position)
 
@@ -112,7 +112,7 @@ class RoPETest(unittest.TestCase):
     position = jnp.arange(seq_len, dtype=jnp.float32)[jnp.newaxis, :]
 
     # Calculate RoPE embeddings and then scale
-    rope = embeddings.RotaryEmbedding(min_timescale=1, max_timescale=10_000, embedding_dims=dim_per_head, mesh=self.mesh)
+    rope = embeddings.RotaryEmbedding(rope_theta=10_000, embedding_dims=dim_per_head, mesh=self.mesh)
     query_proj_1 = rope(x_q, position=position)
 
     query_proj_1 = query_proj_1 * (dim_per_head**-0.5)
@@ -131,13 +131,13 @@ class RoPETest(unittest.TestCase):
 
     # Test LLaMARotaryEmbedding with scaling
     llama_rope_scaled = embeddings.LLaMARotaryEmbedding(
-        min_timescale=1, max_timescale=10000, embedding_dims=dim_per_head, use_scale=True, mesh=self.mesh
+        rope_theta=10000, embedding_dims=dim_per_head, use_scale=True, mesh=self.mesh
     )
     query_proj_scaled = llama_rope_scaled(x_q, position)
 
     # Test LLaMARotaryEmbedding without scaling
     llama_rope_no_scale = embeddings.LLaMARotaryEmbedding(
-        min_timescale=1, max_timescale=10000, embedding_dims=dim_per_head, use_scale=False, mesh=self.mesh
+        rope_theta=10000, embedding_dims=dim_per_head, use_scale=False, mesh=self.mesh
     )
     query_proj_no_scale = llama_rope_no_scale(x_q, position)
 
@@ -147,15 +147,13 @@ class RoPETest(unittest.TestCase):
   def test_llama_rope_single_rotation(self):
     dim_per_head = 128
     seq_len = 8
-    min_timescale = 1
-    max_timescale = 10000
+    rope_theta = 10000
     x_q = np.random.normal(1, 0.5, (1, seq_len, 4, dim_per_head))
     position = jnp.arange(seq_len, dtype=jnp.float32)[jnp.newaxis, :]
 
     # Use LLaMARotaryEmbedding
     llama_rope = embeddings.LLaMARotaryEmbedding(
-        min_timescale=min_timescale,
-        max_timescale=max_timescale,
+        rope_theta=rope_theta,
         embedding_dims=dim_per_head,
         use_scale=False,
         mesh=self.mesh,
@@ -175,7 +173,7 @@ class RoPETest(unittest.TestCase):
     half_embedding_dim = dim_per_head // 2
     fraction = 2 * jnp.arange(half_embedding_dim) / dim_per_head
     fraction = jnp.repeat(fraction, 2)
-    timescale = min_timescale * (max_timescale / min_timescale) ** fraction
+    timescale = rope_theta ** fraction
     timescale = timescale[jnp.newaxis, jnp.newaxis, jnp.newaxis, :]
     sinusoid_inp = position / timescale
 

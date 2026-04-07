@@ -1929,7 +1929,7 @@ class Qwen3OmniAudioEncoder(nnx.Module):
 
     self.positional_embedding = PositionalEmbedding(
         embedding_dims=self.config.d_model_for_audio,
-        max_wavelength=self.config.max_timescale_for_audio,
+        max_wavelength=self.config.rope_theta_for_audio,
         cast_as_fprop_dtype=True,
         fprop_dtype=self.config.dtype_mm,
     )

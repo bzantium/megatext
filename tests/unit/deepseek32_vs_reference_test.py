@@ -86,7 +86,7 @@ class Config:
   # yarn
   rope_type: str = "yarn"
   original_max_position_embeddings: int = 4096
-  rope_max_timescale: int = 10_000
+  rope_theta: int = 10_000
   max_position_embeddings: int = 163840
   rope_factor: int = 40
   beta_fast: int = 32
@@ -122,7 +122,7 @@ class ModelArgs:
     self.use_tokamax_splash = config.use_tokamax_splash
     # yarn
     self.original_seq_len = config.original_max_position_embeddings
-    self.rope_theta = float(config.rope_max_timescale)
+    self.rope_theta = float(config.rope_theta)
     self.rope_factor = float(config.rope_factor)
     self.beta_fast = config.beta_fast
     self.beta_slow = config.beta_slow
@@ -874,7 +874,7 @@ class DeepseekV32IndexerTest(DeepseekTestBase):
         original_max_position_embeddings=cfg.original_max_position_embeddings,
         beta_fast=cfg.beta_fast,
         beta_slow=cfg.beta_slow,
-        rope_theta=cfg.rope_max_timescale,
+        rope_theta=cfg.rope_theta,
         rope_factor=cfg.rope_factor,
         embedding_dims=cfg.qk_rope_head_dim,
         fprop_dtype=self.dtype,

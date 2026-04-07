@@ -36,9 +36,9 @@ share_kv_projections: true
 v_norm_with_scale: false
 
 # RoPE scaling
-local_rope_max_timescale: 10000
-global_rope_max_timescale: 1000000
-rope_max_timescale: 1000000
+local_rope_theta: 10000
+global_rope_theta: 1000000
+rope_theta: 1000000
 global_rope_proportion: 0.25
 local_rope_proportion: 1.0
 final_logits_soft_cap: 30.0

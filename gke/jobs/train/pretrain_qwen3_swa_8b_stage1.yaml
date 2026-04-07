@@ -42,8 +42,6 @@ config:
   wsd_decay_steps: 24000
   final_learning_rate: 1e-4
   remat_policy: full
-  scan_layers: true
-  sa_use_fused_bwd_kernel: true
   adam_b1: 0.9
   adam_b2: 0.95
   gradient_clipping_threshold: 1.0

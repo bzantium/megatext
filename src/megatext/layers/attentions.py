@@ -168,7 +168,7 @@ def attention_as_linen(
     mrope_section: tuple[int, int, int] | None = None,
     name: str | None = None,
     rope_type: str | None = None,
-    rope_max_timescale: float | None = None,
+    rope_theta: float | None = None,
     partial_rotary_factor: float | None = None,
 ):
   """A factory function to create an Attention as a Linen module.
@@ -237,7 +237,7 @@ def attention_as_linen(
       mrope_section=mrope_section,
       name=name,
       rope_type=rope_type,
-      rope_max_timescale=rope_max_timescale,
+      rope_theta=rope_theta,
       partial_rotary_factor=partial_rotary_factor,
       metadata_fn=variable_to_logically_partitioned,
       abstract_init=False,
@@ -342,7 +342,7 @@ class Attention(nnx.Module):
       mrope_section: tuple[int, int, int] | None = None,
       name: str | None = None,
       rope_type: str | None = None,
-      rope_max_timescale: float | None = None,
+      rope_theta: float | None = None,
       partial_rotary_factor: float | None = None,
       rngs: Optional[nnx.Rngs] = None,
   ):
@@ -386,7 +386,7 @@ class Attention(nnx.Module):
       rope_type: Optional override for the RoPE type (e.g., 'default', 'yarn').
           If provided, this takes precedence over `config.rope_type`.
       use_v_norm: Whether to apply normalization to value.
-      rope_max_timescale: Optional RoPE max timescale override for this layer.
+      rope_theta: Optional RoPE max timescale override for this layer.
       partial_rotary_factor: Optional partial rotary ratio for this layer.
       rngs: RNG state for initialization, passed by the nnx.to_linen wrapper.
     """
@@ -449,7 +449,7 @@ class Attention(nnx.Module):
     self.rngs = rngs
     # Use the rope type specified in the arguments if provided, otherwise fall back to the one in the config.
     self.rope_type = (rope_type or self.config.rope_type).lower()
-    self.rope_max_timescale = rope_max_timescale if rope_max_timescale is not None else self.config.rope_max_timescale
+    self.rope_theta = rope_theta if rope_theta is not None else self.config.rope_theta
     self.partial_rotary_factor = partial_rotary_factor
 
     self.is_qwen2 = self.config.decoder_block == DecoderBlockType.QWEN2
@@ -811,8 +811,7 @@ class Attention(nnx.Module):
 
     elif self.use_mrope:
       rotary_embedding = Qwen3OmniMoeThinkerTextRotaryEmbedding(
-          min_timescale=self.config.rope_min_timescale,
-          max_timescale=self.rope_max_timescale,
+          rope_theta=self.rope_theta,
           embedding_dims=rope_embedding_dims,
           cast_as_fprop_dtype=True,
           fprop_dtype=self.dtype,
@@ -822,8 +821,7 @@ class Attention(nnx.Module):
 
     elif rope_type.startswith("llama3.1"):
       rotary_embedding = LLaMARotaryEmbedding(
-          min_timescale=self.config.rope_min_timescale,
-          max_timescale=self.rope_max_timescale,
+          rope_theta=self.rope_theta,
           mesh=self.mesh,
           embedding_dims=rope_embedding_dims,
           fprop_dtype=self.dtype,
@@ -838,7 +836,7 @@ class Attention(nnx.Module):
           original_max_position_embeddings=self.config.original_max_position_embeddings,
           beta_fast=self.config.beta_fast,
           beta_slow=self.config.beta_slow,
-          rope_theta=self.rope_max_timescale,
+          rope_theta=self.rope_theta,
           rope_factor=self.config.rope_factor,
           embedding_dims=rope_embedding_dims,
           fprop_dtype=self.dtype,
@@ -850,8 +848,7 @@ class Attention(nnx.Module):
       )
     elif self.is_qwen3_next:
       rotary_embedding = PartialRotaryEmbedding(
-          min_timescale=self.config.rope_min_timescale,
-          max_timescale=self.rope_max_timescale,
+          rope_theta=self.rope_theta,
           mesh=self.mesh,
           embedding_dims=self.config.head_dim,
           partial_rotary_factor=self.config.partial_rotary_factor,
@@ -867,8 +864,7 @@ class Attention(nnx.Module):
           else PartialRotaryEmbedding
       )
       rotary_embedding = rotary_embedding_cls(
-          min_timescale=self.config.rope_min_timescale,
-          max_timescale=self.rope_max_timescale,
+          rope_theta=self.rope_theta,
           mesh=self.mesh,
           embedding_dims=rope_embedding_dims,
           partial_rotary_factor=self.partial_rotary_factor,
@@ -878,14 +874,13 @@ class Attention(nnx.Module):
           rngs=self.rngs,
       )
     else:
-      max_timescale = self.rope_max_timescale
-      # For local attention use local_rope_max_timescale if it's is positive
-      if self.attention_type == AttentionType.LOCAL_SLIDING and self.config.local_rope_max_timescale > 0:
-        max_timescale = self.config.local_rope_max_timescale
+      rope_theta = self.rope_theta
+      # For local attention use local_rope_theta if it's is positive
+      if self.attention_type == AttentionType.LOCAL_SLIDING and self.config.local_rope_theta > 0:
+        rope_theta = self.config.local_rope_theta
 
       rotary_embedding = RotaryEmbedding(
-          min_timescale=self.config.rope_min_timescale,
-          max_timescale=max_timescale,
+          rope_theta=rope_theta,
           mesh=self.mesh,
           embedding_dims=rope_embedding_dims,
           fprop_dtype=self.dtype,

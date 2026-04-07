@@ -237,8 +237,7 @@ def attend_on_embedding(
 
 def rotary_embedding_as_linen(
     *,
-    min_timescale: int,
-    max_timescale: int,
+    rope_theta: int,
     embedding_dims: int = 0,
     cast_as_fprop_dtype: bool = True,
     fprop_dtype: DType = jnp.bfloat16,
@@ -247,10 +246,7 @@ def rotary_embedding_as_linen(
   """Initializes the RotaryEmbedding module and returns it as a Linen module.
 
   Args:
-    min_timescale: Start of the geometric index. Determines the periodicity of
-      the added signal.
-    max_timescale: End of the geometric index. Determines the frequency of the
-      added signal.
+    rope_theta: Base frequency (theta) for RoPE.
     embedding_dims: Dimension of the embedding to be generated.
     cast_as_fprop_dtype: Whether to cast the output to the fprop dtype.
     fprop_dtype: The dtype of the output.
@@ -258,8 +254,7 @@ def rotary_embedding_as_linen(
   """
   return nnx_wrappers.to_linen(
       RotaryEmbedding,
-      min_timescale=min_timescale,
-      max_timescale=max_timescale,
+      rope_theta=rope_theta,
       embedding_dims=embedding_dims,
       cast_as_fprop_dtype=cast_as_fprop_dtype,
       fprop_dtype=fprop_dtype,
@@ -273,8 +268,7 @@ class RotaryEmbedding(nnx.Module):
 
   def __init__(
       self,
-      min_timescale: int,
-      max_timescale: int,
+      rope_theta: int,
       mesh: Mesh,
       embedding_dims: int = 0,
       cast_as_fprop_dtype: bool = True,
@@ -288,17 +282,13 @@ class RotaryEmbedding(nnx.Module):
     """Initializes the RotaryEmbedding module.
 
     Args:
-      min_timescale: Start of the geometric index. Determines the periodicity of
-        the added signal.
-      max_timescale: End of the geometric index. Determines the frequency of the
-        added signal.
+      rope_theta: Base frequency (theta) for RoPE.
       embedding_dims: Dimension of the embedding to be generated.
       cast_as_fprop_dtype: Whether to cast the output to the fprop dtype.
       fprop_dtype: The dtype of the output.
       rngs: rng keys passed in by nnx.bridge.to_linen.
     """
-    self.min_timescale = min_timescale
-    self.max_timescale = max_timescale
+    self.rope_theta = rope_theta
     self.mesh = mesh
     self.embedding_dims = embedding_dims
     self.cast_as_fprop_dtype = cast_as_fprop_dtype
@@ -314,7 +304,7 @@ class RotaryEmbedding(nnx.Module):
     """Returns the timescale for the rotary embedding."""
     half_embedding_dim = self.embedding_dims // 2
     fraction = 2 * jnp.arange(0, half_embedding_dim) / self.embedding_dims
-    timescale = self.min_timescale * (self.max_timescale / self.min_timescale) ** fraction
+    timescale = self.rope_theta ** fraction
     if self.rope_linear_scaling_factor != 1.0:
       timescale = timescale * self.rope_linear_scaling_factor
     return timescale
@@ -372,8 +362,7 @@ class RotaryEmbedding(nnx.Module):
 
 def llama_rotary_embedding_as_linen(
     *,
-    min_timescale: int,
-    max_timescale: int,
+    rope_theta: int,
     embedding_dims: int = 0,
     cast_as_fprop_dtype: bool = True,
     fprop_dtype: DType = jnp.bfloat16,
@@ -383,10 +372,7 @@ def llama_rotary_embedding_as_linen(
   """Initializes the LLaMARotaryEmbedding module and returns it as a Linen module.
 
   Args:
-    min_timescale: Start of the geometric index. Determines the periodicity of
-      the added signal.
-    max_timescale: End of the geometric index. Determines the frequency of the
-      added signal.
+    rope_theta: Base frequency (theta) for RoPE.
     embedding_dims: Dimension of the embedding to be generated.
     cast_as_fprop_dtype: Whether to cast the output to the fprop dtype.
     fprop_dtype: The dtype of the output.
@@ -395,8 +381,7 @@ def llama_rotary_embedding_as_linen(
   """
   return nnx_wrappers.to_linen(
       LLaMARotaryEmbedding,
-      min_timescale=min_timescale,
-      max_timescale=max_timescale,
+      rope_theta=rope_theta,
       embedding_dims=embedding_dims,
       cast_as_fprop_dtype=cast_as_fprop_dtype,
       fprop_dtype=fprop_dtype,
@@ -408,8 +393,7 @@ def llama_rotary_embedding_as_linen(
 
 def partial_rotary_embedding_as_linen(
     *,
-    min_timescale: int,
-    max_timescale: int,
+    rope_theta: int,
     mesh: Mesh,
     embedding_dims: int = 0,
     partial_rotary_factor: float = 0.25,
@@ -421,10 +405,7 @@ def partial_rotary_embedding_as_linen(
   """Initializes the PartialRotaryEmbedding module and returns it as a Linen module.
 
   Args:
-    min_timescale: Start of the geometric index. Determines the periodicity of
-      the added signal.
-    max_timescale: End of the geometric index. Determines the frequency of the
-      added signal.
+    rope_theta: Base frequency (theta) for RoPE.
     embedding_dims: Dimension of the embedding to be generated.
     partial_rotary_factor: Ratio of dimensions to apply ROPE to.
     cast_as_fprop_dtype: Whether to cast the output to the fprop dtype.
@@ -433,8 +414,7 @@ def partial_rotary_embedding_as_linen(
   """
   return nnx_wrappers.to_linen(
       PartialRotaryEmbedding,
-      min_timescale=min_timescale,
-      max_timescale=max_timescale,
+      rope_theta=rope_theta,
       mesh=mesh,
       embedding_dims=embedding_dims,
       partial_rotary_factor=partial_rotary_factor,
@@ -451,8 +431,7 @@ class PartialRotaryEmbedding(RotaryEmbedding):
 
   def __init__(
       self,
-      min_timescale: int,
-      max_timescale: int,
+      rope_theta: int,
       mesh: Mesh,
       embedding_dims: int = 0,
       cast_as_fprop_dtype: bool = True,
@@ -464,10 +443,7 @@ class PartialRotaryEmbedding(RotaryEmbedding):
     """Initializes the PartialRotaryEmbedding module.
 
     Args:
-      min_timescale: Start of the geometric index. Determines the periodicity of
-        the added signal.
-      max_timescale: End of the geometric index. Determines the frequency of the
-        added signal.
+      rope_theta: Base frequency (theta) for RoPE.
       embedding_dims: Dimension of the embedding to be generated.
       partial_rotary_factor: Ratio of dimensions to apply ROPE to
       rngs: rng keys passed in by nnx.bridge.to_linen.
@@ -476,10 +452,8 @@ class PartialRotaryEmbedding(RotaryEmbedding):
     self.partial_rotary_factor = partial_rotary_factor
     self.rotary_dim = int(self.head_dim * self.partial_rotary_factor)
 
-    # Initialize the base class with only the rotary_dim
     super().__init__(
-        min_timescale=min_timescale,
-        max_timescale=max_timescale,
+        rope_theta=rope_theta,
         mesh=mesh,
         embedding_dims=self.rotary_dim,
         cast_as_fprop_dtype=cast_as_fprop_dtype,
@@ -512,8 +486,7 @@ class Gemma4PartialRotaryEmbedding(RotaryEmbedding):
 
   def __init__(
       self,
-      min_timescale: int,
-      max_timescale: int,
+      rope_theta: int,
       mesh: Mesh,
       embedding_dims: int = 0,
       cast_as_fprop_dtype: bool = True,
@@ -527,8 +500,7 @@ class Gemma4PartialRotaryEmbedding(RotaryEmbedding):
     self.rotary_dim = int(self.head_dim * self.partial_rotary_factor)
 
     super().__init__(
-        min_timescale=min_timescale,
-        max_timescale=max_timescale,
+        rope_theta=rope_theta,
         mesh=mesh,
         embedding_dims=self.head_dim,
         cast_as_fprop_dtype=cast_as_fprop_dtype,
@@ -542,7 +514,7 @@ class Gemma4PartialRotaryEmbedding(RotaryEmbedding):
     """Returns the Gemma 4 timescale with inf-padded passthrough dimensions."""
     half_rotary_dim = self.rotary_dim // 2
     fraction = 2 * jnp.arange(0, half_rotary_dim) / self.head_dim
-    timescale = self.min_timescale * (self.max_timescale / self.min_timescale) ** fraction
+    timescale = self.rope_theta ** fraction
 
     if getattr(self, "rope_linear_scaling_factor", 1.0) != 1.0:
       timescale = timescale * self.rope_linear_scaling_factor
@@ -561,8 +533,7 @@ class LLaMARotaryEmbedding(RotaryEmbedding):
 
   def __init__(
       self,
-      min_timescale: int,
-      max_timescale: int,
+      rope_theta: int,
       mesh: Mesh,
       embedding_dims: int = 0,
       cast_as_fprop_dtype: bool = True,
@@ -576,10 +547,7 @@ class LLaMARotaryEmbedding(RotaryEmbedding):
     """Initializes the LLaMARotaryEmbedding module.
 
     Args:
-      min_timescale: Start of the geometric index. Determines the periodicity of
-        the added signal.
-      max_timescale: End of the geometric index. Determines the frequency of the
-        added signal.
+      rope_theta: Base frequency (theta) for RoPE.
       embedding_dims: Dimension of the embedding to be generated.
       cast_as_fprop_dtype: Whether to cast the output to the fprop dtype.
       fprop_dtype: The dtype of the output.
@@ -587,8 +555,7 @@ class LLaMARotaryEmbedding(RotaryEmbedding):
       rngs: rng keys passed in by nnx.bridge.to_linen.
     """
     super().__init__(
-        min_timescale=min_timescale,
-        max_timescale=max_timescale,
+        rope_theta=rope_theta,
         mesh=mesh,
         embedding_dims=embedding_dims,
         cast_as_fprop_dtype=cast_as_fprop_dtype,
@@ -606,7 +573,7 @@ class LLaMARotaryEmbedding(RotaryEmbedding):
     half_embedding_dim = self.embedding_dims // 2
     fraction = 2 * jnp.arange(0, half_embedding_dim) / self.embedding_dims
     fraction = jnp.repeat(fraction, 2)
-    timescale = self.min_timescale * (self.max_timescale / self.min_timescale) ** fraction
+    timescale = self.rope_theta ** fraction
 
     # Apply scaling factor if enabled
     if self.use_scale:
@@ -1620,8 +1587,7 @@ class Qwen3OmniMoeThinkerTextRotaryEmbedding(RotaryEmbedding):
 
   def __init__(
       self,
-      min_timescale: int,
-      max_timescale: int,
+      rope_theta: int,
       embedding_dims: int = 0,
       cast_as_fprop_dtype: bool = True,
       fprop_dtype: DType = jnp.bfloat16,
@@ -1632,8 +1598,7 @@ class Qwen3OmniMoeThinkerTextRotaryEmbedding(RotaryEmbedding):
     """Initializes the Qwen3OmniMoeThinkerTextRotaryEmbedding module.
 
     Args:
-      min_timescale: Start of the geometric index (typically 1).
-      max_timescale: End of the geometric index (rope_theta, e.g., 1000000).
+      rope_theta: Base frequency (theta) for RoPE.
       embedding_dims: Dimension of the embedding (head_dim).
       cast_as_fprop_dtype: Whether to cast output to fprop dtype.
       fprop_dtype: The dtype of the output.
@@ -1643,8 +1608,7 @@ class Qwen3OmniMoeThinkerTextRotaryEmbedding(RotaryEmbedding):
       rngs: rng keys passed in by nnx.bridge.to_linen.
     """
     super().__init__(
-        min_timescale=min_timescale,
-        max_timescale=max_timescale,
+        rope_theta=rope_theta,
         mesh=None,
         embedding_dims=embedding_dims,
         cast_as_fprop_dtype=cast_as_fprop_dtype,
@@ -1747,8 +1711,7 @@ class Qwen3OmniMoeThinkerTextRotaryEmbedding(RotaryEmbedding):
 
 def qwen3_omni_mrope_embedding_as_linen(
     *,
-    min_timescale: int,
-    max_timescale: int,
+    rope_theta: int,
     embedding_dims: int = 0,
     cast_as_fprop_dtype: bool = True,
     fprop_dtype: DType = jnp.bfloat16,
@@ -1758,8 +1721,7 @@ def qwen3_omni_mrope_embedding_as_linen(
   """Initializes Qwen3OmniMoeThinkerTextRotaryEmbedding and returns it as a Linen module.
 
   Args:
-    min_timescale: Start of the geometric index.
-    max_timescale: End of the geometric index (rope_theta).
+    rope_theta: Base frequency (theta) for RoPE.
     embedding_dims: Dimension of the embedding (head_dim).
     cast_as_fprop_dtype: Whether to cast output to fprop dtype.
     fprop_dtype: The dtype of the output.
@@ -1768,8 +1730,7 @@ def qwen3_omni_mrope_embedding_as_linen(
   """
   return nnx_wrappers.to_linen(
       Qwen3OmniMoeThinkerTextRotaryEmbedding,
-      min_timescale=min_timescale,
-      max_timescale=max_timescale,
+      rope_theta=rope_theta,
       embedding_dims=embedding_dims,
       cast_as_fprop_dtype=cast_as_fprop_dtype,
       fprop_dtype=fprop_dtype,
