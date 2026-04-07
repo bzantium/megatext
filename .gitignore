@@ -156,3 +156,6 @@ gha-creds-*.json
 maxtext.code-workspace
 .claude/
 .vscode/
+
+# Local checkpoints
+checkpoints/

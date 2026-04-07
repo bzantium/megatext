@@ -12,9 +12,11 @@ import logging
 import os
 import re
 import tempfile
+import time
 from typing import Any
 
 import numpy as np
+from tqdm import tqdm
 
 from megatext.utils import logging as max_logging
 from megatext.utils import storage as gcs_utils
@@ -324,22 +326,28 @@ def hf_to_megatext(
     transforms = build_transforms(arch, hf_config.to_dict(), to_hf=False, builder=transform_builder)
     shapes = compute_megatext_shapes(hf_config, arch, scan_layers, tie_word_embeddings=tie)
 
+    t0 = time.time()
     max_logging.log(f"Loading HF model {hf_model_path} (model_type={model_type})...")
     model = _load_hf_model_for_conversion(hf_model_path, hf_config, hf_token=hf_token)
     state_dict = model.state_dict()
     del model
+    max_logging.log(f"HF model loaded in {time.time() - t0:.1f}s ({len(state_dict)} tensors)")
 
     mt_weights: dict[str, np.ndarray] = {}
     split_fn = _get_composite_split_fn(arch)
+    t1 = time.time()
     _convert_hf_to_mt(mapping, transforms, shapes, state_dict, mt_weights,
                       composite_split_fn=split_fn)
+    max_logging.log(f"Tensor conversion done in {time.time() - t1:.1f}s ({len(mt_weights)} params)")
 
     del state_dict
 
-    output_dir = os.path.abspath(output_dir)
+    output_dir = _normalize_path(output_dir)
+    t2 = time.time()
     max_logging.log(f"Saving Megatext checkpoint to {output_dir}...")
     checkpoint_dir = save_megatext_checkpoint(mt_weights, output_dir)
-    max_logging.log(f"Conversion complete: {checkpoint_dir}")
+    max_logging.log(f"Checkpoint saved in {time.time() - t2:.1f}s")
+    max_logging.log(f"Conversion complete in {time.time() - t0:.1f}s: {checkpoint_dir}")
     return checkpoint_dir
 
 
@@ -353,7 +361,7 @@ def _convert_hf_to_mt(
     composite_split_fn=deinterleave,
 ) -> None:
     """Core HF→MT conversion loop handling all mapping value types."""
-    for mt_key, hf_keys in mapping.items():
+    for mt_key, hf_keys in tqdm(mapping.items(), desc="HF → Megatext", unit="param"):
         if isinstance(mt_key, tuple):
             _convert_composite_hf_to_mt(
                 mt_key, hf_keys, transforms, shapes, state_dict, mt_weights,
@@ -474,11 +482,15 @@ def megatext_to_hf(
 
     hf_state_dict: dict[str, Any] = {}
     merge_fn = _get_composite_merge_fn(arch)
+    t0 = time.time()
     max_logging.log(
         f"Loading Megatext checkpoint from {checkpoint_path} "
         f"(step={checkpoint_step if checkpoint_step is not None else 'latest'})..."
     )
     mt_weights = load_megatext_checkpoint(checkpoint_path, step=checkpoint_step)
+    max_logging.log(f"Checkpoint loaded in {time.time() - t0:.1f}s ({len(mt_weights)} params)")
+
+    t1 = time.time()
     _convert_mt_to_hf(
         mapping,
         transforms,
@@ -487,10 +499,16 @@ def megatext_to_hf(
         hf_config,
         composite_merge_fn=merge_fn,
     )
+    max_logging.log(f"Tensor conversion done in {time.time() - t1:.1f}s ({len(hf_state_dict)} tensors)")
     del mt_weights
 
-    max_logging.log(f"Saving HF model to {output_dir}...")
+    t2 = time.time()
+    max_logging.log(f"Validating HF state dict...")
     hf_state_dict = _validate_hf_state_dict_for_save(hf_state_dict, hf_config)
+    max_logging.log(f"Validation done in {time.time() - t2:.1f}s")
+
+    t3 = time.time()
+    max_logging.log(f"Saving HF model to {output_dir}...")
     if output_dir.startswith("gs://"):
         with tempfile.TemporaryDirectory(prefix="megatext-hf-convert-") as tmp_output_dir:
             _save_hf_checkpoint_direct(tmp_output_dir, hf_state_dict, hf_config)
@@ -499,8 +517,9 @@ def megatext_to_hf(
     else:
         _save_hf_checkpoint_direct(output_dir, hf_state_dict, hf_config)
         _copy_tokenizer(hf_config_path, output_dir, hf_token)
+    max_logging.log(f"Save done in {time.time() - t3:.1f}s")
 
-    max_logging.log(f"Conversion complete: {output_dir}")
+    max_logging.log(f"Conversion complete in {time.time() - t0:.1f}s: {output_dir}")
     return output_dir
 
 
@@ -514,7 +533,7 @@ def _convert_mt_to_hf(
     composite_merge_fn=interleave,
 ) -> None:
     """Core MT→HF conversion loop."""
-    for mt_key, hf_keys in mapping.items():
+    for mt_key, hf_keys in tqdm(mapping.items(), desc="Megatext → HF", unit="param"):
         if isinstance(mt_key, tuple):
             _convert_composite_mt_to_hf(
                 mt_key, hf_keys, transforms, mt_weights, hf_state_dict,

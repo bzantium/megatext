@@ -71,18 +71,40 @@ fi
 echo ""
 echo "==> Step 3: Install kubectl and gke-gcloud-auth-plugin"
 
+# Ensure apt keyrings directory exists
+sudo mkdir -p /etc/apt/keyrings
+
+# Add Kubernetes apt repo if kubectl is not installable
 if command -v kubectl >/dev/null 2>&1; then
     echo "kubectl already installed: $(kubectl version --client --short 2>/dev/null || kubectl version --client 2>&1 | head -1)"
 else
+    if ! apt-cache show kubectl >/dev/null 2>&1; then
+        echo "Adding Kubernetes apt repository..."
+        sudo apt-get install -y -qq apt-transport-https ca-certificates curl
+        curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.32/deb/Release.key | \
+            sudo gpg --dearmor --yes -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+        echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.32/deb/ /' | \
+            sudo tee /etc/apt/sources.list.d/kubernetes.list > /dev/null
+        sudo apt-get update -qq
+    fi
     echo "Installing kubectl..."
-    sudo apt-get update -qq && sudo apt-get install -y -qq kubectl
+    sudo apt-get install -y -qq kubectl
 fi
 
+# Add Google Cloud SDK apt repo if gke-gcloud-auth-plugin is not installable
 if command -v gke-gcloud-auth-plugin >/dev/null 2>&1; then
     echo "gke-gcloud-auth-plugin already installed."
 else
+    if ! apt-cache show google-cloud-cli-gke-gcloud-auth-plugin >/dev/null 2>&1; then
+        echo "Adding Google Cloud SDK apt repository..."
+        curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | \
+            sudo gpg --dearmor --yes -o /etc/apt/keyrings/cloud.google.gpg
+        echo 'deb [signed-by=/etc/apt/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main' | \
+            sudo tee /etc/apt/sources.list.d/google-cloud-sdk.list > /dev/null
+        sudo apt-get update -qq
+    fi
     echo "Installing gke-gcloud-auth-plugin..."
-    sudo apt-get update -qq && sudo apt-get install -y -qq google-cloud-cli-gke-gcloud-auth-plugin
+    sudo apt-get install -y -qq google-cloud-cli-gke-gcloud-auth-plugin
 fi
 
 # --- 4. Get GKE cluster credentials ---

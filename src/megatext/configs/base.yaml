@@ -24,7 +24,7 @@ model: "default" # override config settings to match a specific model. other tha
 override_model_config: False # When set to true allows overriding model parameters via CLI for the purpose of debugging/testing.
 override_logical_axis_rules: False # When set overrides logical axis rules instead of merging them.
 
-normalization_layer_epsilon: 1.e-05 # epsilon value for rmsnorm, layernorm.
+normalization_layer_epsilon: 1.e-06 # epsilon value for rmsnorm, layernorm.
 
 ################################## CHECKPOINTING ##################################
 # Checkpointing makes the following choices in the following order, starting with (1):
@@ -902,7 +902,7 @@ sa_block_kv_dkv: 512
 sa_block_kv_dkv_compute: 512
 sa_block_q_dq: 512
 sa_block_kv_dq: 512
-sa_use_fused_bwd_kernel: False
+sa_use_fused_bwd_kernel: True
 sa_q_layout: "HEAD_DIM_MINOR"
 sa_k_layout: "HEAD_DIM_MINOR"
 sa_v_layout: "HEAD_DIM_MINOR"

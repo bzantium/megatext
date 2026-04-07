@@ -7,6 +7,7 @@ training loop. No Megatext config dependency.
 from __future__ import annotations
 
 import os
+import time
 
 from etils import epath
 import jax
@@ -87,12 +88,16 @@ def save_megatext_checkpoint(
         "params": nested_params,
     }
 
+    max_logging.log("Converting numpy arrays to JAX arrays...")
+    t0 = time.time()
     train_state_jax = jax.tree.map(
         lambda x: jax.numpy.asarray(x) if isinstance(x, np.ndarray) else x,
         train_state,
     )
+    max_logging.log(f"JAX conversion done in {time.time() - t0:.1f}s")
 
-    os.makedirs(output_dir, exist_ok=True)
+    if not output_dir.startswith("gs://"):
+        os.makedirs(output_dir, exist_ok=True)
 
     options = ocp.CheckpointManagerOptions(max_to_keep=1)
     mgr = ocp.CheckpointManager(
@@ -102,13 +107,14 @@ def save_megatext_checkpoint(
         options=options,
     )
 
+    max_logging.log("Writing checkpoint to disk...")
+    t1 = time.time()
     mgr.save(
         0,
         args=ocp.args.Composite(items=ocp.args.PyTreeSave(train_state_jax)),
     )
     mgr.wait_until_finished()
-
-    max_logging.log(f"Saved checkpoint to {output_dir}")
+    max_logging.log(f"Saved checkpoint to {output_dir} in {time.time() - t1:.1f}s")
     return output_dir
 
 
@@ -153,9 +159,24 @@ def _cpu_abstract_from_metadata(tree):
 def load_megatext_checkpoint_params(items_path: str) -> dict[str, np.ndarray]:
   """Load params subtree from a Megatext Orbax checkpoint step onto CPU."""
   checkpoint_path = epath.Path(items_path)
+  max_logging.log(f"Reading checkpoint metadata from {items_path}...")
+  t0 = time.time()
   ckptr = ocp.Checkpointer(ocp.PyTreeCheckpointHandler())
   metadata = ckptr.metadata(checkpoint_path)
   abstract_params = _cpu_abstract_from_metadata(metadata.item_metadata.tree["params"])
+  n_params = len(_flatten_dict(abstract_params))
+  total_bytes = sum(
+      np.prod(v.shape) * np.dtype(v.dtype).itemsize
+      for v in _flatten_dict(abstract_params).values()
+      if hasattr(v, "shape")
+  )
+  max_logging.log(
+      f"Metadata ready in {time.time() - t0:.1f}s — "
+      f"{n_params} params, {total_bytes / 1e9:.1f} GB to download"
+  )
+
+  max_logging.log("Restoring checkpoint tensors (this may take a while for GCS)...")
+  t1 = time.time()
   restore_args = ocp.checkpoint_utils.construct_restore_args(abstract_params)
   restored = ckptr.restore(
       checkpoint_path,
@@ -163,6 +184,7 @@ def load_megatext_checkpoint_params(items_path: str) -> dict[str, np.ndarray]:
       transforms={},
       restore_args={"params": restore_args},
   )
+  max_logging.log(f"Checkpoint tensors restored in {time.time() - t1:.1f}s")
 
   params = restored["params"]
   if isinstance(params, dict) and "params" in params:
