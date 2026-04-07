@@ -250,7 +250,7 @@ class Config:
   attention_dropout = 0.0
   # rope
   rope_type = "yarn"
-  rope_max_timescale = 150_000
+  rope_theta = 150_000
   max_position_embeddings = 131072
   original_max_position_embeddings = 4096
   rope_factor = 32
@@ -720,7 +720,7 @@ class GptOssYarnTest(unittest.TestCase):
             "rope_type": self.config.rope_type,
             "truncate": self.config.rope_truncate,
         },
-        "rope_theta": self.config.rope_max_timescale,
+        "rope_theta": self.config.rope_theta,
         # placeholder, to get past `getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)`
         "hidden_size": float("inf"),
         "num_attention_heads": float("inf"),
@@ -742,7 +742,7 @@ class GptOssYarnTest(unittest.TestCase):
         mesh=self.mesh,
         beta_fast=self.config.beta_fast,
         beta_slow=self.config.beta_slow,
-        rope_theta=self.config.rope_max_timescale,
+        rope_theta=self.config.rope_theta,
         rope_factor=self.config.rope_factor,
         embedding_dims=self.config.head_dim,
         fprop_dtype=self.dtype,

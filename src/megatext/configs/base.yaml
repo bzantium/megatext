@@ -781,10 +781,9 @@ trainable_position_size: -1  # enable gpt3 position embedding with a positive tr
 rope_type: "default" # one of "default", "llama3.1" or "yarn"
 rope_linear_scaling_factor: 1.0 # linear scaling factor for "default" RoPE (see class `RotaryEmbedding` for more)
 rope_use_scale: True # apply rope scaling for llama3.1 (see class `LLaMARotaryEmbedding` for more)
-rope_min_timescale: 1
-rope_max_timescale: 10_000 # Timescale For global Attention
-local_rope_max_timescale: -1 # If positive used for local window Attention, otherwise `rope_max_timescale` is used for both local and global
-global_rope_max_timescale: -1
+rope_theta: 10_000 # Base frequency for global Attention
+local_rope_theta: -1 # If positive used for local window Attention, otherwise `rope_theta` is used for both local and global
+global_rope_theta: -1
 global_rope_proportion: 1.0
 local_rope_proportion: 1.0
 
@@ -1004,7 +1003,7 @@ conv_chunksize_for_audio: 500
 downsample_hidden_size_for_audio: 256
 output_dim_for_audio: 512
 num_conv_layers_for_audio: 3
-max_timescale_for_audio: 10000.0
+rope_theta_for_audio: 10000.0
 max_sample_len_for_audio: 10000
 
 use_mrope: false

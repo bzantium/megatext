@@ -10,7 +10,7 @@ base_num_query_heads: 128
 base_num_kv_heads: 128
 base_num_decoder_layers: 61
 head_dim: 128
-rope_max_timescale: 10000
+rope_theta: 10000
 q_lora_rank: 1536
 kv_lora_rank: 512
 qk_rope_head_dim: 64

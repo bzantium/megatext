@@ -1656,8 +1656,7 @@ class MLATest(attention_test_util.MLATestBase):
         rngs = nnx.Rngs(0)
         mesh = jax.sharding.Mesh(jax.devices(), ("data",))
         rope = embeddings.RotaryEmbedding(
-            min_timescale=1,
-            max_timescale=10000,
+            rope_theta=10000,
             mesh=mesh,
             embedding_dims=config.qk_rope_head_dim,
             fprop_dtype=jnp.float32,

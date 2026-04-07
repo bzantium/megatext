@@ -12,6 +12,6 @@ base_num_query_heads: 32
 base_num_kv_heads: 8
 base_num_decoder_layers: 36
 head_dim: 128
-rope_max_timescale: 1000000
+rope_theta: 1000000
 inhomogeneous_layer_cycle_interval: 4
 sliding_window_size: 4096

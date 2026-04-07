@@ -783,7 +783,7 @@ class TestQwen3Next(unittest.TestCase):
         "skip_jax_distributed_system=True",
         # For FullAttention Layer
         "attention_bias=False",
-        "rope_max_timescale=10000.0",
+        "rope_theta=10000.0",
         "partial_rotary_factor=0.25",
     ])
     # Update the SimpleNamespace config used by PT models too
@@ -1343,7 +1343,7 @@ class TestQwen3Next(unittest.TestCase):
         "skip_jax_distributed_system=True",
         # For FullAttention Layer
         "attention_bias=False",
-        "rope_max_timescale=10000.0",
+        "rope_theta=10000.0",
         "partial_rotary_factor=0.25",
     ])
 

@@ -11,7 +11,7 @@ base_num_query_heads: 16
 base_num_kv_heads: 2
 base_num_decoder_layers: 48
 head_dim: 256
-rope_max_timescale: 10000000
+rope_theta: 10000000
 partial_rotary_factor: 0.25
 inhomogeneous_layer_cycle_interval: 4
 gdn_conv_kernel_dim: 4

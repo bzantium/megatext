@@ -32,9 +32,9 @@ sliding_window_size: 1024
 use_post_attn_norm: true
 use_post_ffw_norm: true
 share_kv_projections: true
-local_rope_max_timescale: 10000
-global_rope_max_timescale: 1000000
-rope_max_timescale: 1000000
+local_rope_theta: 10000
+global_rope_theta: 1000000
+rope_theta: 1000000
 global_rope_proportion: 0.25
 local_rope_proportion: 1.0
 v_norm_with_scale: false

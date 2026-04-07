@@ -1140,11 +1140,10 @@ class Rope(BaseModel):
 
   rope_type: RopeType = Field(RopeType.DEFAULT, description="The type of RoPE to use.")
   rope_use_scale: bool = Field(True, description="Apply RoPE scaling for Llama3.1 style.")
-  rope_min_timescale: int = Field(1, description="The minimum timescale for RoPE.")
-  rope_max_timescale: int = Field(10_000, description="The maximum timescale for global attention RoPE.")
+  rope_theta: int = Field(10_000, description="Base frequency (theta) for global attention RoPE.")
   rope_linear_scaling_factor: float = Field(1.0, description="Linear scaling factor for 'default' RoPE implementation.")
-  local_rope_max_timescale: int = Field(-1, description="If positive, used for local window attention RoPE.")
-  global_rope_max_timescale: int = Field(-1, description="If positive, used for global attention RoPE overrides.")
+  local_rope_theta: int = Field(-1, description="If positive, used for local window attention RoPE.")
+  global_rope_theta: int = Field(-1, description="If positive, used for global attention RoPE overrides.")
   global_rope_proportion: float = Field(1.0, description="Fraction of global-attention head dims using RoPE.")
   local_rope_proportion: float = Field(1.0, description="Fraction of local-attention head dims using RoPE.")
 
@@ -1429,7 +1428,7 @@ class AudioEncoder(BaseModel):
   downsample_hidden_size_for_audio: int = Field(256, description="Hidden size for downsampling in audio encoder.")
   output_dim_for_audio: int = Field(512, description="Output dimension for audio encoder.")
   num_conv_layers_for_audio: int = Field(3, description="Number of convolutional layers in audio encoder.")
-  max_timescale_for_audio: float = Field(10000.0, description="Maximum timescale for audio positional encoding.")
+  rope_theta_for_audio: float = Field(10000.0, description="Maximum timescale for audio positional encoding.")
   max_sample_len_for_audio: int = Field(10000, description="Maximum sample length for audio input.")
 
 

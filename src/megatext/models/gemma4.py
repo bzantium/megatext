@@ -195,13 +195,13 @@ class Gemma4DecoderLayer(nnx.Module):
 
     if attention_type == AttentionType.GLOBAL:
       partial_rotary_factor = config.global_rope_proportion
-      rope_max_timescale = (
-          config.global_rope_max_timescale if config.global_rope_max_timescale > 0 else config.rope_max_timescale
+      rope_theta = (
+          config.global_rope_theta if config.global_rope_theta > 0 else config.rope_theta
       )
     else:
       partial_rotary_factor = config.local_rope_proportion
-      rope_max_timescale = (
-          config.local_rope_max_timescale if config.local_rope_max_timescale > 0 else config.rope_max_timescale
+      rope_theta = (
+          config.local_rope_theta if config.local_rope_theta > 0 else config.rope_theta
       )
 
     self.self_attention = Attention(
@@ -229,7 +229,7 @@ class Gemma4DecoderLayer(nnx.Module):
         use_v_norm=True,
         query_pre_attn_scalar=1.0,
         share_kv_projections=share_kv_projections,
-        rope_max_timescale=rope_max_timescale,
+        rope_theta=rope_theta,
         partial_rotary_factor=partial_rotary_factor,
         model_mode=model_mode,
         rngs=self.rngs,
