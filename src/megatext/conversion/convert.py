@@ -461,19 +461,24 @@ def megatext_to_hf(
     Returns:
         Path to the converted HuggingFace checkpoint directory.
     """
+    max_logging.log(f"Loading HF config from {hf_config_path}...")
     hf_config = _load_hf_config(hf_config_path, hf_token)
     model_type = _resolve_conversion_model_type(hf_config)
     cfg = getattr(hf_config, "text_config", hf_config)
+    max_logging.log(f"HF config loaded (model_type={model_type})")
 
     arch = resolve(model_type)
     tie = getattr(cfg, "tie_word_embeddings", False)
 
+    max_logging.log(f"Building mapping and transforms for {model_type}...")
     mapping_builder = MAPPING_BUILDERS[model_type]
     transform_builder = TRANSFORM_BUILDERS[model_type]
     mapping = build_mapping(arch, hf_config, scan_layers, mapping_builder)
     transforms = build_transforms(arch, hf_config.to_dict(), to_hf=True, builder=transform_builder)
     shapes = compute_megatext_shapes(hf_config, arch, scan_layers, tie_word_embeddings=tie)
+    max_logging.log(f"Mapping ready ({len(mapping)} entries, scan_layers={scan_layers})")
 
+    max_logging.log(f"Resolving Megatext checkpoint path...")
     checkpoint_path, checkpoint_step = _resolve_megatext_checkpoint_input(
         megatext_model_path,
         checkpoint_step,
@@ -966,6 +971,8 @@ def _build_parser() -> "argparse.ArgumentParser":
 def main() -> None:
     """CLI entry point with hf-to-megatext / megatext-to-hf subcommands."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    from absl import logging as absl_logging
+    absl_logging.set_verbosity(absl_logging.INFO)
 
     parser = _build_parser()
     args = parser.parse_args()

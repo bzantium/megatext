@@ -164,10 +164,11 @@ def load_megatext_checkpoint_params(items_path: str) -> dict[str, np.ndarray]:
   ckptr = ocp.Checkpointer(ocp.PyTreeCheckpointHandler())
   metadata = ckptr.metadata(checkpoint_path)
   abstract_params = _cpu_abstract_from_metadata(metadata.item_metadata.tree["params"])
-  n_params = len(_flatten_dict(abstract_params))
+  leaves = jax.tree_util.tree_leaves(abstract_params)
+  n_params = len(leaves)
   total_bytes = sum(
       np.prod(v.shape) * np.dtype(v.dtype).itemsize
-      for v in _flatten_dict(abstract_params).values()
+      for v in leaves
       if hasattr(v, "shape")
   )
   max_logging.log(
