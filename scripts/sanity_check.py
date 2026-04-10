@@ -31,8 +31,9 @@ def main() -> None:
     model = AutoModelForCausalLM.from_pretrained(
         args.model,
         dtype=torch.bfloat16,
+        device_map={"": device},
         trust_remote_code=True,
-    ).to(device)
+    )
     print(f"Model loaded in {time.time() - t0:.1f}s")
 
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)

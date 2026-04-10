@@ -41,11 +41,12 @@ import subprocess
 import sys
 import threading
 import time
+import typing
 
 log = logging.getLogger(__name__)
 
 # Will be set in main() — file objects for log output redirection.
-_subprocess_log: open | None = None
+_subprocess_log: typing.TextIO | None = None
 _subprocess_log_path: str | None = None
 _convert_log_path: str | None = None
 
@@ -53,7 +54,7 @@ _convert_log_path: str | None = None
 def _init_logs() -> None:
     """Create timestamped log files for download and convert output."""
     global _subprocess_log, _subprocess_log_path, _convert_log_path
-    log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "download_and_export")
+    log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "download_and_export")
     os.makedirs(log_dir, exist_ok=True)
     ts = datetime.datetime.now().strftime("%y%m%d-%H%M%S")
 
@@ -417,7 +418,7 @@ def main() -> None:
             continue
 
         step_output_dir = (
-            os.path.join(output_dir, str(s)) if args.output_dir is None
+            os.path.join(output_dir, str(s)) if (args.output_dir is None or len(steps) > 1)
             else output_dir
         )
         try:
