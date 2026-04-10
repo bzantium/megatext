@@ -54,7 +54,7 @@ _convert_log_path: str | None = None
 def _init_logs() -> None:
     """Create timestamped log files for download and convert output."""
     global _subprocess_log, _subprocess_log_path, _convert_log_path
-    log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "download_and_export")
+    log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "download_and_export")
     os.makedirs(log_dir, exist_ok=True)
     ts = datetime.datetime.now().strftime("%y%m%d-%H%M%S")
 
