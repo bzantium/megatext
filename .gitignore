@@ -157,5 +157,7 @@ maxtext.code-workspace
 .claude/
 .vscode/
 
-# Local checkpoints
+# Personal custom files
 checkpoints/
+logs/
+personal/

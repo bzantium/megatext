@@ -47,6 +47,7 @@ config:
   gradient_clipping_threshold: 1.0
   z_loss_multiplier: 5e-6
   max_target_length: 4096
+  rope_theta: 10000
   sliding_window_size: 512
   attention: flash
   dtype: bfloat16
