@@ -2,7 +2,8 @@
 
 setup:
 	uv venv --seed --python 3.12
-	uv pip install --extra-index-url https://download.pytorch.org/whl/cpu -e .
+	uv pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
+	uv pip install -e .
 
 setup-gke:
 	@if [ -z "$(PROJECT)" ]; then echo "Usage: make setup-gke PROJECT=my-project [ZONE=us-west4-a] [CLUSTER=tpu]"; exit 1; fi

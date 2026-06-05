@@ -19,7 +19,6 @@ dependencies = [
     "sentencepiece>=0.2.1",
     "tiktoken>=0.12.0",
     # Checkpoint conversion
-    "torch",
     "safetensors",
     "ml-dtypes",
     # Config & Logging
@@ -60,6 +59,9 @@ dependencies = [
     "pytest",
     "pytest-xdist",
 ]
+
+[project.optional-dependencies]
+convert = ["torch"]
 
 [build-system]
 requires = ["setuptools>=75", "pybind11>=2.13"]

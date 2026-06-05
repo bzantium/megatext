@@ -36,9 +36,11 @@ config:
   steps: 240000
   per_device_batch_size: 2
   global_batch_size: 7680
-  learning_rate: 1.23e-4
+  learning_rate: 1e-3
+  lr_schedule_type: wsd
   warmup_steps: 2400
-  final_learning_rate: 1.23e-5
+  wsd_decay_steps: 24000
+  final_learning_rate: 1e-4
   remat_policy: full
   sa_block_q: 1024
   sa_block_kv: 1024
@@ -53,6 +55,7 @@ config:
   gradient_clipping_threshold: 1.0
   z_loss_multiplier: 5e-6
   max_target_length: 4096
+  rope_theta: 10000
   attention: flash
   dtype: bfloat16
   weight_dtype: bfloat16

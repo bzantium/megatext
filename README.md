@@ -30,8 +30,8 @@ Built on [JAX](https://github.com/jax-ml/jax), inspired by [Google's MaxText](ht
 ### Install
 
 ```bash
-pip install -e .          # CPU (includes C++ packing extension)
-pip install -e ".[tpu]"   # TPU
+pip install -e .              # Core (TPU deps included; builds C++ packing extension)
+pip install -e ".[convert]"   # + torch, for HF checkpoint conversion
 ```
 
 ### Train (synthetic data)

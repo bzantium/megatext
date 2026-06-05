@@ -441,6 +441,7 @@ def megatext_to_hf(
     scan_layers: bool = True,
     hf_token: str | None = None,
     checkpoint_step: int | None = None,
+    tokenizer_path: str | None = None,
 ) -> str:
     """Convert a Megatext checkpoint to HuggingFace format.
 
@@ -457,6 +458,8 @@ def megatext_to_hf(
         hf_token: HuggingFace access token for gated models.
         checkpoint_step: Optional Megatext checkpoint step override. This is
             only needed when megatext_model_path points at a checkpoint root.
+        tokenizer_path: Optional path or HF hub ID to load the tokenizer from.
+            If omitted, the tokenizer is copied from hf_config_path.
 
     Returns:
         Path to the converted HuggingFace checkpoint directory.
@@ -514,14 +517,15 @@ def megatext_to_hf(
 
     t3 = time.time()
     max_logging.log(f"Saving HF model to {output_dir}...")
+    tokenizer_src = tokenizer_path or hf_config_path
     if output_dir.startswith("gs://"):
         with tempfile.TemporaryDirectory(prefix="megatext-hf-convert-") as tmp_output_dir:
             _save_hf_checkpoint_direct(tmp_output_dir, hf_state_dict, hf_config)
-            _copy_tokenizer(hf_config_path, tmp_output_dir, hf_token)
+            _copy_tokenizer(tokenizer_src, tmp_output_dir, hf_token)
             gcs_utils.upload_dump(tmp_output_dir, output_dir, delete_local_after=False)
     else:
         _save_hf_checkpoint_direct(output_dir, hf_state_dict, hf_config)
-        _copy_tokenizer(hf_config_path, output_dir, hf_token)
+        _copy_tokenizer(tokenizer_src, output_dir, hf_token)
     max_logging.log(f"Save done in {time.time() - t3:.1f}s")
 
     max_logging.log(f"Conversion complete in {time.time() - t0:.1f}s: {output_dir}")
@@ -903,7 +907,8 @@ def _copy_tokenizer(
         )
         tokenizer.save_pretrained(output_dir)
     except Exception:
-        max_logging.debug(f"Could not copy tokenizer from {hf_model_path} (non-fatal)")
+        max_logging.warning(f"Could not copy tokenizer from {hf_model_path}. "
+                           "Use --tokenizer-path to specify a tokenizer source.")
 
 
 # ── CLI entry points ─────────────────────────────────────────────────────────
@@ -964,6 +969,8 @@ def _build_parser() -> "argparse.ArgumentParser":
                     help="Whether the checkpoint uses scanned layers (default: True).")
     p2.add_argument("--hf-token", default=os.environ.get("HF_TOKEN"),
                     help="HuggingFace access token (default: $HF_TOKEN env var).")
+    p2.add_argument("--tokenizer-path", default=None,
+                    help="Optional path or HF hub ID to load the tokenizer from (default: use --hf-config-path).")
 
     return parser
 
@@ -993,6 +1000,7 @@ def main() -> None:
             scan_layers=args.scan_layers,
             hf_token=args.hf_token,
             checkpoint_step=args.checkpoint_step,
+            tokenizer_path=args.tokenizer_path,
         )
         print(f"Done: Megatext → HF: {result}")
 
