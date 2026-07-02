@@ -111,6 +111,7 @@ class AttentionType(enum.Enum):
   CHUNK = "chunk"
   MLA = "mla"
   FULL = "full"
+  COMPRESSED = "compressed"
 
 
 class ShardMode(enum.Enum):

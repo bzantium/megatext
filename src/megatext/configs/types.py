@@ -471,6 +471,17 @@ class MlaAttention(BaseModel):
   v_head_dim: NonNegativeInt = Field(128, description="Dimension of V heads in MLA.")
 
 
+class CompressedAttentionConfig(BaseModel):
+  """Configuration for Compressed Attention (DeepSeek-V4 CSA/HCA)."""
+
+  o_lora_rank: NonNegativeInt = Field(0, description="Output LoRA rank for Compressed Attention.")
+  o_groups: NonNegativeInt = Field(0, description="Output groups for Compressed Attention.")
+  compress_ratios: list[int] = Field(default_factory=list, description="Per-layer compression ratios (0, 4, 128, etc).")
+  compressed_rope_theta: int = Field(
+      160000, description="Base frequency (theta) for Compressed Sparse/Heavy Attention RoPE."
+  )
+
+
 class AttentionIndexer(BaseModel):
   """Configuration for DeepSeek Sparse Attention (DSA): DeepSeek3.2-style MLA with indexer."""
 
@@ -1615,6 +1626,7 @@ class MegaTextConfig(
     # Attention Mechanisms
     Attention,
     MlaAttention,
+    CompressedAttentionConfig,
     MoBa,
     AttentionIndexer,
     Llama4Attention,
