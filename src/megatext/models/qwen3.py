@@ -250,9 +250,8 @@ def jax_chunk_gated_delta_rule(
   g_cumsum = jnp.cumsum(g_c, axis=-1)
   k_beta = k_c * beta_c[..., None]
 
-  # S Matrix Calculation
-  S = jnp.matmul(k_beta, k_c.swapaxes(-1, -2), precision=jax.lax.Precision.HIGHEST)
-  S = S.astype(jnp.float32)
+  # S Matrix Calculation — bf16 operands with float32 accumulation (MXU fast path)
+  S = jnp.matmul(k_beta, k_c.swapaxes(-1, -2), preferred_element_type=jnp.float32)
 
   # Apply mask BEFORE exp to prevent 'inf' gradients
   g_diff = g_cumsum[..., :, None] - g_cumsum[..., None, :]
@@ -268,13 +267,18 @@ def jax_chunk_gated_delta_rule(
 
   A = jax.scipy.linalg.solve_triangular(identity + S, identity_broadcasted, lower=True, unit_diagonal=True)
 
-  # 5. WY Factors
+  # 5. WY Factors — the triangular inverse A stays float32; matmul operands are
+  # downcast to compute_dtype with float32 accumulation (MXU fast path).
   v_beta = v_c * beta_c[..., None]
-  u_chunks = jnp.matmul(A, v_beta.astype(jnp.float32), precision=jax.lax.Precision.HIGHEST)
+  u_chunks = jnp.matmul(
+      A.astype(compute_dtype), v_beta.astype(compute_dtype), preferred_element_type=jnp.float32
+  )
   u_chunks = u_chunks.astype(compute_dtype)
 
   k_beta_g = k_beta.astype(jnp.float32) * jnp.exp(g_cumsum)[..., None]
-  w_chunks = jnp.matmul(A, k_beta_g, precision=jax.lax.Precision.HIGHEST)
+  w_chunks = jnp.matmul(
+      A.astype(compute_dtype), k_beta_g.astype(compute_dtype), preferred_element_type=jnp.float32
+  )
   w_chunks = w_chunks.astype(compute_dtype)
 
   # =========================================================================
@@ -298,21 +302,28 @@ def jax_chunk_gated_delta_rule(
 
   def scan_body(h, args):
     w, u, q, k, g = args
-    prec = jax.lax.Precision.HIGHEST
+
+    # Matmuls feed the MXU with compute_dtype (bf16) operands and accumulate in
+    # float32 via preferred_element_type — the native fast path on TPU. The
+    # recurrent state `h`, decay terms and all additions/subtractions stay in
+    # float32; only matmul operands are downcast.
+    def mxu_matmul(a, b):
+      return jnp.matmul(
+          a.astype(compute_dtype), b.astype(compute_dtype), preferred_element_type=jnp.float32
+      )
 
     # --- Output Computation ---
     # 1. Inter-chunk: q(dtype) * exp(g)(f32) -> f32
     q_g = q.astype(jnp.float32) * jnp.exp(g)[..., None]
-    attn_inter = jnp.matmul(q_g, h, precision=prec)
+    attn_inter = mxu_matmul(q_g, h)
 
     # 2. Delta Rule Subtraction (v_prime and v_new)
     # w serves as k_cumdecay, u serves as value_intra
-    v_prime = jnp.matmul(w.astype(jnp.float32), h, precision=prec)
+    v_prime = mxu_matmul(w, h)
     v_new = u.astype(jnp.float32) - v_prime
 
     # 3. Intra-chunk: q(dtype) @ k(dtype) -> f32
-    attn = jnp.matmul(q, k.swapaxes(-1, -2), precision=prec)
-    attn = attn.astype(jnp.float32)
+    attn = mxu_matmul(q, k.swapaxes(-1, -2))
 
     # Mask before exp
     g_diff = g[..., :, None] - g[..., None, :]
@@ -326,7 +337,7 @@ def jax_chunk_gated_delta_rule(
     # absorbed beta inside v_new (via u).
 
     # 4. Combine Core Output
-    term2 = jnp.matmul(attn_i, v_new, precision=prec)
+    term2 = mxu_matmul(attn_i, v_new)
     o_c = attn_inter + term2
 
     # --- State Update ---
@@ -337,7 +348,7 @@ def jax_chunk_gated_delta_rule(
     g_diff_exp_state = jnp.exp(g[..., -1, None] - g)[..., None]
     k_i_g_diff = k.astype(jnp.float32) * g_diff_exp_state
 
-    update_term = jnp.matmul(k_i_g_diff.swapaxes(-1, -2), v_new, precision=prec)
+    update_term = mxu_matmul(k_i_g_diff.swapaxes(-1, -2), v_new)
     h_new = h_new + update_term
 
     return h_new, o_c
