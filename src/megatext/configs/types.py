@@ -665,6 +665,9 @@ class DeepSeekMoE(BaseModel):
       description="Compatibility field for DeepSeek configs that specify the number of initial dense layers.",
   )
   first_num_dense_layers: NonNegativeInt = Field(0, description="Number of initial dense layers in the model.")
+  first_num_hash_layers: NonNegativeInt = Field(
+      0, description="Number of hash routing layers, used in DeepSeek V4 (0 means disabled)."
+  )
   shared_experts: PositiveInt = Field(1, description="Number of shared experts.")
   routed_scaling_factor: float = Field(1.0, description="Scaling factor for routing scores.")
   routed_score_func: str = Field("", description="Scoring function for routing (e.g., 'softmax', 'sigmoid').")
@@ -2199,6 +2202,8 @@ class MegaTextConfig(
         raise ValueError("GPT-OSS MoE only supports dropless (capacity_factor=-1) with dense matmul.")
       if self.routed_bias and self.routed_bias_update_rate > 0.0 and self.decoder_block != DecoderBlockType.DEEPSEEK:
         raise ValueError("Loss-free load balancing is only supported for the DeepSeek decoder block.")
+      if self.first_num_hash_layers > 0 and self.use_ring_of_experts:
+        raise ValueError("Hash routing is currently not supported with ring of experts.")
     if self.use_multimodal:
       valid_mm_models = (
           "gemma4-moe",
