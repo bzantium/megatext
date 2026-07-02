@@ -189,6 +189,7 @@ def jax_chunk_gated_delta_rule(
     use_qk_norm_in_gdn: bool = False,
     compute_dtype: jnp.dtype = jnp.bfloat16,
     use_pallas: bool = False,
+    mesh: Mesh | None = None,
 ) -> tuple[Array, None | Array]:
   """Optimized JAX implementation of Gated Delta Rule."""
   # =========================================================================
@@ -288,16 +289,34 @@ def jax_chunk_gated_delta_rule(
   if use_pallas and initial_state is None:
     # Fused Pallas kernel: keeps the recurrent state in VMEM across chunks.
     # Chunked tensors are already in the kernel's [B, N, H, C, D] layout.
+    # Mosaic kernels cannot be auto-partitioned, so the call is wrapped in a
+    # shard_map: batch stays on its logical mesh axes, everything else is
+    # replicated per device (TP over GDN heads is not supported here).
     from megatext.kernels.gdn import gdn_inter_chunk_scan
 
-    o_pallas, _ = gdn_inter_chunk_scan(
+    interpret = jax.default_backend() != "tpu"
+
+    def _call_kernel(w_, u_, q_, k_, g_):
+      return gdn_inter_chunk_scan(w_, u_, q_, k_, g_, interpret, compute_dtype)
+
+    if mesh is not None:
+      batch_axes = nn.logical_to_mesh_axes(("activation_batch",))[0]
+      spec5 = jax.sharding.PartitionSpec(batch_axes, None, None, None, None)
+      spec4 = jax.sharding.PartitionSpec(batch_axes, None, None, None)
+      _call_kernel = jax.shard_map(
+          _call_kernel,
+          mesh=mesh,
+          in_specs=(spec5, spec5, spec5, spec5, spec4),
+          out_specs=(spec5, spec4),
+          check_vma=False,
+      )
+
+    o_pallas, _ = _call_kernel(
         w_chunks.astype(jnp.float32),
         u_chunks.astype(jnp.float32),
         q_c.astype(jnp.float32),
         k_c.astype(jnp.float32),
         g_cumsum.astype(jnp.float32),
-        jax.default_backend() != "tpu",
-        compute_dtype,
     )
     # [B, N, H, C, Dv] -> [B, N, C, H, Dv] -> [B, S, H, Dv]
     o = o_pallas.transpose(0, 1, 3, 2, 4).reshape(B, -1, H, V_dim)
@@ -414,13 +433,23 @@ class Qwen3NextGatedDeltaNet(nnx.Module):
   2. output = Linear_out(y)
   """
 
-  def __init__(self, config: Config, dtype: DType = jnp.float32, model_mode: str = MODEL_MODE_TRAIN, *, rngs: nnx.Rngs):
+  def __init__(
+      self,
+      config: Config,
+      dtype: DType = jnp.float32,
+      model_mode: str = MODEL_MODE_TRAIN,
+      mesh: Mesh | None = None,
+      *,
+      rngs: nnx.Rngs,
+  ):
     """
     Args:
       config: MegaText configuration object.
+      mesh: Device mesh, required for the Pallas kernel's shard_map wrapper.
       rngs: The random number generators for initialization, passed by the nnx.to_linen wrapper.
     """
     self.config = config
+    self.mesh = mesh
     cfg = self.config
 
     in_features = cfg.emb_dim
@@ -681,6 +710,7 @@ class Qwen3NextGatedDeltaNet(nnx.Module):
         use_qk_norm_in_gdn=cfg.use_qk_norm_in_gdn,
         compute_dtype=cfg.dtype,
         use_pallas=cfg.gdn_use_pallas and model_mode == MODEL_MODE_TRAIN,
+        mesh=self.mesh,
     )
 
     if model_mode != MODEL_MODE_TRAIN:
@@ -966,7 +996,7 @@ class Qwen3NextDecoderLayer(nnx.Module):
           rngs=rngs,
       )
     else:
-      self.attention = Qwen3NextGatedDeltaNet(config=cfg, dtype=cfg.dtype, model_mode=model_mode, rngs=rngs)
+      self.attention = Qwen3NextGatedDeltaNet(config=cfg, dtype=cfg.dtype, model_mode=model_mode, mesh=self.mesh, rngs=rngs)
 
     # Second LayerNorm, applied before the MoE block.
     self.post_attention_layernorm = Qwen3NextRMSNorm(
