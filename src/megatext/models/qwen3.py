@@ -342,7 +342,12 @@ def jax_chunk_gated_delta_rule(
 
     return h_new, o_c
 
-  final_h, o_chunks = lax.scan(scan_body, h_init, xs)
+  # Checkpoint each scan step so the backward pass rematerializes one chunk at
+  # a time. Without this, the backward of a single GDN layer materializes the
+  # f32 intermediates of all chunks simultaneously (~10MB x num_chunks per
+  # layer), which dominates HBM on long sequences. Layer-level remat policies
+  # cannot split memory usage within the scan.
+  final_h, o_chunks = lax.scan(jax.checkpoint(scan_body), h_init, xs)
 
   # =========================================================================
   # STAGE 4: FINALIZATION
