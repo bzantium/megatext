@@ -706,6 +706,10 @@ class Qwen3Next(BaseModel):
       64,
       description="Chunk size for the parallel scan algorithm in the Gated Delta Net.",
   )
+  gdn_use_pallas: bool = Field(
+      False,
+      description="Use the fused Pallas TPU kernel for the Gated Delta Net inter-chunk scan.",
+  )
   use_qk_norm_in_gdn: bool = Field(
       True,
       description="Whether to apply L2 normalization to query and key tensors inside the Gated Delta Rule kernel.",

@@ -188,6 +188,7 @@ def jax_chunk_gated_delta_rule(
     initial_state: None | Array = None,
     use_qk_norm_in_gdn: bool = False,
     compute_dtype: jnp.dtype = jnp.bfloat16,
+    use_pallas: bool = False,
 ) -> tuple[Array, None | Array]:
   """Optimized JAX implementation of Gated Delta Rule."""
   # =========================================================================
@@ -284,6 +285,25 @@ def jax_chunk_gated_delta_rule(
   # =========================================================================
   # STAGE 3: INTER-CHUNK RECURRENCE (Scan)
   # =========================================================================
+  if use_pallas and initial_state is None:
+    # Fused Pallas kernel: keeps the recurrent state in VMEM across chunks.
+    # Chunked tensors are already in the kernel's [B, N, H, C, D] layout.
+    from megatext.kernels.gdn import gdn_inter_chunk_scan
+
+    o_pallas, _ = gdn_inter_chunk_scan(
+        w_chunks.astype(jnp.float32),
+        u_chunks.astype(jnp.float32),
+        q_c.astype(jnp.float32),
+        k_c.astype(jnp.float32),
+        g_cumsum.astype(jnp.float32),
+        jax.default_backend() != "tpu",
+    )
+    # [B, N, H, C, Dv] -> [B, N, C, H, Dv] -> [B, S, H, Dv]
+    o = o_pallas.transpose(0, 1, 3, 2, 4).reshape(B, -1, H, V_dim)
+    if pad_len > 0:
+      o = o[:, :seq_len, :, :]
+    return o.astype(initial_dtype), None
+
   scan_perm_vec = (1, 0, 2, 3, 4)
   scan_perm_scl = (1, 0, 2, 3)
 
@@ -659,6 +679,7 @@ class Qwen3NextGatedDeltaNet(nnx.Module):
         initial_state=recurrent_state,
         use_qk_norm_in_gdn=cfg.use_qk_norm_in_gdn,
         compute_dtype=cfg.dtype,
+        use_pallas=cfg.gdn_use_pallas and model_mode == MODEL_MODE_TRAIN,
     )
 
     if model_mode != MODEL_MODE_TRAIN:
