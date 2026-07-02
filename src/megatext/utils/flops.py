@@ -584,9 +584,14 @@ def calculate_vision_encoder_tflops(config):
 def calculate_tflops_training_per_device(config, log=True):
   """Calculate training TFLOP"""
   # MLP flops
-  if config.num_experts > 1:
+  if config.decoder_block == DecoderBlockType.QWEN3_NEXT:
+    # Qwen3-Next always uses the routed + shared expert MoE block, even with
+    # num_experts=1 (dense). The helper already multiplies by the number of
+    # layers, matching what the QWEN3_NEXT combination branch below expects.
+    total_ffn_flops = calculate_routed_and_shared_ffn_tflops_per_device(config)
+  elif config.num_experts > 1:
     # calculation based on dropless implementation
-    if config.decoder_block in (DecoderBlockType.DEEPSEEK, DecoderBlockType.LLAMA4, DecoderBlockType.QWEN3_NEXT) or (
+    if config.decoder_block in (DecoderBlockType.DEEPSEEK, DecoderBlockType.LLAMA4) or (
         GEMMA4_BLOCK is not None and config.decoder_block == GEMMA4_BLOCK
     ):
       total_ffn_flops = calculate_routed_and_shared_ffn_tflops_per_device(config)
