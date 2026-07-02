@@ -297,6 +297,7 @@ def jax_chunk_gated_delta_rule(
         k_c.astype(jnp.float32),
         g_cumsum.astype(jnp.float32),
         jax.default_backend() != "tpu",
+        compute_dtype,
     )
     # [B, N, H, C, Dv] -> [B, N, C, H, Dv] -> [B, S, H, Dv]
     o = o_pallas.transpose(0, 1, 3, 2, 4).reshape(B, -1, H, V_dim)
