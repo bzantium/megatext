@@ -141,8 +141,10 @@ def _resolve_infra(args):
     }
 
 
-def _wrap_with_libtpu(tpu_type: str, inner_cmd: str) -> str:
+def _wrap_with_libtpu(tpu_type: str, inner_cmd: str, extra_args: str = "") -> str:
     libtpu_args = get_libtpu_init_args(tpu_type)
+    if extra_args:
+        libtpu_args = f"{libtpu_args} {extra_args}".strip()
     if libtpu_args:
         return f'export LIBTPU_INIT_ARGS="{libtpu_args}" && {inner_cmd}'
     return inner_cmd
@@ -277,7 +279,7 @@ def _submit_autotune_workload(args, infra: dict, job: dict, workload_name: str) 
         + " ".join(_config_to_args(job["config"]))
         + " " + " ".join(autotune_flags)
     )
-    command = _wrap_with_libtpu(infra["tpu_type"], " && ".join(parts))
+    command = _wrap_with_libtpu(infra["tpu_type"], " && ".join(parts), job.get("libtpu_extra_args", ""))
 
     _xpk_submit(
         project=infra["project"], zone=infra["zone"], cluster=infra["cluster"],
@@ -315,7 +317,7 @@ def cmd_pretrain(args) -> None:
     if job.get("bucket"):
         parts.append(f"bash gke/setup/setup_gcsfuse.sh BUCKET={job['bucket']} MOUNT_PATH={job['mount_path']}")
     parts.append("python -m megatext.trainers.pretrain " + " ".join(_config_to_args(job["config"])))
-    command = _wrap_with_libtpu(infra["tpu_type"], " && ".join(parts))
+    command = _wrap_with_libtpu(infra["tpu_type"], " && ".join(parts), job.get("libtpu_extra_args", ""))
 
     _xpk_submit(
         project=infra["project"], zone=infra["zone"], cluster=infra["cluster"],
@@ -350,7 +352,7 @@ def cmd_profile(args) -> None:
     if job.get("bucket"):
         parts.append(f"bash gke/setup/setup_gcsfuse.sh BUCKET={job['bucket']} MOUNT_PATH={job['mount_path']}")
     parts.append("python -m megatext.trainers.profile " + " ".join(_config_to_args(job["config"])))
-    command = _wrap_with_libtpu(infra["tpu_type"], " && ".join(parts))
+    command = _wrap_with_libtpu(infra["tpu_type"], " && ".join(parts), job.get("libtpu_extra_args", ""))
 
     _xpk_submit(
         project=infra["project"], zone=infra["zone"], cluster=infra["cluster"],
