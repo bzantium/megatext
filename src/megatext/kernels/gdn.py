@@ -226,7 +226,7 @@ def _fwd_pallas(w, u, q, k, g, h0, *, compute_dtype=jnp.bfloat16, interpret=Fals
       in_specs=[chunk_spec(d_k), chunk_spec(d_v), chunk_spec(d_k), chunk_spec(d_k), g_spec, bh_state_spec],
       out_specs=[chunk_spec(d_v), state_spec, bh_state_spec],
       out_shape=[
-          jax.ShapeDtypeStruct((batch, num_chunks, num_heads, chunk_size, d_v), jnp.float32),
+          jax.ShapeDtypeStruct((batch, num_chunks, num_heads, chunk_size, d_v), compute_dtype),
           jax.ShapeDtypeStruct((batch, num_chunks, num_heads, d_k, d_v), jnp.float32),
           jax.ShapeDtypeStruct((batch, num_heads, d_k, d_v), jnp.float32),
       ],
@@ -311,7 +311,9 @@ def _gdn_scan_vjp_bwd(interpret, compute_dtype, residuals, cotangents):
   dw, du, dq, dk, dg, dh0 = _bwd_pallas(
       w, u, q, k, g, h_saved, do, dh_final, compute_dtype=compute_dtype, interpret=interpret
   )
-  return dw, du, dq, dk, dg, dh0
+  # Gradients are accumulated in float32 inside the kernel; cotangents must
+  # match the primal dtypes (inputs may arrive in bf16).
+  return dw.astype(w.dtype), du.astype(u.dtype), dq.astype(q.dtype), dk.astype(k.dtype), dg.astype(g.dtype), dh0
 
 
 gdn_inter_chunk_scan.defvjp(_gdn_scan_vjp_fwd, _gdn_scan_vjp_bwd)

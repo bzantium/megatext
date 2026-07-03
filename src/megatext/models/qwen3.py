@@ -19,6 +19,7 @@
 from typing import Any, cast
 import math
 
+import functools
 import jax
 import jax.nn
 from jax import lax
@@ -313,11 +314,11 @@ def jax_chunk_gated_delta_rule(
       )
 
     o_pallas, _ = _call_kernel(
-        w_chunks.astype(jnp.float32),
-        u_chunks.astype(jnp.float32),
-        q_c.astype(jnp.float32),
-        k_c.astype(jnp.float32),
-        g_cumsum.astype(jnp.float32),
+        w_chunks,
+        u_chunks,
+        q_c,
+        k_c,
+        g_cumsum,
         jnp.zeros((B, H, K_dim, V_dim), dtype=jnp.float32),
     )
     o = o_pallas.transpose(0, 1, 3, 2, 4).reshape(B, -1, H, V_dim)
@@ -700,12 +701,8 @@ class Qwen3NextGatedDeltaNet(nnx.Module):
         else:
           recurrent_state = recurrent_state[:batch]
 
-    core_attn_out, recurrent_state_out = jax_chunk_gated_delta_rule(
-        query,
-        key,
-        value,
-        g,
-        beta,
+    delta_rule = functools.partial(
+        jax_chunk_gated_delta_rule,
         chunk_size=cfg.gdn_chunk_size,
         initial_state=recurrent_state,
         use_qk_norm_in_gdn=cfg.use_qk_norm_in_gdn,
@@ -713,6 +710,13 @@ class Qwen3NextGatedDeltaNet(nnx.Module):
         use_pallas=cfg.gdn_use_pallas and model_mode == MODEL_MODE_TRAIN,
         mesh=self.mesh,
     )
+    if cfg.gdn_remat and model_mode == MODEL_MODE_TRAIN:
+      # Local remat: whatever the outer remat policy saves (e.g. dot outputs
+      # under save_dot_* policies), the GDN internals — the chunk-expanded
+      # stage-2 tensors are dot outputs several times the layer inputs — are
+      # recomputed in the backward pass from just (q, k, v, g, beta).
+      delta_rule = jax.checkpoint(delta_rule, policy=jax.checkpoint_policies.nothing_saveable)
+    core_attn_out, recurrent_state_out = delta_rule(query, key, value, g, beta)
 
     if model_mode != MODEL_MODE_TRAIN:
       # Update self.cache in place for both prefill and decode

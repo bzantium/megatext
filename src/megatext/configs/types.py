@@ -710,6 +710,10 @@ class Qwen3Next(BaseModel):
       False,
       description="Use the fused Pallas TPU kernel for the Gated Delta Net inter-chunk scan.",
   )
+  gdn_remat: bool = Field(
+      False,
+      description="Locally rematerialize the Gated Delta Net internals: save only the layer inputs and recompute the chunk-expanded stage tensors in the backward pass, independent of the outer remat policy.",
+  )
   use_qk_norm_in_gdn: bool = Field(
       True,
       description="Whether to apply L2 normalization to query and key tensors inside the Gated Delta Rule kernel.",
