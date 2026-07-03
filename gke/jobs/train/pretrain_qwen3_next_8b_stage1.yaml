@@ -11,7 +11,6 @@ config:
   model: qwen3-next
   base_emb_dim: 4096
   base_mlp_dim: 5120
-  base_moe_mlp_dim: 5120
   base_num_query_heads: 32
   base_num_kv_heads: 8
   base_num_decoder_layers: 36
