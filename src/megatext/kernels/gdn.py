@@ -349,15 +349,19 @@ def _invert_unit_lower_mxu(s: jax.Array) -> jax.Array:
 
   def mm(a, b):
     # bf16x3: f32-grade products from bf16 MXU passes (Mosaic's default f32
-    # dot truncates operands to bf16; Precision.HIGH is unsupported).
+    # dot truncates operands to bf16; Precision.HIGH is unsupported). The
+    # leading tile axis is a batched dot: the per-tile products are
+    # independent, so Mosaic can pipeline them through the MXU and hide the
+    # fill/drain of the otherwise strictly sequential ladder chain.
     a_hi = a.astype(jnp.bfloat16)
     b_hi = b.astype(jnp.bfloat16)
     a_lo = (a - a_hi.astype(jnp.float32)).astype(jnp.bfloat16)
     b_lo = (b - b_hi.astype(jnp.float32)).astype(jnp.bfloat16)
-    dot = functools.partial(jax.lax.dot, preferred_element_type=jnp.float32)
+    dims = (((a.ndim - 1,), (a.ndim - 2,)), (tuple(range(a.ndim - 2)),) * 2)
+    dot = functools.partial(jax.lax.dot_general, dimension_numbers=dims, preferred_element_type=jnp.float32)
     return dot(a_hi, b_hi) + dot(a_hi, b_lo) + dot(a_lo, b_hi)
 
-  x = jnp.eye(size, dtype=jnp.float32)
+  x = jnp.broadcast_to(jnp.eye(size, dtype=jnp.float32), s.shape).astype(jnp.float32)
   block = 1
   while block < size:
     sibling = (rows // block != cols // block) & (rows // (2 * block) == cols // (2 * block))
@@ -369,13 +373,21 @@ def _invert_unit_lower_mxu(s: jax.Array) -> jax.Array:
 
 def _invert_unit_lower_kernel(s_ref, a_ref, *, chunk_size: int):
   del chunk_size
-  a_ref[0, 0, 0] = _invert_unit_lower_mxu(s_ref[0, 0, 0].astype(jnp.float32))
+  a_ref[0, :, 0] = _invert_unit_lower_mxu(s_ref[0, :, 0].astype(jnp.float32))
 
 
 def _invert_pallas(s, *, interpret=False):
   batch, num_chunks, num_heads, c, _ = s.shape
-  grid = (batch, num_heads, num_chunks)
-  spec = pl.BlockSpec((1, 1, 1, c, c), lambda b, h, n: (b, n, h, 0, 0))
+  # Group chunks per grid cell: the ladder's matmuls are sequentially
+  # dependent within a tile, so batching independent tiles keeps the MXU
+  # pipeline full. VMEM per cell stays ~1MB at tile_n=8, C=128.
+  tile_n = 1
+  for cand in (8, 4, 2):
+    if num_chunks % cand == 0:
+      tile_n = cand
+      break
+  grid = (batch, num_heads, num_chunks // tile_n)
+  spec = pl.BlockSpec((1, tile_n, 1, c, c), lambda b, h, n: (b, n, h, 0, 0))
   return pl.pallas_call(
       functools.partial(_invert_unit_lower_kernel, chunk_size=c),
       grid=grid,
