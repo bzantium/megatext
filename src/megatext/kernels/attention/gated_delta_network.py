@@ -352,25 +352,6 @@ gdn_inter_chunk_scan.defvjp(_gdn_scan_vjp_fwd, _gdn_scan_vjp_bwd)
 # algorithm speed-neutral at the XLA level).
 
 
-def _mm_bf16x3(a, b):
-  """bf16x3 batched matmul: f32-grade products from bf16 MXU passes.
-
-  Mosaic's default f32 dot truncates operands to bf16 (Precision.HIGH is
-  unsupported), so we split each operand into a bf16 hi part plus a bf16
-  residual and sum three MXU passes. Any leading axes are batched dots: the
-  per-tile products are independent, so Mosaic can pipeline them through
-  the MXU and hide the fill/drain of sequentially dependent chains.
-  Contracts a's last dim against b's second-to-last dim.
-  """
-  a_hi = a.astype(jnp.bfloat16)
-  b_hi = b.astype(jnp.bfloat16)
-  a_lo = (a - a_hi.astype(jnp.float32)).astype(jnp.bfloat16)
-  b_lo = (b - b_hi.astype(jnp.float32)).astype(jnp.bfloat16)
-  dims = (((a.ndim - 1,), (a.ndim - 2,)), (tuple(range(a.ndim - 2)),) * 2)
-  dot = functools.partial(jax.lax.dot_general, dimension_numbers=dims, preferred_element_type=jnp.float32)
-  return dot(a_hi, b_hi) + dot(a_hi, b_lo) + dot(a_lo, b_hi)
-
-
 def _invert_unit_lower_mxu(s: jax.Array) -> jax.Array:
   """(I + s)^{-1} for strictly lower-triangular s: stable blockwise ladder.
 
@@ -378,22 +359,35 @@ def _invert_unit_lower_mxu(s: jax.Array) -> jax.Array:
   at block size b, the size-2b inverse is exactly X - X @ S_l @ X, where
   S_l holds the entries between sibling b-blocks ([[A,0],[C,B]]^{-1} =
   [[A^{-1},0],[-B^{-1}CA^{-1},B^{-1}]]). Starting from X = I (b=1) and
-  doubling to full size costs 2*log2(C) full-width MXU matmuls (bf16x3 for
-  f32-grade accuracy), and never forms powers of s — only realized
-  inverses times raw s — so intermediate magnitudes stay at the scale of
-  the true inverse (stable for unbounded s, unlike Neumann doubling which
-  overflows once |s| > 1).
+  doubling to full size costs 2*log2(C) full-width MXU matmuls, and never
+  forms powers of s — only realized inverses times raw s — so intermediate
+  magnitudes stay at the scale of the true inverse (stable for unbounded
+  s, unlike Neumann doubling which overflows once |s| > 1).
   """
   size = s.shape[-1]
   rows = jax.lax.broadcasted_iota(jnp.int32, (size, size), 0)
   cols = jax.lax.broadcasted_iota(jnp.int32, (size, size), 1)
+
+  def mm(a, b):
+    # bf16x3: f32-grade products from bf16 MXU passes (Mosaic's default f32
+    # dot truncates operands to bf16; Precision.HIGH is unsupported). The
+    # leading tile axis is a batched dot: the per-tile products are
+    # independent, so Mosaic can pipeline them through the MXU and hide the
+    # fill/drain of the otherwise strictly sequential ladder chain.
+    a_hi = a.astype(jnp.bfloat16)
+    b_hi = b.astype(jnp.bfloat16)
+    a_lo = (a - a_hi.astype(jnp.float32)).astype(jnp.bfloat16)
+    b_lo = (b - b_hi.astype(jnp.float32)).astype(jnp.bfloat16)
+    dims = (((a.ndim - 1,), (a.ndim - 2,)), (tuple(range(a.ndim - 2)),) * 2)
+    dot = functools.partial(jax.lax.dot_general, dimension_numbers=dims, preferred_element_type=jnp.float32)
+    return dot(a_hi, b_hi) + dot(a_hi, b_lo) + dot(a_lo, b_hi)
 
   x = jnp.broadcast_to(jnp.eye(size, dtype=jnp.float32), s.shape).astype(jnp.float32)
   block = 1
   while block < size:
     sibling = (rows // block != cols // block) & (rows // (2 * block) == cols // (2 * block))
     s_level = jnp.where(sibling, s, 0.0)
-    x = x - _mm_bf16x3(x, _mm_bf16x3(s_level, x))
+    x = x - mm(x, mm(s_level, x))
     block *= 2
   return x
 
@@ -453,234 +447,6 @@ def _invert_vjp_bwd(interpret, a, da):
 
 
 invert_unit_lower.defvjp(_invert_vjp_fwd, _invert_vjp_bwd)
-
-
-# =============================================================================
-# UT-transform kernel: WY factors (w, u) from (k, v, beta, g)
-# =============================================================================
-# Fuses the whole stage-2 precomputation — k_beta, the decay-masked S, the
-# blockwise unit-lower inversion A = (I+S)^{-1}, and the two triangular
-# applies — into one all-parallel Pallas kernel. The [C, C] float32 tensors
-# S and A live only in VMEM: nothing chunk-squared ever touches HBM, and
-# the custom VJP keeps only the small primal inputs (k, v, beta, g) as
-# residuals, recomputing S and A in the backward kernel.
-
-
-def _ut_head_tile(num_heads: int, max_tile: int = 4) -> int:
-  """Heads per grid cell for the UT-transform kernels.
-
-  VMEM arithmetic at the cap (TH=4, worst case C=128, D_k=D_v=256):
-  - forward: 4 head-tiled [C, D] blocks (k, v in compute dtype; w, u out)
-    = 4 * (4*128*256*2B) = 1.0MB, plus ~8 [TH, C, C] f32 intermediates
-    (S, A, ladder temporaries) = 8 * (4*128*128*4B) = 2.0MB  ->  ~3MB.
-  - backward: 8 wide blocks (k, v, dw, du in; dk, dv out at f32)
-    ~= 3.0MB, plus ~10 [TH, C, C] f32 intermediates (S, A, dA, dS, masked
-    ladder temps) = 2.5MB  ->  ~5.5MB.
-  Both sit comfortably under the 16MB scoped VMEM limit; 4 is kept
-  conservative because the ladder's temporaries are not visible to this
-  block-count estimate and Mosaic double-buffers the grid blocks.
-  """
-  for cand in (max_tile, max_tile // 2, 2):
-    if 1 < cand <= num_heads and num_heads % cand == 0:
-      return cand
-  return 1
-
-
-def _ut_stage2_core(k, v, beta, g, chunk_size, compute_dtype):
-  """Shared head-batched stage-2 math on [TH, C, ...] operands.
-
-  Builds the decay-masked S and its unit-lower inverse A (f32, VMEM only)
-  plus the products both the forward and the backward pass consume.
-  """
-  kf = k.astype(jnp.float32)
-  exp_g = jnp.exp(g)
-  k_beta = kf * beta[..., None]
-  mask_strict = _tril_mask(chunk_size, include_diag=False)
-  g_diff = g[:, :, None] - g[:, None, :]
-  decay = jnp.where(mask_strict, jnp.exp(jnp.where(mask_strict, g_diff, 0.0)), 0.0)
-  s = _bdot(k_beta, kf, (2, 2), compute_dtype) * decay
-  a = _invert_unit_lower_mxu(s)
-  v_beta = v.astype(jnp.float32) * beta[..., None]
-  k_beta_g = k_beta * exp_g[..., None]
-  return a, s, decay, mask_strict, exp_g, k_beta, v_beta, k_beta_g
-
-
-def _gdn_ut_fwd_kernel(
-    k_ref, v_ref, beta_ref, g_ref,
-    w_ref, u_ref,
-    *, chunk_size: int, compute_dtype: jnp.dtype,
-):
-  k = k_ref[0, 0]  # [TH, C, D_k]
-  v = v_ref[0, 0]  # [TH, C, D_v]
-  beta = beta_ref[0, 0, :, :, 0].astype(jnp.float32)  # [TH, C]
-  g = g_ref[0, 0, :, :, 0].astype(jnp.float32)  # [TH, C]
-
-  a, _, _, _, _, _, v_beta, k_beta_g = _ut_stage2_core(k, v, beta, g, chunk_size, compute_dtype)
-  # Merged matmul: A @ [k_beta_g | v_beta] doubles the RHS width for the MXU.
-  wu = _bdot(a, jnp.concatenate([k_beta_g, v_beta], axis=-1), (2, 1), compute_dtype)
-  d_k = k.shape[-1]
-  w_ref[0, 0] = wu[..., :d_k].astype(w_ref.dtype)
-  u_ref[0, 0] = wu[..., d_k:].astype(u_ref.dtype)
-
-
-def _gdn_ut_bwd_kernel(
-    k_ref, v_ref, beta_ref, g_ref, dw_ref, du_ref,
-    dk_ref, dv_ref, dbeta_ref, dg_ref,
-    *, chunk_size: int, compute_dtype: jnp.dtype,
-):
-  """Recomputes S and A from the primal inputs, then runs the chain rule."""
-  k = k_ref[0, 0].astype(jnp.float32)
-  v = v_ref[0, 0].astype(jnp.float32)
-  beta = beta_ref[0, 0, :, :, 0].astype(jnp.float32)
-  g = g_ref[0, 0, :, :, 0].astype(jnp.float32)
-  dw = dw_ref[0, 0].astype(jnp.float32)
-  du = du_ref[0, 0].astype(jnp.float32)
-
-  (a, s, decay, mask_strict, exp_g, k_beta, v_beta, k_beta_g) = _ut_stage2_core(
-      k, v, beta, g, chunk_size, compute_dtype
-  )
-  a_t = a.swapaxes(-1, -2)
-
-  # w = A @ k_beta_g ; u = A @ v_beta  (merged pairs for wider matmuls).
-  # A math stays f32-grade via the bf16x3 mm, matching the forward ladder.
-  dwu = jnp.concatenate([dw, du], axis=-1)
-  rhs = jnp.concatenate([k_beta_g, v_beta], axis=-1)
-  da = _mm_bf16x3(dwu, rhs.swapaxes(-1, -2))  # dA = dw @ kbg^T + du @ vb^T
-  back = _mm_bf16x3(a_t, dwu)  # [A^T dw | A^T du]
-  d_k_dim = k.shape[-1]
-  dk_beta_g, dv_beta = back[..., :d_k_dim], back[..., d_k_dim:]
-
-  # A = (I + S)^{-1}  =>  dS = -A^T dA A^T, projected to the strict lower part.
-  ds = -_mm_bf16x3(a_t, _mm_bf16x3(da, a_t))
-  ds = jnp.where(mask_strict, ds, 0.0)
-
-  # S = (k_beta @ k^T) * decay with decay_ij = exp(g_i - g_j) on the strict
-  # lower triangle: dP = dS*decay flows into both matmul operands, and the
-  # decay factor contributes +row-sums / -col-sums of dS*S to g.
-  dp = ds * decay
-  dk_beta = _bdot(dp, k, (2, 1), compute_dtype)  # dP @ k
-  dk = _bdot(dp, k_beta, (1, 1), compute_dtype)  # dP^T @ k_beta
-  dgd = ds * s
-  dg = jnp.sum(dgd, axis=2) - jnp.sum(dgd, axis=1)
-
-  # k_beta_g = k_beta * exp(g)
-  dk_beta = dk_beta + dk_beta_g * exp_g[..., None]
-  dg = dg + jnp.sum(dk_beta_g * k_beta_g, axis=2)
-
-  # k_beta = k * beta ; v_beta = v * beta
-  dk = dk + dk_beta * beta[..., None]
-  dbeta = jnp.sum(dk_beta * k, axis=2) + jnp.sum(dv_beta * v, axis=2)
-  dv = dv_beta * beta[..., None]
-
-  dk_ref[0, 0] = dk
-  dv_ref[0, 0] = dv
-  dbeta_ref[0, 0, :, :, 0] = dbeta
-  dg_ref[0, 0, :, :, 0] = dg
-
-
-def _ut_specs(shape_k, shape_v, th):
-  batch, num_chunks, num_heads, chunk_size, d_k = shape_k
-  d_v = shape_v[-1]
-  grid = (batch, num_heads // th, num_chunks)
-  chunk_spec = lambda d: pl.BlockSpec((1, 1, th, chunk_size, d), lambda b, h, n: (b, n, h, 0, 0))
-  # TPU block tiling requires the last two dims to be (8k, 128k) or equal to
-  # the array dims; per-chunk vectors ride along with a trailing singleton.
-  vec_spec = pl.BlockSpec((1, 1, th, chunk_size, 1), lambda b, h, n: (b, n, h, 0, 0))
-  return grid, chunk_spec, vec_spec, d_k, d_v
-
-
-def _ut_fwd_pallas(k, v, beta, g, *, compute_dtype=jnp.bfloat16, interpret=False):
-  batch, num_chunks, num_heads, chunk_size, _ = k.shape
-  th = _ut_head_tile(num_heads)
-  grid, chunk_spec, vec_spec, d_k, d_v = _ut_specs(k.shape, v.shape, th)
-  kernel = functools.partial(_gdn_ut_fwd_kernel, chunk_size=chunk_size, compute_dtype=compute_dtype)
-  return pl.pallas_call(
-      kernel,
-      grid=grid,
-      in_specs=[chunk_spec(d_k), chunk_spec(d_v), vec_spec, vec_spec],
-      out_specs=[chunk_spec(d_k), chunk_spec(d_v)],
-      out_shape=[
-          jax.ShapeDtypeStruct((batch, num_chunks, num_heads, chunk_size, d_k), compute_dtype),
-          jax.ShapeDtypeStruct((batch, num_chunks, num_heads, chunk_size, d_v), compute_dtype),
-      ],
-      compiler_params=pltpu.CompilerParams(
-          dimension_semantics=("parallel", "parallel", "parallel"),
-      ),
-      interpret=interpret,
-      name="gdn_ut_fwd",
-  )(k, v, beta[..., None], g[..., None])
-
-
-def _ut_bwd_pallas(k, v, beta, g, dw, du, *, compute_dtype=jnp.bfloat16, interpret=False):
-  batch, num_chunks, num_heads, chunk_size, _ = k.shape
-  th = _ut_head_tile(num_heads)
-  grid, chunk_spec, vec_spec, d_k, d_v = _ut_specs(k.shape, v.shape, th)
-  kernel = functools.partial(_gdn_ut_bwd_kernel, chunk_size=chunk_size, compute_dtype=compute_dtype)
-  dk, dv, dbeta, dg = pl.pallas_call(
-      kernel,
-      grid=grid,
-      in_specs=[chunk_spec(d_k), chunk_spec(d_v), vec_spec, vec_spec, chunk_spec(d_k), chunk_spec(d_v)],
-      out_specs=[chunk_spec(d_k), chunk_spec(d_v), vec_spec, vec_spec],
-      out_shape=[
-          jax.ShapeDtypeStruct((batch, num_chunks, num_heads, chunk_size, d_k), jnp.float32),
-          jax.ShapeDtypeStruct((batch, num_chunks, num_heads, chunk_size, d_v), jnp.float32),
-          jax.ShapeDtypeStruct((batch, num_chunks, num_heads, chunk_size, 1), jnp.float32),
-          jax.ShapeDtypeStruct((batch, num_chunks, num_heads, chunk_size, 1), jnp.float32),
-      ],
-      compiler_params=pltpu.CompilerParams(
-          dimension_semantics=("parallel", "parallel", "parallel"),
-      ),
-      interpret=interpret,
-      name="gdn_ut_bwd",
-  )(k, v, beta[..., None], g[..., None], dw, du)
-  return dk, dv, dbeta[..., 0], dg[..., 0]
-
-
-@functools.partial(jax.custom_vjp, nondiff_argnums=(4, 5))
-def gdn_ut_transform(k, v, beta, g, interpret=False, compute_dtype=jnp.bfloat16):
-  """Fused UT transform: WY factors (w, u) from the chunked GDN inputs.
-
-  Computes, per (batch, chunk, head):
-    k_beta = k * beta[:, None]
-    S = (k_beta @ k^T) * exp(g_i - g_j) on the strict lower triangle
-    A = (I + S)^{-1}
-    w = A @ (k_beta * exp(g)[:, None]) ;  u = A @ (v * beta[:, None])
-  without materializing the [C, C] float32 S and A in HBM.
-
-  Args:
-    k: [B, N, H, C, D_k] chunked keys (compute dtype).
-    v: [B, N, H, C, D_v] chunked values (compute dtype).
-    beta: [B, N, H, C] update strengths (compute dtype).
-    g: [B, N, H, C] per-chunk cumulative log-decay (float32).
-    interpret: run the Pallas kernels in interpret mode (CPU testing).
-    compute_dtype: operand dtype for the MXU matmuls (accumulation is f32;
-      the inversion ladder always runs f32-grade via bf16x3).
-
-  Returns:
-    (w, u): [B, N, H, C, D_k] / [B, N, H, C, D_v] in compute_dtype.
-  """
-  return _ut_fwd_pallas(k, v, beta, g, compute_dtype=compute_dtype, interpret=interpret)
-
-
-def _gdn_ut_vjp_fwd(k, v, beta, g, interpret, compute_dtype):
-  w, u = _ut_fwd_pallas(k, v, beta, g, compute_dtype=compute_dtype, interpret=interpret)
-  # Residuals are just the (small) primal inputs: the backward kernel
-  # recomputes S and A in VMEM instead of saving [C, C] tensors.
-  return (w, u), (k, v, beta, g)
-
-
-def _gdn_ut_vjp_bwd(interpret, compute_dtype, residuals, cotangents):
-  k, v, beta, g = residuals
-  dw, du = cotangents
-  dk, dv, dbeta, dg = _ut_bwd_pallas(
-      k, v, beta, g, dw, du, compute_dtype=compute_dtype, interpret=interpret
-  )
-  # Gradients are accumulated in float32 inside the kernel; cotangents must
-  # match the primal dtypes (inputs may arrive in bf16).
-  return dk.astype(k.dtype), dv.astype(v.dtype), dbeta.astype(beta.dtype), dg.astype(g.dtype)
-
-
-gdn_ut_transform.defvjp(_gdn_ut_vjp_fwd, _gdn_ut_vjp_bwd)
 
 
 # =============================================================================

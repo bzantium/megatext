@@ -252,65 +252,51 @@ def jax_chunk_gated_delta_rule(
   # Cumulative decay (Must be float32)
   g_cumsum = jnp.cumsum(g_c, axis=-1)
 
+
+  k_beta = k_c * beta_c[..., None]
+
+  # S Matrix Calculation — bf16 operands with float32 accumulation (MXU fast path)
+  S = jnp.matmul(k_beta, k_c.swapaxes(-1, -2), preferred_element_type=jnp.float32)
+
+  # Apply mask BEFORE exp to prevent 'inf' gradients
+  g_diff = g_cumsum[..., :, None] - g_cumsum[..., None, :]
+  mask = jnp.tril(jnp.ones((chunk_size, chunk_size), dtype=bool), k=-1)
+  g_diff = jnp.where(mask, g_diff, -1e30)
+
+  S = S * jnp.exp(g_diff)
+  S = jnp.where(mask, S, 0.0)
+
+  # Inversion (A) - Strictly float32
   if use_pallas and initial_state is None:
-    # Fused UT-transform kernel: computes the WY factors (w, u) directly
-    # from (k, v, beta, g_cumsum) with the [C, C] float32 tensors S and
-    # A = (I+S)^{-1} living only in VMEM, never materialized in HBM.
-    from megatext.kernels.attention.gated_delta_network import gdn_ut_transform
+    # Blockwise inversion as a Pallas kernel: pure MXU matmuls on VMEM
+    # tiles, versus the row-sequential TPU triangular solve.
+    from megatext.kernels.attention.gated_delta_network import invert_unit_lower
 
-    ut_interpret = jax.default_backend() != "tpu"
-
-    def _call_ut(k_, v_, beta_, g_):
-      return gdn_ut_transform(k_, v_, beta_, g_, ut_interpret, compute_dtype)
-
+    _invert = functools.partial(invert_unit_lower, interpret=jax.default_backend() != "tpu")
     if mesh is not None:
-      ut_batch_axes = nn.logical_to_mesh_axes(("activation_batch",))[0]
-      ut_head_axes = nn.logical_to_mesh_axes(("activation_kv_heads",))[0]
-      # GDN is fully independent per head, so the kernel shards cleanly over
-      # both batch and heads (tensor parallelism included).
-      ut_spec5 = jax.sharding.PartitionSpec(ut_batch_axes, None, ut_head_axes, None, None)
-      ut_spec4 = jax.sharding.PartitionSpec(ut_batch_axes, None, ut_head_axes, None)
-      _call_ut = jax.shard_map(
-          _call_ut,
-          mesh=mesh,
-          in_specs=(ut_spec5, ut_spec5, ut_spec4, ut_spec4),
-          out_specs=(ut_spec5, ut_spec5),
-          check_vma=False,
-      )
-
-    w_chunks, u_chunks = _call_ut(k_c, v_c, beta_c, g_cumsum)
+      inv_batch_axes = nn.logical_to_mesh_axes(("activation_batch",))[0]
+      inv_head_axes = nn.logical_to_mesh_axes(("activation_kv_heads",))[0]
+      inv_spec = jax.sharding.PartitionSpec(inv_batch_axes, None, inv_head_axes, None, None)
+      _invert = jax.shard_map(_invert, mesh=mesh, in_specs=(inv_spec,), out_specs=inv_spec, check_vma=False)
+    A = _invert(S)
   else:
-    k_beta = k_c * beta_c[..., None]
-
-    # S Matrix Calculation — bf16 operands with float32 accumulation (MXU fast path)
-    S = jnp.matmul(k_beta, k_c.swapaxes(-1, -2), preferred_element_type=jnp.float32)
-
-    # Apply mask BEFORE exp to prevent 'inf' gradients
-    g_diff = g_cumsum[..., :, None] - g_cumsum[..., None, :]
-    mask = jnp.tril(jnp.ones((chunk_size, chunk_size), dtype=bool), k=-1)
-    g_diff = jnp.where(mask, g_diff, -1e30)
-
-    S = S * jnp.exp(g_diff)
-    S = jnp.where(mask, S, 0.0)
-
-    # Inversion (A) - Strictly float32
     identity = jnp.eye(chunk_size, dtype=jnp.float32)
     identity_broadcasted = jnp.broadcast_to(identity, S.shape)
     A = jax.scipy.linalg.solve_triangular(identity + S, identity_broadcasted, lower=True, unit_diagonal=True)
 
-    # 5. WY Factors — the triangular inverse A stays float32; matmul operands are
-    # downcast to compute_dtype with float32 accumulation (MXU fast path).
-    v_beta = v_c * beta_c[..., None]
-    u_chunks = jnp.matmul(
-        A.astype(compute_dtype), v_beta.astype(compute_dtype), preferred_element_type=jnp.float32
-    )
-    u_chunks = u_chunks.astype(compute_dtype)
+  # 5. WY Factors — the triangular inverse A stays float32; matmul operands are
+  # downcast to compute_dtype with float32 accumulation (MXU fast path).
+  v_beta = v_c * beta_c[..., None]
+  u_chunks = jnp.matmul(
+      A.astype(compute_dtype), v_beta.astype(compute_dtype), preferred_element_type=jnp.float32
+  )
+  u_chunks = u_chunks.astype(compute_dtype)
 
-    k_beta_g = k_beta.astype(jnp.float32) * jnp.exp(g_cumsum)[..., None]
-    w_chunks = jnp.matmul(
-        A.astype(compute_dtype), k_beta_g.astype(compute_dtype), preferred_element_type=jnp.float32
-    )
-    w_chunks = w_chunks.astype(compute_dtype)
+  k_beta_g = k_beta.astype(jnp.float32) * jnp.exp(g_cumsum)[..., None]
+  w_chunks = jnp.matmul(
+      A.astype(compute_dtype), k_beta_g.astype(compute_dtype), preferred_element_type=jnp.float32
+  )
+  w_chunks = w_chunks.astype(compute_dtype)
 
   # =========================================================================
   # STAGE 3: INTER-CHUNK RECURRENCE (Scan)
