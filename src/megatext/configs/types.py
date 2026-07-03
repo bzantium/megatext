@@ -706,10 +706,6 @@ class Qwen3Next(BaseModel):
       64,
       description="Chunk size for the parallel scan algorithm in the Gated Delta Net.",
   )
-  gdn_use_pallas: bool = Field(
-      False,
-      description="Use the fused Pallas TPU kernel for the Gated Delta Net inter-chunk scan.",
-  )
   gdn_remat: bool = Field(
       False,
       description="Locally rematerialize the Gated Delta Net internals: save only the layer inputs and recompute the chunk-expanded stage tensors in the backward pass, independent of the outer remat policy.",

@@ -49,7 +49,6 @@ config:
   final_learning_rate: 1e-4
   remat_policy: save_dot_except_mlpwi
   gdn_chunk_size: 128
-  gdn_use_pallas: true
   dtype: bfloat16
   weight_dtype: bfloat16
   adam_b1: 0.9

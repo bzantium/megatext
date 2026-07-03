@@ -723,7 +723,7 @@ class Qwen3NextGatedDeltaNet(nnx.Module):
         initial_state=recurrent_state,
         use_qk_norm_in_gdn=cfg.use_qk_norm_in_gdn,
         compute_dtype=cfg.dtype,
-        use_pallas=cfg.gdn_use_pallas and model_mode == MODEL_MODE_TRAIN,
+        use_pallas=model_mode == MODEL_MODE_TRAIN and jax.default_backend() == "tpu",
         mesh=self.mesh,
     )
     if cfg.gdn_remat and model_mode == MODEL_MODE_TRAIN:
