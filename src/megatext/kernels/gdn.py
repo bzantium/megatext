@@ -81,9 +81,9 @@ def _gdn_scan_fwd_kernel(
 
   exp_g = jnp.exp(g)
   q_g = q.astype(jnp.float32) * exp_g[:, None]
-  attn_inter = mxu_dot(q_g, h)
-
-  v_prime = mxu_dot(w, h)
+  # Merged matmul: [q_g ; w] @ h doubles the LHS rows for the MXU.
+  both = mxu_dot(jnp.concatenate([q_g, w.astype(jnp.float32)], axis=0), h)
+  attn_inter, v_prime = both[:chunk_size], both[chunk_size:]
   v_new = u - v_prime
 
   p = mxu_dot(q, k.T)
