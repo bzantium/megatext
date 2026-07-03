@@ -281,6 +281,44 @@ def jax_chunk_gated_delta_rule(
 
   # Cumulative decay (Must be float32)
   g_cumsum = jnp.cumsum(g_c, axis=-1)
+
+  if use_pallas and initial_state is None:
+    # Fully fused Pallas kernel: WY factors, blockwise inversion and the
+    # inter-chunk recurrence all execute in one kernel per (batch, head)
+    # program with the recurrent state resident in VMEM. Mosaic kernels
+    # cannot be auto-partitioned, so the call is wrapped in a shard_map
+    # (batch on its logical mesh axes; TP over GDN heads unsupported).
+    from megatext.kernels.gdn import gdn_chunked_delta
+
+    interpret = jax.default_backend() != "tpu"
+
+    def _call_fused(q_, k_, v_, g_, beta_):
+      return gdn_chunked_delta(q_, k_, v_, g_, beta_, interpret, compute_dtype)
+
+    if mesh is not None:
+      batch_axes = nn.logical_to_mesh_axes(("activation_batch",))[0]
+      spec5 = jax.sharding.PartitionSpec(batch_axes, None, None, None, None)
+      spec4 = jax.sharding.PartitionSpec(batch_axes, None, None, None)
+      _call_fused = jax.shard_map(
+          _call_fused,
+          mesh=mesh,
+          in_specs=(spec5, spec5, spec5, spec4, spec4),
+          out_specs=(spec5, spec4),  # h_final: [B, H, Dk, Dv]
+          check_vma=False,
+      )
+
+    o_fused, _ = _call_fused(
+        q_c.astype(jnp.float32),
+        k_c.astype(jnp.float32),
+        v_c.astype(jnp.float32),
+        g_cumsum.astype(jnp.float32),
+        beta_c.astype(jnp.float32),
+    )
+    o = o_fused.transpose(0, 1, 3, 2, 4).reshape(B, -1, H, V_dim)
+    if pad_len > 0:
+      o = o[:, :seq_len, :, :]
+    return o.astype(initial_dtype), None
+
   k_beta = k_c * beta_c[..., None]
 
   # S Matrix Calculation — bf16 operands with float32 accumulation (MXU fast path)
@@ -322,43 +360,6 @@ def jax_chunk_gated_delta_rule(
   # =========================================================================
   # STAGE 3: INTER-CHUNK RECURRENCE (Scan)
   # =========================================================================
-  if use_pallas and initial_state is None:
-    # Fused Pallas kernel: keeps the recurrent state in VMEM across chunks.
-    # Chunked tensors are already in the kernel's [B, N, H, C, D] layout.
-    # Mosaic kernels cannot be auto-partitioned, so the call is wrapped in a
-    # shard_map: batch stays on its logical mesh axes, everything else is
-    # replicated per device (TP over GDN heads is not supported here).
-    from megatext.kernels.gdn import gdn_inter_chunk_scan
-
-    interpret = jax.default_backend() != "tpu"
-
-    def _call_kernel(w_, u_, q_, k_, g_):
-      return gdn_inter_chunk_scan(w_, u_, q_, k_, g_, interpret, compute_dtype)
-
-    if mesh is not None:
-      batch_axes = nn.logical_to_mesh_axes(("activation_batch",))[0]
-      spec5 = jax.sharding.PartitionSpec(batch_axes, None, None, None, None)
-      spec4 = jax.sharding.PartitionSpec(batch_axes, None, None, None)
-      _call_kernel = jax.shard_map(
-          _call_kernel,
-          mesh=mesh,
-          in_specs=(spec5, spec5, spec5, spec5, spec4),
-          out_specs=(spec5, spec4),
-          check_vma=False,
-      )
-
-    o_pallas, _ = _call_kernel(
-        w_chunks.astype(jnp.float32),
-        u_chunks.astype(jnp.float32),
-        q_c.astype(jnp.float32),
-        k_c.astype(jnp.float32),
-        g_cumsum.astype(jnp.float32),
-    )
-    # [B, N, H, C, Dv] -> [B, N, C, H, Dv] -> [B, S, H, Dv]
-    o = o_pallas.transpose(0, 1, 3, 2, 4).reshape(B, -1, H, V_dim)
-    if pad_len > 0:
-      o = o[:, :seq_len, :, :]
-    return o.astype(initial_dtype), None
 
   scan_perm_vec = (1, 0, 2, 3, 4)
   scan_perm_scl = (1, 0, 2, 3)
