@@ -710,7 +710,6 @@ class Qwen3NextGatedDeltaNet(nnx.Module):
         use_qk_norm_in_gdn=cfg.use_qk_norm_in_gdn,
         compute_dtype=cfg.dtype,
         use_pallas=cfg.gdn_use_pallas and model_mode == MODEL_MODE_TRAIN,
-        use_assoc_scan=cfg.gdn_use_assoc_scan and model_mode == MODEL_MODE_TRAIN,
         mesh=self.mesh,
     )
 
