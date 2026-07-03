@@ -659,15 +659,35 @@ class Qwen3NextGatedDeltaNet(nnx.Module):
 
       # Update self.cache in place
       self.cache.conv_state.value = new_conv_state
+
+      # Perform the convolution.
+      conv_out = self.conv1d(conv_input)
+      # Slice the output to match the original input sequence length.
+      conv_out = conv_out[:, -seq_len:, :]
+      qkv_conv = jax.nn.silu(conv_out.astype(jnp.float32)).astype(cfg.dtype)
+    elif model_mode == MODEL_MODE_TRAIN and jax.default_backend() == "tpu":
+      # Train: fused Pallas causal-depthwise-conv + SiLU, one pass over qkv
+      # instead of conv + separate silu with an HBM round-trip in between.
+      from megatext.kernels.causal_conv1d import causal_conv1d_silu
+
+      # nnx.Conv depthwise kernel layout is [window, 1, features].
+      conv_w = jnp.asarray(self.conv1d.kernel[...])[:, 0, :]
+      _conv = functools.partial(causal_conv1d_silu, interpret=jax.default_backend() != "tpu")
+      if self.mesh is not None:
+        conv_batch_axes = nn.logical_to_mesh_axes(("activation_batch",))[0]
+        x_spec = jax.sharding.PartitionSpec(conv_batch_axes, None, None)
+        w_spec = jax.sharding.PartitionSpec(None, None)
+        _conv = jax.shard_map(_conv, mesh=self.mesh, in_specs=(x_spec, w_spec), out_specs=x_spec, check_vma=False)
+      qkv_conv = _conv(qkv, conv_w).astype(cfg.dtype)
     else:
-      # Train: pad with zeros
+      # Train (non-TPU): pad with zeros
       conv_input = jnp.pad(qkv, ((0, 0), (conv_kernel_size - 1, 0), (0, 0)))
 
-    # Perform the convolution.
-    conv_out = self.conv1d(conv_input)
-    # Slice the output to match the original input sequence length.
-    conv_out = conv_out[:, -seq_len:, :]
-    qkv_conv = jax.nn.silu(conv_out.astype(jnp.float32)).astype(cfg.dtype)
+      # Perform the convolution.
+      conv_out = self.conv1d(conv_input)
+      # Slice the output to match the original input sequence length.
+      conv_out = conv_out[:, -seq_len:, :]
+      qkv_conv = jax.nn.silu(conv_out.astype(jnp.float32)).astype(cfg.dtype)
     # q_conv shape: (B, S, key_dim), k_conv shape: (B, S, key_dim), v_conv shape: (B, S, value_dim)
     q_conv, k_conv, v_conv = jnp.split(qkv_conv, [self.key_dim, 2 * self.key_dim], axis=-1)
 
