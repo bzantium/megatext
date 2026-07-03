@@ -347,7 +347,11 @@ def _invert_unit_lower_mxu(s: jax.Array, base_block: int = 16) -> jax.Array:
   eye = jnp.eye(size, dtype=jnp.float32)
 
   def mm(a, b):
-    return jnp.matmul(a, b, preferred_element_type=jnp.float32)
+    # HIGHEST keeps the matmuls at true f32: the inverse's dynamic range is
+    # large and bf16-truncated operands (the Mosaic default for f32 dots)
+    # break the (I+S)A = I identity by ~1%, which destabilizes the delta
+    # rule recurrence downstream.
+    return jnp.matmul(a, b, precision=jax.lax.Precision.HIGHEST, preferred_element_type=jnp.float32)
 
   def neumann_inverse(t, nilpotency):
     # (I+t)^{-1} = (I-t) (I+t^2) (I+t^4) ... exact once t^nilpotency == 0.
