@@ -275,7 +275,8 @@ def jax_chunk_gated_delta_rule(
     _invert = functools.partial(invert_unit_lower, interpret=jax.default_backend() != "tpu")
     if mesh is not None:
       inv_batch_axes = nn.logical_to_mesh_axes(("activation_batch",))[0]
-      inv_spec = jax.sharding.PartitionSpec(inv_batch_axes, None, None, None, None)
+      inv_head_axes = nn.logical_to_mesh_axes(("activation_kv_heads",))[0]
+      inv_spec = jax.sharding.PartitionSpec(inv_batch_axes, None, inv_head_axes, None, None)
       _invert = jax.shard_map(_invert, mesh=mesh, in_specs=(inv_spec,), out_specs=inv_spec, check_vma=False)
     A = _invert(S)
   else:
@@ -314,13 +315,17 @@ def jax_chunk_gated_delta_rule(
 
     if mesh is not None:
       batch_axes = nn.logical_to_mesh_axes(("activation_batch",))[0]
-      spec5 = jax.sharding.PartitionSpec(batch_axes, None, None, None, None)
-      spec4 = jax.sharding.PartitionSpec(batch_axes, None, None, None)
+      head_axes = nn.logical_to_mesh_axes(("activation_kv_heads",))[0]
+      # GDN is fully independent per head, so the kernels shard cleanly over
+      # both batch and heads (tensor parallelism included).
+      spec5 = jax.sharding.PartitionSpec(batch_axes, None, head_axes, None, None)
+      spec4c = jax.sharding.PartitionSpec(batch_axes, None, head_axes, None)
+      spec4h = jax.sharding.PartitionSpec(batch_axes, head_axes, None, None)
       _call_kernel = jax.shard_map(
           _call_kernel,
           mesh=mesh,
-          in_specs=(spec5, spec5, spec5, spec5, spec4, spec4),
-          out_specs=(spec5, spec4),
+          in_specs=(spec5, spec5, spec5, spec5, spec4c, spec4h),
+          out_specs=(spec5, spec4h),
           check_vma=False,
       )
 
