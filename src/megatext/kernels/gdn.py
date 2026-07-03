@@ -211,10 +211,15 @@ def _gdn_scan_bwd_kernel(
     dh0_ref[0] = dh
 
 
-def _head_tile(num_heads: int) -> int:
-  """Heads per grid cell: independent heads batched to pipeline the MXU."""
-  for cand in (8, 4, 2):
-    if num_heads % cand == 0:
+def _head_tile(num_heads: int, max_tile: int = 8) -> int:
+  """Heads per grid cell: independent heads batched to pipeline the MXU.
+
+  The cap is VMEM-driven: the backward kernel keeps 14 head-tiled blocks
+  resident (8 inputs + 6 outputs), which exceeds the 16MB scoped VMEM
+  limit at 8 heads, so it runs with 4.
+  """
+  for cand in (max_tile, max_tile // 2, 2):
+    if 1 < cand <= num_heads and num_heads % cand == 0:
       return cand
   return 1
 
@@ -260,7 +265,7 @@ def _bwd_pallas(w, u, q, k, g, h_saved, do, dh_final, *, compute_dtype=jnp.bfloa
   batch, num_chunks, num_heads, chunk_size, d_k = q.shape
   d_v = u.shape[-1]
 
-  th = _head_tile(num_heads)
+  th = _head_tile(num_heads, max_tile=4)
   grid = (batch, num_heads // th, num_chunks)
   # Reverse the chunk dimension: grid step n touches chunk (N-1-n).
   rev = lambda b, h, n: (b, num_chunks - 1 - n, h, 0, 0)
