@@ -601,6 +601,7 @@ class AttentionOp(nnx.Module):
       model_mode: str,
       previous_chunk: Any = None,
       bidirectional_mask: Any = None,
+      compressed_mask: Array | None = None,
   ) -> Array | None:
     """Generates a combined attention mask for Transformer models.
 
@@ -696,7 +697,10 @@ class AttentionOp(nnx.Module):
 
     causal_mask = None
     # We enforce causality except for AUTOREGRESSION
-    if model_mode != MODEL_MODE_AUTOREGRESSIVE and self.attention_type != AttentionType.FULL:
+    if model_mode != MODEL_MODE_AUTOREGRESSIVE and self.attention_type not in (
+        AttentionType.FULL,
+        AttentionType.COMPRESSED,
+    ):
       mask_shape = (q_seq_len, kv_seq_len)
       # row_ids indicates the position of query
       # col_ids indicates the position of kv
@@ -724,6 +728,34 @@ class AttentionOp(nnx.Module):
           col_ids_sliding <= row_ids_sliding
       )
       output_mask = sliding_mask * output_mask
+    elif self.attention_type == AttentionType.COMPRESSED:
+      if compressed_mask is None:
+        raise ValueError("compressed_mask must be provided for COMPRESSED attention type")
+      c_len = compressed_mask.shape[-1]
+      s_len = kv_seq_len - c_len
+
+      # Build causal and sliding window mask for the uncompressed sequence
+      # -> [q_seq_len, s_len]
+      row_ids = jax.lax.broadcasted_iota(jnp.int32, (q_seq_len, s_len), 0) + next_pos
+      # -> [1, s_len]
+      col_ids = jax.lax.broadcasted_iota(jnp.int32, (1, s_len), 1)
+      uncompressed_mask = col_ids <= row_ids
+      if self.sliding_window_size is not None:
+        uncompressed_mask = uncompressed_mask & (col_ids > (row_ids - self.sliding_window_size))
+
+      # Broadcast uncompressed_mask to match compressed_mask's layout
+      target_shape = compressed_mask.shape[:-1] + (s_len,)
+      padded_shape = (1,) * (len(target_shape) - 2) + uncompressed_mask.shape
+      uncompressed_mask = jnp.broadcast_to(uncompressed_mask.reshape(padded_shape), target_shape)
+
+      # Apply document-packing mask if it exists
+      if output_mask is not None:
+        uncompressed_mask = uncompressed_mask & output_mask[..., :s_len]
+
+      uncompressed_mask = jnp.where(uncompressed_mask, 0.0, DEFAULT_MASK_VALUE)
+
+      return jnp.concatenate([uncompressed_mask, compressed_mask], axis=-1)
+
     elif self.attention_type == AttentionType.CHUNK and output_mask is not None:
       mask_shape = (q_seq_len, kv_seq_len)
       chunk_mask = _generate_chunk_attention_mask(
@@ -885,6 +917,7 @@ class AttentionOp(nnx.Module):
       bidirectional_mask: Any = None,
       sinks: Array | None = None,
       indexer_mask: Array | None = None,
+      compressed_mask: Array | None = None,
       record_max_logits: bool = False,
       *,
       qk_product_einsum: Callable[..., Array],
@@ -927,6 +960,7 @@ class AttentionOp(nnx.Module):
           bidirectional_mask=bidirectional_mask,
           sinks=sinks,
           indexer_mask=indexer_mask,
+          compressed_mask=compressed_mask,
           record_max_logits=record_max_logits,
           qk_product_einsum=qk_product_einsum,
           wv_product_einsum=wv_product_einsum,
@@ -1758,6 +1792,7 @@ class AttentionOp(nnx.Module):
       bidirectional_mask: Any = None,
       sinks: Array | None = None,
       indexer_mask: Array | None = None,
+      compressed_mask: Array | None = None,
       record_max_logits: bool = False,
       *,
       qk_product_einsum: Callable[..., Array],
@@ -1816,6 +1851,7 @@ class AttentionOp(nnx.Module):
         model_mode,
         previous_chunk,
         bidirectional_mask,
+        compressed_mask=compressed_mask,
     )
 
     if self.config.moba:
@@ -2027,6 +2063,7 @@ class AttentionOp(nnx.Module):
       bidirectional_mask=None,
       sinks=None,
       indexer_mask: Optional[Array] = None,
+      compressed_mask: Optional[Array] = None,
       slot: Optional[int] = None,
       page_state: Optional[page_manager.PageState] = None,
       record_max_logits: bool = False,
@@ -2051,6 +2088,7 @@ class AttentionOp(nnx.Module):
         bidirectional_mask=bidirectional_mask,
         sinks=sinks,
         indexer_mask=indexer_mask,
+        compressed_mask=compressed_mask,
         record_max_logits=record_max_logits,
         qk_product_einsum=self.AqtEinsum_0,
         wv_product_einsum=self.AqtEinsum_1,

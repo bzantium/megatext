@@ -236,6 +236,7 @@ use_2d_fsdp_sharding: False
 # deepseek moe
 base_moe_mlp_dim: 7168 # intermediate dimension at MoE layer. For a fully MoE model, base_mlp_dim must be equal to base_moe_mlp_dim.
 first_num_dense_layers: 0 # number of initial dense layers in the model
+first_num_hash_layers: 0 # number of hash routing layers, used in DeepSeek V4 (0 means disabled)
 shared_experts: 1
 routed_scaling_factor: 1.0 # scaling factor for routing scores
 routed_score_func: "" # scoring function for routing
@@ -376,6 +377,12 @@ kv_lora_rank: 512
 qk_nope_head_dim: 128
 qk_rope_head_dim: 64
 v_head_dim: 128
+
+# Compressed Attention (DeepSeek-V4 CSA/HCA) parameters
+o_lora_rank: 0
+o_groups: 0
+compress_ratios: []
+compressed_rope_theta: 160000
 
 # QK-Clip (Muon Clip) Configuration
 use_qk_clip: False  # Enable QK-Clip (supported in MLA with DotProduct or Tokamax Splash)
@@ -1031,6 +1038,8 @@ gdn_num_key_heads: 16
 gdn_num_value_heads: 32
 # Chunk size for the parallel scan algorithm in the Gated Delta Net.
 gdn_chunk_size: 64
+gdn_use_pallas: False # use the fused Pallas TPU kernel for the GDN inter-chunk scan
+gdn_use_assoc_scan: False # resolve the GDN inter-chunk recurrence via associative scan (batched matmuls)
 # Whether to apply L2 normalization to query and key tensors inside the Gated Delta Rule kernel.
 use_qk_norm_in_gdn: True
 # The ratio of dimension to apply ROPE on

@@ -188,6 +188,9 @@ def jax_chunk_gated_delta_rule(
     initial_state: None | Array = None,
     use_qk_norm_in_gdn: bool = False,
     compute_dtype: jnp.dtype = jnp.bfloat16,
+    use_pallas: bool = False,
+    use_assoc_scan: bool = False,
+    mesh: Mesh | None = None,
 ) -> tuple[Array, None | Array]:
   """Optimized JAX implementation of Gated Delta Rule."""
   # =========================================================================
@@ -248,11 +251,12 @@ def jax_chunk_gated_delta_rule(
 
   # Cumulative decay (Must be float32)
   g_cumsum = jnp.cumsum(g_c, axis=-1)
+
+
   k_beta = k_c * beta_c[..., None]
 
-  # S Matrix Calculation
-  S = jnp.matmul(k_beta, k_c.swapaxes(-1, -2), precision=jax.lax.Precision.HIGHEST)
-  S = S.astype(jnp.float32)
+  # S Matrix Calculation — bf16 operands with float32 accumulation (MXU fast path)
+  S = jnp.matmul(k_beta, k_c.swapaxes(-1, -2), preferred_element_type=jnp.float32)
 
   # Apply mask BEFORE exp to prevent 'inf' gradients
   g_diff = g_cumsum[..., :, None] - g_cumsum[..., None, :]
@@ -268,18 +272,77 @@ def jax_chunk_gated_delta_rule(
 
   A = jax.scipy.linalg.solve_triangular(identity + S, identity_broadcasted, lower=True, unit_diagonal=True)
 
-  # 5. WY Factors
+  # 5. WY Factors — the triangular inverse A stays float32; matmul operands are
+  # downcast to compute_dtype with float32 accumulation (MXU fast path).
   v_beta = v_c * beta_c[..., None]
-  u_chunks = jnp.matmul(A, v_beta.astype(jnp.float32), precision=jax.lax.Precision.HIGHEST)
+  u_chunks = jnp.matmul(
+      A.astype(compute_dtype), v_beta.astype(compute_dtype), preferred_element_type=jnp.float32
+  )
   u_chunks = u_chunks.astype(compute_dtype)
 
   k_beta_g = k_beta.astype(jnp.float32) * jnp.exp(g_cumsum)[..., None]
-  w_chunks = jnp.matmul(A, k_beta_g, precision=jax.lax.Precision.HIGHEST)
+  w_chunks = jnp.matmul(
+      A.astype(compute_dtype), k_beta_g.astype(compute_dtype), preferred_element_type=jnp.float32
+  )
   w_chunks = w_chunks.astype(compute_dtype)
 
   # =========================================================================
   # STAGE 3: INTER-CHUNK RECURRENCE (Scan)
   # =========================================================================
+  if use_assoc_scan and initial_state is None:
+    # Associative-scan resolution of the recurrence: pure XLA batched
+    # matmuls (auto-partitionable, autodiff-differentiable), log2(N) depth.
+    from megatext.kernels.gdn import gdn_inter_chunk_assoc_scan
+
+    o_assoc, _ = gdn_inter_chunk_assoc_scan(
+        w_chunks.astype(jnp.float32),
+        u_chunks.astype(jnp.float32),
+        q_c.astype(jnp.float32),
+        k_c.astype(jnp.float32),
+        g_cumsum.astype(jnp.float32),
+        compute_dtype,
+    )
+    o = o_assoc.transpose(0, 1, 3, 2, 4).reshape(B, -1, H, V_dim)
+    if pad_len > 0:
+      o = o[:, :seq_len, :, :]
+    return o.astype(initial_dtype), None
+
+  if use_pallas and initial_state is None:
+    # Pallas kernel for the sequential inter-chunk recurrence only. The
+    # chunk-parallel stage-2 stays in XLA: TPU grid cells execute
+    # sequentially per core, so fusing the batched-parallel WY math into
+    # the kernel walk was measured slower than XLA's batched matmuls.
+    from megatext.kernels.gdn import gdn_inter_chunk_scan
+
+    interpret = jax.default_backend() != "tpu"
+
+    def _call_kernel(w_, u_, q_, k_, g_):
+      return gdn_inter_chunk_scan(w_, u_, q_, k_, g_, interpret, compute_dtype)
+
+    if mesh is not None:
+      batch_axes = nn.logical_to_mesh_axes(("activation_batch",))[0]
+      spec5 = jax.sharding.PartitionSpec(batch_axes, None, None, None, None)
+      spec4 = jax.sharding.PartitionSpec(batch_axes, None, None, None)
+      _call_kernel = jax.shard_map(
+          _call_kernel,
+          mesh=mesh,
+          in_specs=(spec5, spec5, spec5, spec5, spec4),
+          out_specs=(spec5, spec4),
+          check_vma=False,
+      )
+
+    o_pallas, _ = _call_kernel(
+        w_chunks.astype(jnp.float32),
+        u_chunks.astype(jnp.float32),
+        q_c.astype(jnp.float32),
+        k_c.astype(jnp.float32),
+        g_cumsum.astype(jnp.float32),
+    )
+    o = o_pallas.transpose(0, 1, 3, 2, 4).reshape(B, -1, H, V_dim)
+    if pad_len > 0:
+      o = o[:, :seq_len, :, :]
+    return o.astype(initial_dtype), None
+
   scan_perm_vec = (1, 0, 2, 3, 4)
   scan_perm_scl = (1, 0, 2, 3)
 
@@ -298,21 +361,28 @@ def jax_chunk_gated_delta_rule(
 
   def scan_body(h, args):
     w, u, q, k, g = args
-    prec = jax.lax.Precision.HIGHEST
+
+    # Matmuls feed the MXU with compute_dtype (bf16) operands and accumulate in
+    # float32 via preferred_element_type — the native fast path on TPU. The
+    # recurrent state `h`, decay terms and all additions/subtractions stay in
+    # float32; only matmul operands are downcast.
+    def mxu_matmul(a, b):
+      return jnp.matmul(
+          a.astype(compute_dtype), b.astype(compute_dtype), preferred_element_type=jnp.float32
+      )
 
     # --- Output Computation ---
     # 1. Inter-chunk: q(dtype) * exp(g)(f32) -> f32
     q_g = q.astype(jnp.float32) * jnp.exp(g)[..., None]
-    attn_inter = jnp.matmul(q_g, h, precision=prec)
+    attn_inter = mxu_matmul(q_g, h)
 
     # 2. Delta Rule Subtraction (v_prime and v_new)
     # w serves as k_cumdecay, u serves as value_intra
-    v_prime = jnp.matmul(w.astype(jnp.float32), h, precision=prec)
+    v_prime = mxu_matmul(w, h)
     v_new = u.astype(jnp.float32) - v_prime
 
     # 3. Intra-chunk: q(dtype) @ k(dtype) -> f32
-    attn = jnp.matmul(q, k.swapaxes(-1, -2), precision=prec)
-    attn = attn.astype(jnp.float32)
+    attn = mxu_matmul(q, k.swapaxes(-1, -2))
 
     # Mask before exp
     g_diff = g[..., :, None] - g[..., None, :]
@@ -326,7 +396,7 @@ def jax_chunk_gated_delta_rule(
     # absorbed beta inside v_new (via u).
 
     # 4. Combine Core Output
-    term2 = jnp.matmul(attn_i, v_new, precision=prec)
+    term2 = mxu_matmul(attn_i, v_new)
     o_c = attn_inter + term2
 
     # --- State Update ---
@@ -337,7 +407,7 @@ def jax_chunk_gated_delta_rule(
     g_diff_exp_state = jnp.exp(g[..., -1, None] - g)[..., None]
     k_i_g_diff = k.astype(jnp.float32) * g_diff_exp_state
 
-    update_term = jnp.matmul(k_i_g_diff.swapaxes(-1, -2), v_new, precision=prec)
+    update_term = mxu_matmul(k_i_g_diff.swapaxes(-1, -2), v_new)
     h_new = h_new + update_term
 
     return h_new, o_c
@@ -382,13 +452,23 @@ class Qwen3NextGatedDeltaNet(nnx.Module):
   2. output = Linear_out(y)
   """
 
-  def __init__(self, config: Config, dtype: DType = jnp.float32, model_mode: str = MODEL_MODE_TRAIN, *, rngs: nnx.Rngs):
+  def __init__(
+      self,
+      config: Config,
+      dtype: DType = jnp.float32,
+      model_mode: str = MODEL_MODE_TRAIN,
+      mesh: Mesh | None = None,
+      *,
+      rngs: nnx.Rngs,
+  ):
     """
     Args:
       config: MegaText configuration object.
+      mesh: Device mesh, required for the Pallas kernel's shard_map wrapper.
       rngs: The random number generators for initialization, passed by the nnx.to_linen wrapper.
     """
     self.config = config
+    self.mesh = mesh
     cfg = self.config
 
     in_features = cfg.emb_dim
@@ -648,6 +728,9 @@ class Qwen3NextGatedDeltaNet(nnx.Module):
         initial_state=recurrent_state,
         use_qk_norm_in_gdn=cfg.use_qk_norm_in_gdn,
         compute_dtype=cfg.dtype,
+        use_pallas=cfg.gdn_use_pallas and model_mode == MODEL_MODE_TRAIN,
+        use_assoc_scan=cfg.gdn_use_assoc_scan and model_mode == MODEL_MODE_TRAIN,
+        mesh=self.mesh,
     )
 
     if model_mode != MODEL_MODE_TRAIN:
@@ -933,7 +1016,7 @@ class Qwen3NextDecoderLayer(nnx.Module):
           rngs=rngs,
       )
     else:
-      self.attention = Qwen3NextGatedDeltaNet(config=cfg, dtype=cfg.dtype, model_mode=model_mode, rngs=rngs)
+      self.attention = Qwen3NextGatedDeltaNet(config=cfg, dtype=cfg.dtype, model_mode=model_mode, mesh=self.mesh, rngs=rngs)
 
     # Second LayerNorm, applied before the MoE block.
     self.post_attention_layernorm = Qwen3NextRMSNorm(

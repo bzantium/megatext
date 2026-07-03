@@ -46,6 +46,7 @@ from megatext.layers.normalizations import RMSNorm
 from megatext.layers.quantizations import AqtQuantization as Quant
 from megatext.models import (
     deepseek_batchsplit,
+    deepseek_batchsplit_fp8,
     gpt3,
 )
 from megatext.multimodal import utils as mm_utils
@@ -878,17 +879,32 @@ class NNXDecoder(nnx.Module):
 
             mock_params = self._build_linen_params(self.moe_layer)
 
-            y = deepseek_batchsplit.scan_batch_split_layers(
-                y,
-                mock_params,
-                decoder_positions,
-                decoder_segment_ids,
-                model_mode=model_mode,
-                mesh=self.mesh,
-                quant=self.quant,
-                cfg=cfg,
-                policy=policy,
-            )
+            if cfg.use_qwix_quantization:
+              # FP8 variant fully backed by qwix quantization.
+              y = deepseek_batchsplit_fp8.scan_batch_split_layers(
+                  y,
+                  mock_params,
+                  decoder_positions,
+                  decoder_segment_ids,
+                  model_mode=model_mode,
+                  mesh=self.mesh,
+                  quant=self.quant,
+                  cfg=cfg,
+                  policy=policy,
+              )
+            else:
+              # bf16 code path
+              y = deepseek_batchsplit.scan_batch_split_layers(
+                  y,
+                  mock_params,
+                  decoder_positions,
+                  decoder_segment_ids,
+                  model_mode=model_mode,
+                  mesh=self.mesh,
+                  quant=self.quant,
+                  cfg=cfg,
+                  policy=policy,
+              )
           else:
             y, self.moe_layer = self._apply_layers_sequentially(
                 self.moe_layer, y, *layer_args, length=num_moe, **layer_kwargs

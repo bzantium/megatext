@@ -471,6 +471,17 @@ class MlaAttention(BaseModel):
   v_head_dim: NonNegativeInt = Field(128, description="Dimension of V heads in MLA.")
 
 
+class CompressedAttentionConfig(BaseModel):
+  """Configuration for Compressed Attention (DeepSeek-V4 CSA/HCA)."""
+
+  o_lora_rank: NonNegativeInt = Field(0, description="Output LoRA rank for Compressed Attention.")
+  o_groups: NonNegativeInt = Field(0, description="Output groups for Compressed Attention.")
+  compress_ratios: list[int] = Field(default_factory=list, description="Per-layer compression ratios (0, 4, 128, etc).")
+  compressed_rope_theta: int = Field(
+      160000, description="Base frequency (theta) for Compressed Sparse/Heavy Attention RoPE."
+  )
+
+
 class AttentionIndexer(BaseModel):
   """Configuration for DeepSeek Sparse Attention (DSA): DeepSeek3.2-style MLA with indexer."""
 
@@ -654,6 +665,9 @@ class DeepSeekMoE(BaseModel):
       description="Compatibility field for DeepSeek configs that specify the number of initial dense layers.",
   )
   first_num_dense_layers: NonNegativeInt = Field(0, description="Number of initial dense layers in the model.")
+  first_num_hash_layers: NonNegativeInt = Field(
+      0, description="Number of hash routing layers, used in DeepSeek V4 (0 means disabled)."
+  )
   shared_experts: PositiveInt = Field(1, description="Number of shared experts.")
   routed_scaling_factor: float = Field(1.0, description="Scaling factor for routing scores.")
   routed_score_func: str = Field("", description="Scoring function for routing (e.g., 'softmax', 'sigmoid').")
@@ -691,6 +705,14 @@ class Qwen3Next(BaseModel):
   gdn_chunk_size: int = Field(
       64,
       description="Chunk size for the parallel scan algorithm in the Gated Delta Net.",
+  )
+  gdn_use_pallas: bool = Field(
+      False,
+      description="Use the fused Pallas TPU kernel for the Gated Delta Net inter-chunk scan.",
+  )
+  gdn_use_assoc_scan: bool = Field(
+      False,
+      description="Resolve the GDN inter-chunk recurrence with an associative scan (batched matmuls) instead of a sequential walk.",
   )
   use_qk_norm_in_gdn: bool = Field(
       True,
@@ -1615,6 +1637,7 @@ class MegaTextConfig(
     # Attention Mechanisms
     Attention,
     MlaAttention,
+    CompressedAttentionConfig,
     MoBa,
     AttentionIndexer,
     Llama4Attention,
@@ -2187,6 +2210,8 @@ class MegaTextConfig(
         raise ValueError("GPT-OSS MoE only supports dropless (capacity_factor=-1) with dense matmul.")
       if self.routed_bias and self.routed_bias_update_rate > 0.0 and self.decoder_block != DecoderBlockType.DEEPSEEK:
         raise ValueError("Loss-free load balancing is only supported for the DeepSeek decoder block.")
+      if self.first_num_hash_layers > 0 and self.use_ring_of_experts:
+        raise ValueError("Hash routing is currently not supported with ring of experts.")
     if self.use_multimodal:
       valid_mm_models = (
           "gemma4-moe",

@@ -298,6 +298,7 @@ class RoutedMoeBehaviorTest(unittest.TestCase):
         ),
         num_experts_per_tok=2,
         dtype=jnp.bfloat16,
+        is_hash_routing=False,
     )
     gate_logits = jnp.array([[[1.0, 2.0, 0.0]]], dtype=jnp.bfloat16)
 
@@ -317,8 +318,10 @@ class RoutedMoeBehaviorTest(unittest.TestCase):
       captured["dtype"] = x.dtype
       return jnp.zeros((1, 1, 2), dtype=jnp.float32), None
 
-    def fake_dense_matmul(inputs, gate_logits, pre_bias_logits, w0_kernel, w1_kernel, wo_kernel, w0_bias, w1_bias, wo_bias):
-      del gate_logits, pre_bias_logits, w0_kernel, w1_kernel, wo_kernel, w0_bias, w1_bias, wo_bias
+    def fake_dense_matmul(
+        inputs, gate_logits, pre_bias_logits, w0_kernel, w1_kernel, wo_kernel, w0_bias, w1_bias, wo_bias, input_ids=None
+    ):
+      del gate_logits, pre_bias_logits, w0_kernel, w1_kernel, wo_kernel, w0_bias, w1_bias, wo_bias, input_ids
       return inputs, None, None
 
     fake = SimpleNamespace(
