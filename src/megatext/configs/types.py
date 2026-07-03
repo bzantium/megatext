@@ -706,13 +706,9 @@ class Qwen3Next(BaseModel):
       64,
       description="Chunk size for the parallel scan algorithm in the Gated Delta Net.",
   )
-  gdn_use_pallas: bool = Field(
+  gdn_remat: bool = Field(
       False,
-      description="Use the fused Pallas TPU kernel for the Gated Delta Net inter-chunk scan.",
-  )
-  gdn_use_assoc_scan: bool = Field(
-      False,
-      description="Resolve the GDN inter-chunk recurrence with an associative scan (batched matmuls) instead of a sequential walk.",
+      description="Locally rematerialize the Gated Delta Net internals: save only the layer inputs and recompute the chunk-expanded stage tensors in the backward pass, independent of the outer remat policy.",
   )
   use_qk_norm_in_gdn: bool = Field(
       True,
@@ -2188,6 +2184,12 @@ class MegaTextConfig(
             f"Engram vocab size mismatch: expected {self.engram_max_ngram_size - 1} (max_ngram_size - 1), "
             f"but got {self.engram_vocab_bases}."
         )
+    if self.decoder_block == DecoderBlockType.QWEN3_NEXT and self.num_experts == 1:
+      # Dense qwen3-next: the FFN block (routed + shared expert) reads
+      # moe_mlp_dim even in the single-expert case; mirror the dense mlp_dim
+      # so dense configs only need base_mlp_dim.
+      self.base_moe_mlp_dim = self.base_mlp_dim
+      self.moe_mlp_dim = self.mlp_dim
     if self.num_experts > 1:
       is_fully_moe = (
           self.interleave_moe_layer_step == 1

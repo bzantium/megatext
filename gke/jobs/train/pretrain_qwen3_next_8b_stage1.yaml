@@ -11,7 +11,6 @@ config:
   model: qwen3-next
   base_emb_dim: 4096
   base_mlp_dim: 5120
-  base_moe_mlp_dim: 5120
   base_num_query_heads: 32
   base_num_kv_heads: 8
   base_num_decoder_layers: 36
@@ -50,7 +49,6 @@ config:
   final_learning_rate: 1e-4
   remat_policy: save_dot_except_mlpwi
   gdn_chunk_size: 128
-  gdn_use_pallas: true
   dtype: bfloat16
   weight_dtype: bfloat16
   adam_b1: 0.9

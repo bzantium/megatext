@@ -19,6 +19,7 @@
 from typing import Any, cast
 import math
 
+import functools
 import jax
 import jax.nn
 from jax import lax
@@ -189,7 +190,6 @@ def jax_chunk_gated_delta_rule(
     use_qk_norm_in_gdn: bool = False,
     compute_dtype: jnp.dtype = jnp.bfloat16,
     use_pallas: bool = False,
-    use_assoc_scan: bool = False,
     mesh: Mesh | None = None,
 ) -> tuple[Array, None | Array]:
   """Optimized JAX implementation of Gated Delta Rule."""
@@ -267,10 +267,22 @@ def jax_chunk_gated_delta_rule(
   S = jnp.where(mask, S, 0.0)
 
   # Inversion (A) - Strictly float32
-  identity = jnp.eye(chunk_size, dtype=jnp.float32)
-  identity_broadcasted = jnp.broadcast_to(identity, S.shape)
+  if use_pallas and initial_state is None:
+    # Blockwise inversion as a Pallas kernel: pure MXU matmuls on VMEM
+    # tiles, versus the row-sequential TPU triangular solve.
+    from megatext.kernels.gdn import invert_unit_lower
 
-  A = jax.scipy.linalg.solve_triangular(identity + S, identity_broadcasted, lower=True, unit_diagonal=True)
+    _invert = functools.partial(invert_unit_lower, interpret=jax.default_backend() != "tpu")
+    if mesh is not None:
+      inv_batch_axes = nn.logical_to_mesh_axes(("activation_batch",))[0]
+      inv_head_axes = nn.logical_to_mesh_axes(("activation_kv_heads",))[0]
+      inv_spec = jax.sharding.PartitionSpec(inv_batch_axes, None, inv_head_axes, None, None)
+      _invert = jax.shard_map(_invert, mesh=mesh, in_specs=(inv_spec,), out_specs=inv_spec, check_vma=False)
+    A = _invert(S)
+  else:
+    identity = jnp.eye(chunk_size, dtype=jnp.float32)
+    identity_broadcasted = jnp.broadcast_to(identity, S.shape)
+    A = jax.scipy.linalg.solve_triangular(identity + S, identity_broadcasted, lower=True, unit_diagonal=True)
 
   # 5. WY Factors — the triangular inverse A stays float32; matmul operands are
   # downcast to compute_dtype with float32 accumulation (MXU fast path).
@@ -289,24 +301,6 @@ def jax_chunk_gated_delta_rule(
   # =========================================================================
   # STAGE 3: INTER-CHUNK RECURRENCE (Scan)
   # =========================================================================
-  if use_assoc_scan and initial_state is None:
-    # Associative-scan resolution of the recurrence: pure XLA batched
-    # matmuls (auto-partitionable, autodiff-differentiable), log2(N) depth.
-    from megatext.kernels.gdn import gdn_inter_chunk_assoc_scan
-
-    o_assoc, _ = gdn_inter_chunk_assoc_scan(
-        w_chunks.astype(jnp.float32),
-        u_chunks.astype(jnp.float32),
-        q_c.astype(jnp.float32),
-        k_c.astype(jnp.float32),
-        g_cumsum.astype(jnp.float32),
-        compute_dtype,
-    )
-    o = o_assoc.transpose(0, 1, 3, 2, 4).reshape(B, -1, H, V_dim)
-    if pad_len > 0:
-      o = o[:, :seq_len, :, :]
-    return o.astype(initial_dtype), None
-
   if use_pallas and initial_state is None:
     # Pallas kernel for the sequential inter-chunk recurrence only. The
     # chunk-parallel stage-2 stays in XLA: TPU grid cells execute
@@ -316,27 +310,32 @@ def jax_chunk_gated_delta_rule(
 
     interpret = jax.default_backend() != "tpu"
 
-    def _call_kernel(w_, u_, q_, k_, g_):
-      return gdn_inter_chunk_scan(w_, u_, q_, k_, g_, interpret, compute_dtype)
+    def _call_kernel(w_, u_, q_, k_, g_, h0_):
+      return gdn_inter_chunk_scan(w_, u_, q_, k_, g_, h0_, interpret, compute_dtype)
 
     if mesh is not None:
       batch_axes = nn.logical_to_mesh_axes(("activation_batch",))[0]
-      spec5 = jax.sharding.PartitionSpec(batch_axes, None, None, None, None)
-      spec4 = jax.sharding.PartitionSpec(batch_axes, None, None, None)
+      head_axes = nn.logical_to_mesh_axes(("activation_kv_heads",))[0]
+      # GDN is fully independent per head, so the kernels shard cleanly over
+      # both batch and heads (tensor parallelism included).
+      spec5 = jax.sharding.PartitionSpec(batch_axes, None, head_axes, None, None)
+      spec4c = jax.sharding.PartitionSpec(batch_axes, None, head_axes, None)
+      spec4h = jax.sharding.PartitionSpec(batch_axes, head_axes, None, None)
       _call_kernel = jax.shard_map(
           _call_kernel,
           mesh=mesh,
-          in_specs=(spec5, spec5, spec5, spec5, spec4),
-          out_specs=(spec5, spec4),
+          in_specs=(spec5, spec5, spec5, spec5, spec4c, spec4h),
+          out_specs=(spec5, spec4h),
           check_vma=False,
       )
 
     o_pallas, _ = _call_kernel(
-        w_chunks.astype(jnp.float32),
-        u_chunks.astype(jnp.float32),
-        q_c.astype(jnp.float32),
-        k_c.astype(jnp.float32),
-        g_cumsum.astype(jnp.float32),
+        w_chunks,
+        u_chunks,
+        q_c,
+        k_c,
+        g_cumsum,
+        jnp.zeros((B, H, K_dim, V_dim), dtype=jnp.float32),
     )
     o = o_pallas.transpose(0, 1, 3, 2, 4).reshape(B, -1, H, V_dim)
     if pad_len > 0:
@@ -718,20 +717,22 @@ class Qwen3NextGatedDeltaNet(nnx.Module):
         else:
           recurrent_state = recurrent_state[:batch]
 
-    core_attn_out, recurrent_state_out = jax_chunk_gated_delta_rule(
-        query,
-        key,
-        value,
-        g,
-        beta,
+    delta_rule = functools.partial(
+        jax_chunk_gated_delta_rule,
         chunk_size=cfg.gdn_chunk_size,
         initial_state=recurrent_state,
         use_qk_norm_in_gdn=cfg.use_qk_norm_in_gdn,
         compute_dtype=cfg.dtype,
-        use_pallas=cfg.gdn_use_pallas and model_mode == MODEL_MODE_TRAIN,
-        use_assoc_scan=cfg.gdn_use_assoc_scan and model_mode == MODEL_MODE_TRAIN,
+        use_pallas=model_mode == MODEL_MODE_TRAIN and jax.default_backend() == "tpu",
         mesh=self.mesh,
     )
+    if cfg.gdn_remat and model_mode == MODEL_MODE_TRAIN:
+      # Local remat: whatever the outer remat policy saves (e.g. dot outputs
+      # under save_dot_* policies), the GDN internals — the chunk-expanded
+      # stage-2 tensors are dot outputs several times the layer inputs — are
+      # recomputed in the backward pass from just (q, k, v, g, beta).
+      delta_rule = jax.checkpoint(delta_rule, policy=jax.checkpoint_policies.nothing_saveable)
+    core_attn_out, recurrent_state_out = delta_rule(query, key, value, g, beta)
 
     if model_mode != MODEL_MODE_TRAIN:
       # Update self.cache in place for both prefill and decode

@@ -50,7 +50,7 @@ def _tril_mask(chunk_size: int, include_diag: bool = True) -> jax.Array:
 
 
 def _gdn_scan_fwd_kernel(
-    w_ref, u_ref, q_ref, k_ref, g_ref,
+    w_ref, u_ref, q_ref, k_ref, g_ref, h0_ref,
     o_ref, h_saved_ref, h_final_ref,
     h_scratch,
     *, chunk_size: int, num_chunks: int, compute_dtype: jnp.dtype,
@@ -60,7 +60,7 @@ def _gdn_scan_fwd_kernel(
 
   @pl.when(n == 0)
   def _init():
-    h_scratch[...] = jnp.zeros_like(h_scratch)
+    h_scratch[0, 0, 0] = h0_ref[0, 0].astype(jnp.float32)
 
   h = h_scratch[0, 0, 0]
   # Save the chunk-input state for the backward pass.
@@ -108,8 +108,8 @@ def _gdn_scan_fwd_kernel(
 
 
 def _gdn_scan_bwd_kernel(
-    w_ref, u_ref, q_ref, k_ref, g_ref, h_saved_ref, do_ref,
-    dw_ref, du_ref, dq_ref, dk_ref, dg_ref,
+    w_ref, u_ref, q_ref, k_ref, g_ref, h_saved_ref, do_ref, dh_final_ref,
+    dw_ref, du_ref, dq_ref, dk_ref, dg_ref, dh0_ref,
     dh_scratch,
     *, chunk_size: int, num_chunks: int, compute_dtype: jnp.dtype,
 ):
@@ -118,7 +118,8 @@ def _gdn_scan_bwd_kernel(
 
   @pl.when(n == 0)
   def _init():
-    dh_scratch[...] = jnp.zeros_like(dh_scratch)
+    # Seed the state cotangent with the final-state cotangent.
+    dh_scratch[0, 0, 0] = dh_final_ref[0, 0].astype(jnp.float32)
 
   dh_next = dh_scratch[0, 0, 0]  # dL/dh_{c+1} for the chunk being processed
 
@@ -198,9 +199,14 @@ def _gdn_scan_bwd_kernel(
 
   dh_scratch[0, 0, 0] = dh
 
+  @pl.when(n == num_chunks - 1)
+  def _final():
+    # After the reverse walk over chunk 0, dh is dL/dh_0.
+    dh0_ref[0, 0] = dh
 
-def _fwd_pallas(w, u, q, k, g, *, compute_dtype=jnp.bfloat16, interpret=False):
-  """Runs the forward kernel. Inputs are [B, N, H, C, D] / g [B, N, H, C]."""
+
+def _fwd_pallas(w, u, q, k, g, h0, *, compute_dtype=jnp.bfloat16, interpret=False):
+  """Runs the forward kernel. Inputs are [B, N, H, C, D] / g [B, N, H, C] / h0 [B, H, D_k, D_v]."""
   batch, num_chunks, num_heads, chunk_size, d_k = q.shape
   d_v = u.shape[-1]
 
@@ -210,17 +216,17 @@ def _fwd_pallas(w, u, q, k, g, *, compute_dtype=jnp.bfloat16, interpret=False):
   # the array dims; per-chunk vectors ride along with a trailing singleton.
   g_spec = pl.BlockSpec((1, 1, 1, chunk_size, 1), lambda b, h, n: (b, n, h, 0, 0))
   state_spec = pl.BlockSpec((1, 1, 1, d_k, d_v), lambda b, h, n: (b, n, h, 0, 0))
-  final_spec = pl.BlockSpec((1, 1, d_k, d_v), lambda b, h, n: (b, h, 0, 0))
+  bh_state_spec = pl.BlockSpec((1, 1, d_k, d_v), lambda b, h, n: (b, h, 0, 0))
 
   g = g[..., None]
   kernel = functools.partial(_gdn_scan_fwd_kernel, chunk_size=chunk_size, num_chunks=num_chunks, compute_dtype=compute_dtype)
   o, h_saved, h_final = pl.pallas_call(
       kernel,
       grid=grid,
-      in_specs=[chunk_spec(d_k), chunk_spec(d_v), chunk_spec(d_k), chunk_spec(d_k), g_spec],
-      out_specs=[chunk_spec(d_v), state_spec, final_spec],
+      in_specs=[chunk_spec(d_k), chunk_spec(d_v), chunk_spec(d_k), chunk_spec(d_k), g_spec, bh_state_spec],
+      out_specs=[chunk_spec(d_v), state_spec, bh_state_spec],
       out_shape=[
-          jax.ShapeDtypeStruct((batch, num_chunks, num_heads, chunk_size, d_v), jnp.float32),
+          jax.ShapeDtypeStruct((batch, num_chunks, num_heads, chunk_size, d_v), compute_dtype),
           jax.ShapeDtypeStruct((batch, num_chunks, num_heads, d_k, d_v), jnp.float32),
           jax.ShapeDtypeStruct((batch, num_heads, d_k, d_v), jnp.float32),
       ],
@@ -230,11 +236,11 @@ def _fwd_pallas(w, u, q, k, g, *, compute_dtype=jnp.bfloat16, interpret=False):
       ),
       interpret=interpret,
       name="gdn_scan_fwd",
-  )(w, u, q, k, g)
+  )(w, u, q, k, g, h0)
   return o, h_saved, h_final
 
 
-def _bwd_pallas(w, u, q, k, g, h_saved, do, *, compute_dtype=jnp.bfloat16, interpret=False):
+def _bwd_pallas(w, u, q, k, g, h_saved, do, dh_final, *, compute_dtype=jnp.bfloat16, interpret=False):
   """Runs the backward kernel (reverse chunk walk via index remapping)."""
   batch, num_chunks, num_heads, chunk_size, d_k = q.shape
   d_v = u.shape[-1]
@@ -245,20 +251,22 @@ def _bwd_pallas(w, u, q, k, g, h_saved, do, *, compute_dtype=jnp.bfloat16, inter
   chunk_spec = lambda d: pl.BlockSpec((1, 1, 1, chunk_size, d), rev)
   g_spec = pl.BlockSpec((1, 1, 1, chunk_size, 1), rev)
   state_spec = pl.BlockSpec((1, 1, 1, d_k, d_v), rev)
+  bh_state_spec = pl.BlockSpec((1, 1, d_k, d_v), lambda b, h, n: (b, h, 0, 0))
 
   g = g[..., None]
   kernel = functools.partial(_gdn_scan_bwd_kernel, chunk_size=chunk_size, num_chunks=num_chunks, compute_dtype=compute_dtype)
-  dw, du, dq, dk, dg = pl.pallas_call(
+  dw, du, dq, dk, dg, dh0 = pl.pallas_call(
       kernel,
       grid=grid,
-      in_specs=[chunk_spec(d_k), chunk_spec(d_v), chunk_spec(d_k), chunk_spec(d_k), g_spec, state_spec, chunk_spec(d_v)],
-      out_specs=[chunk_spec(d_k), chunk_spec(d_v), chunk_spec(d_k), chunk_spec(d_k), g_spec],
+      in_specs=[chunk_spec(d_k), chunk_spec(d_v), chunk_spec(d_k), chunk_spec(d_k), g_spec, state_spec, chunk_spec(d_v), bh_state_spec],
+      out_specs=[chunk_spec(d_k), chunk_spec(d_v), chunk_spec(d_k), chunk_spec(d_k), g_spec, bh_state_spec],
       out_shape=[
           jax.ShapeDtypeStruct((batch, num_chunks, num_heads, chunk_size, d_k), jnp.float32),
           jax.ShapeDtypeStruct((batch, num_chunks, num_heads, chunk_size, d_v), jnp.float32),
           jax.ShapeDtypeStruct((batch, num_chunks, num_heads, chunk_size, d_k), jnp.float32),
           jax.ShapeDtypeStruct((batch, num_chunks, num_heads, chunk_size, d_k), jnp.float32),
           jax.ShapeDtypeStruct((batch, num_chunks, num_heads, chunk_size, 1), jnp.float32),
+          jax.ShapeDtypeStruct((batch, num_heads, d_k, d_v), jnp.float32),
       ],
       scratch_shapes=[pltpu.VMEM((1, 1, 1, d_k, d_v), jnp.float32)],
       compiler_params=pltpu.CompilerParams(
@@ -266,82 +274,158 @@ def _bwd_pallas(w, u, q, k, g, h_saved, do, *, compute_dtype=jnp.bfloat16, inter
       ),
       interpret=interpret,
       name="gdn_scan_bwd",
-  )(w, u, q, k, g, h_saved, do)
-  return dw, du, dq, dk, dg[..., 0]
+  )(w, u, q, k, g, h_saved, do, dh_final)
+  return dw, du, dq, dk, dg[..., 0], dh0
 
 
-@functools.partial(jax.custom_vjp, nondiff_argnums=(5, 6))
-def gdn_inter_chunk_scan(w, u, q, k, g, interpret=False, compute_dtype=jnp.bfloat16):
+@functools.partial(jax.custom_vjp, nondiff_argnums=(6, 7))
+def gdn_inter_chunk_scan(w, u, q, k, g, h0, interpret=False, compute_dtype=jnp.bfloat16):
   """Fused inter-chunk gated-delta-rule scan.
 
   Args:
     w, u: WY factors, [B, N, H, C, D_k] / [B, N, H, C, D_v].
     q, k: chunked queries/keys, [B, N, H, C, D_k].
     g: per-chunk cumulative log-decay, [B, N, H, C] (float32).
+    h0: initial recurrent state, [B, H, D_k, D_v] (float32).
     interpret: run the Pallas kernels in interpret mode (CPU testing).
+    compute_dtype: operand dtype for the MXU matmuls (accumulation is f32).
 
   Returns:
     (o, h_final): chunk outputs [B, N, H, C, D_v] (float32) and the final
     recurrent state [B, H, D_k, D_v] (float32).
   """
-  o, _, h_final = _fwd_pallas(w, u, q, k, g, compute_dtype=compute_dtype, interpret=interpret)
+  o, _, h_final = _fwd_pallas(w, u, q, k, g, h0, compute_dtype=compute_dtype, interpret=interpret)
   return o, h_final
 
 
-def _gdn_scan_vjp_fwd(w, u, q, k, g, interpret, compute_dtype):
-  o, h_saved, h_final = _fwd_pallas(w, u, q, k, g, compute_dtype=compute_dtype, interpret=interpret)
+def _gdn_scan_vjp_fwd(w, u, q, k, g, h0, interpret, compute_dtype):
+  o, h_saved, h_final = _fwd_pallas(w, u, q, k, g, h0, compute_dtype=compute_dtype, interpret=interpret)
   return (o, h_final), (w, u, q, k, g, h_saved)
 
 
 def _gdn_scan_vjp_bwd(interpret, compute_dtype, residuals, cotangents):
   w, u, q, k, g, h_saved = residuals
   do, dh_final = cotangents
-  # dh_final feeds the last chunk's state cotangent. The backward kernel
-  # initializes dh to zero at the reverse walk start; fold dh_final in by
-  # seeding through an extra virtual contribution on the last chunk.
-  # We implement it by adding dh_final via the kernel's zero-init replacement:
-  # simplest correct route — absorb dh_final analytically before the kernel.
-  # h_final = gamma_last*h_last + kd_last^T @ vnew_last, which the kernel
-  # differentiates when dh carries dh_final at reverse step 0. We achieve
-  # this by augmenting `do` of the last chunk is NOT equivalent; instead we
-  # run the kernel with dh seeded via a zero-padded extra chunk trick.
-  # For training use dh_final is zero (the final state is unused), so we
-  # assert-free fall back: when dh_final is symbolically zero this is exact.
-  dw, du, dq, dk, dg = _bwd_pallas(w, u, q, k, g, h_saved, do, compute_dtype=compute_dtype, interpret=interpret)
-
-  # Correction for a non-zero dh_final: propagate it analytically through
-  # the pure-JAX reference of the state chain (cheap: state-only recurrence).
-  def state_chain(w_, u_, k_, g_):
-    b, n_chunks, h_heads, c, dk_ = k_.shape
-    def step(h, xs):
-      w_c, u_c, k_c, g_c = xs
-      v_new = u_c - jnp.einsum("bhcd,bhde->bhce", w_c, h)
-      g_last = g_c[..., -1]
-      dvec = jnp.exp(g_last[..., None] - g_c)
-      kd = k_c * dvec[..., None]
-      h_new = h * jnp.exp(g_last)[..., None, None] + jnp.einsum("bhcd,bhce->bhde", kd, v_new)
-      return h_new, None
-    xs = (
-        jnp.moveaxis(w_, 1, 0), jnp.moveaxis(u_, 1, 0),
-        jnp.moveaxis(k_, 1, 0), jnp.moveaxis(g_, 1, 0),
-    )
-    h0 = jnp.zeros((b, h_heads, dk_, u_.shape[-1]), jnp.float32)
-    h_fin, _ = jax.lax.scan(step, h0, xs)
-    return h_fin
-
-  needs_final = jnp.any(dh_final != 0)
-  def add_final_grads(args):
-    dw_, du_, dq_, dk_, dg_ = args
-    _, vjp_fn = jax.vjp(state_chain, w, u, k, g)
-    dw2, du2, dk2, dg2 = vjp_fn(dh_final)
-    return dw_ + dw2, du_ + du2, dq_, dk_ + dk2, dg_ + dg2
-  dw, du, dq, dk, dg = jax.lax.cond(
-      needs_final, add_final_grads, lambda a: a, (dw, du, dq, dk, dg)
+  # The backward kernel seeds the reverse walk with dh_final and emits dh0,
+  # so the state chain is differentiated end-to-end inside the kernel.
+  dw, du, dq, dk, dg, dh0 = _bwd_pallas(
+      w, u, q, k, g, h_saved, do, dh_final, compute_dtype=compute_dtype, interpret=interpret
   )
-  return dw, du, dq, dk, dg
+  # Gradients are accumulated in float32 inside the kernel; cotangents must
+  # match the primal dtypes (inputs may arrive in bf16).
+  return dw.astype(w.dtype), du.astype(u.dtype), dq.astype(q.dtype), dk.astype(k.dtype), dg.astype(g.dtype), dh0
 
 
 gdn_inter_chunk_scan.defvjp(_gdn_scan_vjp_fwd, _gdn_scan_vjp_bwd)
+
+
+# =============================================================================
+# Unit-lower-triangular inversion kernel
+# =============================================================================
+# Replaces jax.scipy.linalg.solve_triangular for the UT-transform inverse
+# A = (I + S)^{-1}. The TPU triangular solve substitutes row by row and
+# barely uses the MXU; blockwise inversion (exact 16x16 base case plus
+# hierarchical [[A,0],[C,B]] combines) is pure matmuls, and running it as a
+# Pallas kernel keeps every [C, C] tile in VMEM instead of round-tripping
+# the intermediate block products through HBM (which made the same
+# algorithm speed-neutral at the XLA level).
+
+
+def _invert_unit_lower_mxu(s: jax.Array) -> jax.Array:
+  """(I + s)^{-1} for strictly lower-triangular s: stable blockwise ladder.
+
+  Level doubling: given X = (I + S_b)^{-1} for the block-diagonal part S_b
+  at block size b, the size-2b inverse is exactly X - X @ S_l @ X, where
+  S_l holds the entries between sibling b-blocks ([[A,0],[C,B]]^{-1} =
+  [[A^{-1},0],[-B^{-1}CA^{-1},B^{-1}]]). Starting from X = I (b=1) and
+  doubling to full size costs 2*log2(C) full-width MXU matmuls, and never
+  forms powers of s — only realized inverses times raw s — so intermediate
+  magnitudes stay at the scale of the true inverse (stable for unbounded
+  s, unlike Neumann doubling which overflows once |s| > 1).
+  """
+  size = s.shape[-1]
+  rows = jax.lax.broadcasted_iota(jnp.int32, (size, size), 0)
+  cols = jax.lax.broadcasted_iota(jnp.int32, (size, size), 1)
+
+  def mm(a, b):
+    # bf16x3: f32-grade products from bf16 MXU passes (Mosaic's default f32
+    # dot truncates operands to bf16; Precision.HIGH is unsupported). The
+    # leading tile axis is a batched dot: the per-tile products are
+    # independent, so Mosaic can pipeline them through the MXU and hide the
+    # fill/drain of the otherwise strictly sequential ladder chain.
+    a_hi = a.astype(jnp.bfloat16)
+    b_hi = b.astype(jnp.bfloat16)
+    a_lo = (a - a_hi.astype(jnp.float32)).astype(jnp.bfloat16)
+    b_lo = (b - b_hi.astype(jnp.float32)).astype(jnp.bfloat16)
+    dims = (((a.ndim - 1,), (a.ndim - 2,)), (tuple(range(a.ndim - 2)),) * 2)
+    dot = functools.partial(jax.lax.dot_general, dimension_numbers=dims, preferred_element_type=jnp.float32)
+    return dot(a_hi, b_hi) + dot(a_hi, b_lo) + dot(a_lo, b_hi)
+
+  x = jnp.broadcast_to(jnp.eye(size, dtype=jnp.float32), s.shape).astype(jnp.float32)
+  block = 1
+  while block < size:
+    sibling = (rows // block != cols // block) & (rows // (2 * block) == cols // (2 * block))
+    s_level = jnp.where(sibling, s, 0.0)
+    x = x - mm(x, mm(s_level, x))
+    block *= 2
+  return x
+
+
+def _invert_unit_lower_kernel(s_ref, a_ref, *, chunk_size: int):
+  del chunk_size
+  a_ref[0, :, 0] = _invert_unit_lower_mxu(s_ref[0, :, 0].astype(jnp.float32))
+
+
+def _invert_pallas(s, *, interpret=False):
+  batch, num_chunks, num_heads, c, _ = s.shape
+  # Group chunks per grid cell: the ladder's matmuls are sequentially
+  # dependent within a tile, so batching independent tiles keeps the MXU
+  # pipeline full. VMEM per cell stays ~1MB at tile_n=8, C=128.
+  tile_n = 1
+  for cand in (8, 4, 2):
+    if num_chunks % cand == 0:
+      tile_n = cand
+      break
+  grid = (batch, num_heads, num_chunks // tile_n)
+  spec = pl.BlockSpec((1, tile_n, 1, c, c), lambda b, h, n: (b, n, h, 0, 0))
+  return pl.pallas_call(
+      functools.partial(_invert_unit_lower_kernel, chunk_size=c),
+      grid=grid,
+      in_specs=[spec],
+      out_specs=spec,
+      out_shape=jax.ShapeDtypeStruct(s.shape, jnp.float32),
+      compiler_params=pltpu.CompilerParams(
+          dimension_semantics=("parallel", "parallel", "parallel"),
+      ),
+      interpret=interpret,
+      name="gdn_invert_unit_lower",
+  )(s)
+
+
+@functools.partial(jax.custom_vjp, nondiff_argnums=(1,))
+def invert_unit_lower(s, interpret=False):
+  """A = (I + s)^{-1} for strictly lower-triangular s, [B, N, H, C, C] float32."""
+  return _invert_pallas(s, interpret=interpret)
+
+
+def _invert_vjp_fwd(s, interpret):
+  a = _invert_pallas(s, interpret=interpret)
+  return a, a
+
+
+def _invert_vjp_bwd(interpret, a, da):
+  del interpret
+  # d(L^{-1}) = -L^{-1} dL L^{-1}  =>  dL = -A^T da A^T; L = I + s with s
+  # strictly lower and a unit diagonal, so only the strict lower part flows.
+  a_t = a.swapaxes(-1, -2)
+  ds = -jnp.matmul(a_t, jnp.matmul(da, a_t))
+  c = a.shape[-1]
+  rows = jax.lax.broadcasted_iota(jnp.int32, (c, c), 0)
+  cols = jax.lax.broadcasted_iota(jnp.int32, (c, c), 1)
+  return (jnp.where(rows > cols, ds, 0.0),)
+
+
+invert_unit_lower.defvjp(_invert_vjp_fwd, _invert_vjp_bwd)
 
 
 # =============================================================================
@@ -720,61 +804,3 @@ def _gdn_fused_vjp_bwd(interpret, compute_dtype, residuals, cotangents):
 
 gdn_chunked_delta.defvjp(_gdn_fused_vjp_fwd, _gdn_fused_vjp_bwd)
 
-
-def gdn_inter_chunk_assoc_scan(w, u, q, k, g, compute_dtype=jnp.bfloat16):
-  """Inter-chunk recurrence via associative scan (matrix-coefficient form).
-
-  Expands v_new's dependence on the running state into an affine recurrence
-  h_{n+1} = M_n h_n + b_n with M_n = gamma_n I - K_n^T w_n, then resolves all
-  chunk states in log2(N) rounds of (batch, head)-batched matmuls. Trades
-  ~3-4x extra FLOPs in the recurrence for full parallelism.
-
-  Measured on v5e-256 (qwen3-next 8B, seq 4096, bs 1): 3.251s/step vs
-  3.134s/step for gdn_inter_chunk_scan — forming and composing the M matrices
-  costs more than the parallelism recovers at this scale. Kept as a documented
-  reference; the Pallas sequential kernel remains the default fast path.
-  """
-  batch, num_chunks, num_heads, chunk_size, d_k = q.shape
-  d_v = u.shape[-1]
-
-  def mxu(a, b):
-    return jnp.einsum(
-        "...ij,...jk->...ik", a.astype(compute_dtype), b.astype(compute_dtype),
-        preferred_element_type=jnp.float32,
-    )
-
-  exp_g = jnp.exp(g)
-  g_last = g[..., -1]
-  gamma = jnp.exp(g_last)                                  # [B,N,H]
-  dvec = jnp.exp(g_last[..., None] - g)                    # [B,N,H,C]
-  kd = k * dvec[..., None]                                 # [B,N,H,C,Dk]
-
-  # M_n = gamma I - kd^T @ w   [B,N,H,Dk,Dk];  b_n = kd^T @ u
-  eye = jnp.eye(d_k, dtype=jnp.float32)
-  m_mat = gamma[..., None, None] * eye - mxu(kd.swapaxes(-1, -2), w)
-  b_vec = mxu(kd.swapaxes(-1, -2), u)                      # [B,N,H,Dk,Dv]
-
-  def combine(left, right):
-    m1, b1 = left
-    m2, b2 = right
-    return mxu(m2, m1), mxu(m2, b1) + b2
-
-  m_pref, b_pref = jax.lax.associative_scan(combine, (m_mat, b_vec), axis=1)
-  # h at the INPUT of chunk n = prefix over chunks < n: shift right by one.
-  h_states = jnp.concatenate(
-      [jnp.zeros_like(b_pref[:, :1]), b_pref[:, :-1]], axis=1
-  )                                                        # [B,N,H,Dk,Dv]
-
-  # Output path per chunk (fully parallel given h_states).
-  q_g = q * exp_g[..., None]
-  attn_inter = mxu(q_g, h_states)
-  v_new = u - mxu(w, h_states)
-  rows = jax.lax.broadcasted_iota(jnp.int32, (chunk_size, chunk_size), 0)
-  cols = jax.lax.broadcasted_iota(jnp.int32, (chunk_size, chunk_size), 1)
-  mask_incl = rows >= cols
-  g_diff = g[..., :, None] - g[..., None, :]
-  decay_incl = jnp.where(mask_incl, jnp.exp(jnp.where(mask_incl, g_diff, 0.0)), 0.0)
-  attn = mxu(q, k.swapaxes(-1, -2)) * decay_incl
-  o = attn_inter + mxu(attn, v_new)
-  h_final = b_pref[:, -1]
-  return o, h_final
