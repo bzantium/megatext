@@ -1039,7 +1039,6 @@ gdn_num_value_heads: 32
 # Chunk size for the parallel scan algorithm in the Gated Delta Net.
 gdn_chunk_size: 64
 gdn_use_pallas: False # use the fused Pallas TPU kernel for the GDN inter-chunk scan
-gdn_use_assoc_scan: False # resolve the GDN inter-chunk recurrence via associative scan (batched matmuls)
 # Whether to apply L2 normalization to query and key tensors inside the Gated Delta Rule kernel.
 use_qk_norm_in_gdn: True
 # The ratio of dimension to apply ROPE on

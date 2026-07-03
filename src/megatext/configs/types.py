@@ -710,10 +710,6 @@ class Qwen3Next(BaseModel):
       False,
       description="Use the fused Pallas TPU kernel for the Gated Delta Net inter-chunk scan.",
   )
-  gdn_use_assoc_scan: bool = Field(
-      False,
-      description="Resolve the GDN inter-chunk recurrence with an associative scan (batched matmuls) instead of a sequential walk.",
-  )
   use_qk_norm_in_gdn: bool = Field(
       True,
       description="Whether to apply L2 normalization to query and key tensors inside the Gated Delta Rule kernel.",
