@@ -270,7 +270,7 @@ def jax_chunk_gated_delta_rule(
   if use_pallas and initial_state is None:
     # Blockwise inversion as a Pallas kernel: pure MXU matmuls on VMEM
     # tiles, versus the row-sequential TPU triangular solve.
-    from megatext.kernels.gdn import invert_unit_lower
+    from megatext.kernels.attention.gated_delta_network import invert_unit_lower
 
     _invert = functools.partial(invert_unit_lower, interpret=jax.default_backend() != "tpu")
     if mesh is not None:
@@ -306,7 +306,7 @@ def jax_chunk_gated_delta_rule(
     # chunk-parallel stage-2 stays in XLA: TPU grid cells execute
     # sequentially per core, so fusing the batched-parallel WY math into
     # the kernel walk was measured slower than XLA's batched matmuls.
-    from megatext.kernels.gdn import gdn_inter_chunk_scan
+    from megatext.kernels.attention.gated_delta_network import gdn_inter_chunk_scan
 
     interpret = jax.default_backend() != "tpu"
 
