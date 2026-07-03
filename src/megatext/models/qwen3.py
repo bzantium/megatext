@@ -272,13 +272,9 @@ def jax_chunk_gated_delta_rule(
   identity = jnp.eye(chunk_size, dtype=jnp.float32)
   m_mat = identity + S
   A = identity - S
-  # HIGHEST precision is required: convergence relies on the exact
-  # cancellation of the nilpotent residual, which the TPU's default
-  # reduced-precision f32 matmul breaks (squaring then amplifies the error).
   num_newton_iters = max(int(math.ceil(math.log2(chunk_size))) - 1, 0)
-  prec = jax.lax.Precision.HIGHEST
   for _ in range(num_newton_iters):
-    A = jnp.matmul(A, 2.0 * identity - jnp.matmul(m_mat, A, precision=prec), precision=prec)
+    A = A @ (2.0 * identity - m_mat @ A)
 
   # 5. WY Factors — the triangular inverse A stays float32; matmul operands are
   # downcast to compute_dtype with float32 accumulation (MXU fast path).
