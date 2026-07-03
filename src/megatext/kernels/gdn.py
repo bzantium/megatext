@@ -331,29 +331,25 @@ gdn_inter_chunk_scan.defvjp(_gdn_scan_vjp_fwd, _gdn_scan_vjp_bwd)
 # algorithm speed-neutral at the XLA level).
 
 
-def _invert_unit_lower_mxu(s: jax.Array, base_block: int = 16) -> jax.Array:
-  """(I + s)^{-1} via block-diagonal packing: full-width MXU matmuls only.
+def _invert_unit_lower_mxu(s: jax.Array) -> jax.Array:
+  """(I + s)^{-1} for strictly lower-triangular s: stable blockwise ladder.
 
-  Split s = D + L with D the 16x16 block diagonal and L strictly block-lower.
-  Then (I+S)^{-1} = (I+M)^{-1} (I+D)^{-1} with M = (I+D)^{-1} L. D is
-  nilpotent within blocks (D^16 = 0) and M is block-nilpotent (M^{C/16} = 0),
-  so both inverses resolve by exact Neumann doubling — every product a
-  [C, C] matmul, unlike the recursive form whose 16x16 base cases fill ~2%
-  of the MXU.
+  Level doubling: given X = (I + S_b)^{-1} for the block-diagonal part S_b
+  at block size b, the size-2b inverse is exactly X - X @ S_l @ X, where
+  S_l holds the entries between sibling b-blocks ([[A,0],[C,B]]^{-1} =
+  [[A^{-1},0],[-B^{-1}CA^{-1},B^{-1}]]). Starting from X = I (b=1) and
+  doubling to full size costs 2*log2(C) full-width MXU matmuls, and never
+  forms powers of s — only realized inverses times raw s — so intermediate
+  magnitudes stay at the scale of the true inverse (stable for unbounded
+  s, unlike Neumann doubling which overflows once |s| > 1).
   """
   size = s.shape[-1]
-  rows = jax.lax.broadcasted_iota(jnp.int32, (size, size), 0) // base_block
-  cols = jax.lax.broadcasted_iota(jnp.int32, (size, size), 1) // base_block
-  eye = jnp.eye(size, dtype=jnp.float32)
+  rows = jax.lax.broadcasted_iota(jnp.int32, (size, size), 0)
+  cols = jax.lax.broadcasted_iota(jnp.int32, (size, size), 1)
 
   def mm(a, b):
-    # The inverse's dynamic range is large and bf16-truncated operands (the
-    # Mosaic default for f32 dots) break the (I+S)A = I identity by ~1%,
-    # which destabilizes the delta rule recurrence downstream. Manual
-    # bf16x3 (split operands into high/low bf16 parts, drop the low*low
-    # term) restores 1.4e-5 relative agreement with solve_triangular at
-    # half the cost of Precision.HIGHEST's six passes — well under the
-    # bf16 rounding the WY factors receive immediately afterwards.
+    # bf16x3: f32-grade products from bf16 MXU passes (Mosaic's default f32
+    # dot truncates operands to bf16; Precision.HIGH is unsupported).
     a_hi = a.astype(jnp.bfloat16)
     b_hi = b.astype(jnp.bfloat16)
     a_lo = (a - a_hi.astype(jnp.float32)).astype(jnp.bfloat16)
@@ -361,22 +357,14 @@ def _invert_unit_lower_mxu(s: jax.Array, base_block: int = 16) -> jax.Array:
     dot = functools.partial(jax.lax.dot, preferred_element_type=jnp.float32)
     return dot(a_hi, b_hi) + dot(a_hi, b_lo) + dot(a_lo, b_hi)
 
-  def neumann_inverse(t, nilpotency):
-    # (I+t)^{-1} = (I-t) (I+t^2) (I+t^4) ... exact once t^nilpotency == 0.
-    inv = eye - t
-    tk = mm(t, t)
-    power = 2
-    while power < nilpotency:
-      inv = mm(inv, eye + tk)
-      tk = mm(tk, tk)
-      power *= 2
-    return inv
-
-  d = jnp.where(rows == cols, s, 0.0)
-  inv_d = neumann_inverse(d, base_block)
-  m = mm(inv_d, s - d)
-  inv_m = neumann_inverse(m, size // base_block)
-  return mm(inv_m, inv_d)
+  x = jnp.eye(size, dtype=jnp.float32)
+  block = 1
+  while block < size:
+    sibling = (rows // block != cols // block) & (rows // (2 * block) == cols // (2 * block))
+    s_level = jnp.where(sibling, s, 0.0)
+    x = x - mm(x, mm(s_level, x))
+    block *= 2
+  return x
 
 
 def _invert_unit_lower_kernel(s_ref, a_ref, *, chunk_size: int):

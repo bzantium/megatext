@@ -267,12 +267,9 @@ def jax_chunk_gated_delta_rule(
   S = jnp.where(mask, S, 0.0)
 
   # Inversion (A) - Strictly float32
-  if use_pallas and initial_state is None and use_qk_norm_in_gdn:
+  if use_pallas and initial_state is None:
     # Blockwise inversion as a Pallas kernel: pure MXU matmuls on VMEM
-    # tiles, versus the row-sequential TPU triangular solve. The Neumann
-    # doubling inside assumes |S| <= 1, which l2-normalized q/k guarantee
-    # (|k_beta . k| <= beta); without qk-norm the intermediate powers can
-    # overflow, so the exact triangular solve is used instead.
+    # tiles, versus the row-sequential TPU triangular solve.
     from megatext.kernels.gdn import invert_unit_lower
 
     _invert = functools.partial(invert_unit_lower, interpret=jax.default_backend() != "tpu")
