@@ -2122,6 +2122,27 @@ class RoutedMoE(nnx.Module):
     else:
       w0_bias, w1_bias, wo_bias = None, None, None
 
+    if cfg.num_experts == 1 and cfg.num_experts_per_tok == 1 and cfg.load_balance_loss_weight == 0.0:
+      # Single-expert fast path: the top-1-of-1 routing weight is exactly 1
+      # and the load-balance loss carries no gradient, so the permute /
+      # group-sizes / gmm machinery is pure overhead — run the expert as a
+      # plain dense GLU.
+      wo_kernel = _apply_per_expert_scale_to_kernel(
+          wo_kernel,
+          self.per_expert_scale[...] if self.per_expert_scale is not None else None,
+          self.dtype,
+      )
+      layer_w0 = jnp.einsum("btd,dm->btm", inputs, w0_kernel[0])
+      layer_w1 = jnp.einsum("btd,dm->btm", inputs, w1_kernel[0])
+      if w0_bias is not None:
+        layer_w0 = layer_w0 + w0_bias[0]
+        layer_w1 = layer_w1 + w1_bias[0]
+      intermediate = self.apply_ffn_activation(layer_w0, layer_w1)
+      output = jnp.einsum("btm,md->btd", intermediate, wo_kernel[0])
+      if wo_bias is not None:
+        output = output + wo_bias[0]
+      return output.astype(cfg.dtype), None, None
+
     if cfg.sparse_matmul:
       if quantizations.in_serve_mode(self.quant):
         w0_kernel, w1_kernel, wo_kernel = self.retrieve_quantized_weight(

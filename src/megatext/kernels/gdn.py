@@ -320,6 +320,67 @@ gdn_inter_chunk_scan.defvjp(_gdn_scan_vjp_fwd, _gdn_scan_vjp_bwd)
 
 
 # =============================================================================
+# Unit-lower-triangular inversion kernel
+# =============================================================================
+# Replaces jax.scipy.linalg.solve_triangular for the UT-transform inverse
+# A = (I + S)^{-1}. The TPU triangular solve substitutes row by row and
+# barely uses the MXU; blockwise inversion (exact 16x16 base case plus
+# hierarchical [[A,0],[C,B]] combines) is pure matmuls, and running it as a
+# Pallas kernel keeps every [C, C] tile in VMEM instead of round-tripping
+# the intermediate block products through HBM (which made the same
+# algorithm speed-neutral at the XLA level).
+
+
+def _invert_unit_lower_kernel(s_ref, a_ref, *, chunk_size: int):
+  del chunk_size
+  a_ref[0, 0, 0] = _invert_unit_lower(s_ref[0, 0, 0].astype(jnp.float32))
+
+
+def _invert_pallas(s, *, interpret=False):
+  batch, num_chunks, num_heads, c, _ = s.shape
+  grid = (batch, num_heads, num_chunks)
+  spec = pl.BlockSpec((1, 1, 1, c, c), lambda b, h, n: (b, n, h, 0, 0))
+  return pl.pallas_call(
+      functools.partial(_invert_unit_lower_kernel, chunk_size=c),
+      grid=grid,
+      in_specs=[spec],
+      out_specs=spec,
+      out_shape=jax.ShapeDtypeStruct(s.shape, jnp.float32),
+      compiler_params=pltpu.CompilerParams(
+          dimension_semantics=("parallel", "parallel", "parallel"),
+      ),
+      interpret=interpret,
+      name="gdn_invert_unit_lower",
+  )(s)
+
+
+@functools.partial(jax.custom_vjp, nondiff_argnums=(1,))
+def invert_unit_lower(s, interpret=False):
+  """A = (I + s)^{-1} for strictly lower-triangular s, [B, N, H, C, C] float32."""
+  return _invert_pallas(s, interpret=interpret)
+
+
+def _invert_vjp_fwd(s, interpret):
+  a = _invert_pallas(s, interpret=interpret)
+  return a, a
+
+
+def _invert_vjp_bwd(interpret, a, da):
+  del interpret
+  # d(L^{-1}) = -L^{-1} dL L^{-1}  =>  dL = -A^T da A^T; L = I + s with s
+  # strictly lower and a unit diagonal, so only the strict lower part flows.
+  a_t = a.swapaxes(-1, -2)
+  ds = -jnp.matmul(a_t, jnp.matmul(da, a_t))
+  c = a.shape[-1]
+  rows = jax.lax.broadcasted_iota(jnp.int32, (c, c), 0)
+  cols = jax.lax.broadcasted_iota(jnp.int32, (c, c), 1)
+  return (jnp.where(rows > cols, ds, 0.0),)
+
+
+invert_unit_lower.defvjp(_invert_vjp_fwd, _invert_vjp_bwd)
+
+
+# =============================================================================
 # Fully fused chunked gated delta rule
 # =============================================================================
 # Fuses the WY-factor precomputation (k_beta, decay-masked S, the blockwise

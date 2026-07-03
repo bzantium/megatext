@@ -267,10 +267,21 @@ def jax_chunk_gated_delta_rule(
   S = jnp.where(mask, S, 0.0)
 
   # Inversion (A) - Strictly float32
-  identity = jnp.eye(chunk_size, dtype=jnp.float32)
-  identity_broadcasted = jnp.broadcast_to(identity, S.shape)
+  if use_pallas and initial_state is None:
+    # Blockwise inversion as a Pallas kernel: pure MXU matmuls on VMEM
+    # tiles, versus the row-sequential TPU triangular solve.
+    from megatext.kernels.gdn import invert_unit_lower
 
-  A = jax.scipy.linalg.solve_triangular(identity + S, identity_broadcasted, lower=True, unit_diagonal=True)
+    _invert = functools.partial(invert_unit_lower, interpret=jax.default_backend() != "tpu")
+    if mesh is not None:
+      inv_batch_axes = nn.logical_to_mesh_axes(("activation_batch",))[0]
+      inv_spec = jax.sharding.PartitionSpec(inv_batch_axes, None, None, None, None)
+      _invert = jax.shard_map(_invert, mesh=mesh, in_specs=(inv_spec,), out_specs=inv_spec, check_vma=False)
+    A = _invert(S)
+  else:
+    identity = jnp.eye(chunk_size, dtype=jnp.float32)
+    identity_broadcasted = jnp.broadcast_to(identity, S.shape)
+    A = jax.scipy.linalg.solve_triangular(identity + S, identity_broadcasted, lower=True, unit_diagonal=True)
 
   # 5. WY Factors — the triangular inverse A stays float32; matmul operands are
   # downcast to compute_dtype with float32 accumulation (MXU fast path).
