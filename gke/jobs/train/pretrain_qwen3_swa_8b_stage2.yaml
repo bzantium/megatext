@@ -1,0 +1,66 @@
+# Pretrain Qwen3-SWA-8B on TPU v5e-256 — Stage 2 (~2T tokens)
+workload_name: pretrain-qwen3-swa-8b-stage2
+bucket: lmt-tpu-datasets
+mount_path: /mnt/bucket
+
+vars:
+  BUCKET_PREFIX: gs://lmt-tpu-datasets
+  DATA_ROOT: /mnt/bucket/datasets/kanana-2-corpus/4096
+
+config:
+  model: qwen3-swa
+  dataset_type: fixed_arecord
+  dataset_path: >-
+    333.37 ${DATA_ROOT}/nemotron-cc-v2-high-synthetic
+    35.73 ${DATA_ROOT}/finepdfs-edu
+    39.84 ${DATA_ROOT}/kanana-pdf-v1-hq-en
+    405.95 ${DATA_ROOT}/hq-csgk-ko-251201
+    3.00 ${DATA_ROOT}/kanana-pdf-v1-hq-ko
+    30.34 ${DATA_ROOT}/hq-csgk-ja-251201
+    35.87 ${DATA_ROOT}/hq-csgk-zh-251201
+    8.81 ${DATA_ROOT}/hq-csgk-vi-251201
+    6.77 ${DATA_ROOT}/hq-csgk-th-251201
+    13.16 ${DATA_ROOT}/finewiki-en
+    0.72 ${DATA_ROOT}/finewiki-ko
+    3.80 ${DATA_ROOT}/finewiki-ja
+    1.70 ${DATA_ROOT}/finewiki-zh
+    0.72 ${DATA_ROOT}/finewiki-vi
+    0.35 ${DATA_ROOT}/finewiki-th
+    40.89 ${DATA_ROOT}/dq-academic
+    408.94 ${DATA_ROOT}/hq-mathnl-enko-260122
+    61.34 ${DATA_ROOT}/hq-codenl-enko-260126
+    408.94 ${DATA_ROOT}/hq-codescr-260128
+    34.90 ${DATA_ROOT}/tpt-hq-csgk-en
+    16.99 ${DATA_ROOT}/tpt-hq-nemomath-dedup
+    9.45 ${DATA_ROOT}/tpt-hq-codenl-en
+    75.78 ${DATA_ROOT}/qa-csgk-260122
+    62.39 ${DATA_ROOT}/qa-mathnl-260128
+    4.97 ${DATA_ROOT}/qa-codescr-260122
+  data_cache_dir: ${BUCKET_PREFIX}/cache/indices
+  jax_cache_dir: ${BUCKET_PREFIX}/cache/jax
+  steps: 64000
+  per_device_batch_size: 5
+  global_batch_size: 7680
+  learning_rate: 1e-4
+  lr_schedule_type: cosine
+  warmup_steps: 0
+  final_learning_rate: 1e-5
+  remat_policy: full
+  adam_b1: 0.9
+  adam_b2: 0.95
+  gradient_clipping_threshold: 1.0
+  z_loss_multiplier: 5e-6
+  max_target_length: 4096
+  rope_theta: 10000
+  sliding_window_size: 512
+  attention: flash
+  dtype: bfloat16
+  weight_dtype: bfloat16
+  checkpoint_period: 400
+  log_period: 1
+  opt_type: muon
+  muon_weight_decay: 0.1
+  muon_consistent_rms: 0.2
+  run_name: pretrain-qwen3-swa-8b-wsd-1em3-stage2
+  base_output_directory: ${BUCKET_PREFIX}/experiments/ryan
+  load_parameters_path: ${BUCKET_PREFIX}/experiments/ryan/pretrain-qwen3-swa-8b-wsd-1em3-stage1/checkpoints/240000/items
