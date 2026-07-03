@@ -263,11 +263,18 @@ def jax_chunk_gated_delta_rule(
   S = S * jnp.exp(g_diff)
   S = jnp.where(mask, S, 0.0)
 
-  # Inversion (A) - Strictly float32
+  # Inversion (A) — Newton–Schulz iteration instead of solve_triangular.
+  # solve_triangular lowers to a row-sequential loop on TPU; for M = I + S
+  # with S strictly lower triangular (nilpotent, S^C = 0) the Newton update
+  # X <- X(2I - MX) squares the residual (I - MX), so starting from
+  # X0 = I - S it reaches the exact inverse in ceil(log2(C)) - 1 batched
+  # matmul steps that map directly onto the MXU. Kept in float32.
   identity = jnp.eye(chunk_size, dtype=jnp.float32)
-  identity_broadcasted = jnp.broadcast_to(identity, S.shape)
-
-  A = jax.scipy.linalg.solve_triangular(identity + S, identity_broadcasted, lower=True, unit_diagonal=True)
+  m_mat = identity + S
+  A = identity - S
+  num_newton_iters = max(int(math.ceil(math.log2(chunk_size))) - 1, 0)
+  for _ in range(num_newton_iters):
+    A = A @ (2.0 * identity - m_mat @ A)
 
   # 5. WY Factors — the triangular inverse A stays float32; matmul operands are
   # downcast to compute_dtype with float32 accumulation (MXU fast path).
