@@ -231,13 +231,44 @@ def jax_chunk_gated_delta_rule(
 
   num_chunks = query.shape[1] // chunk_size
 
-  # Helper: (B, S, H, D) -> (B, N, H, C, D)
-  def to_chunk(x):
-    return x.reshape(B, num_chunks, chunk_size, H, -1).transpose(0, 1, 3, 2, 4)
+  use_kernel = use_pallas and initial_state is None
+  # The Pallas kernels can consume the seq-major chunk layout [B, N, C, H, D]
+  # directly — a free reshape of [B, S, H, D], no HBM transpose. Its blocks
+  # tile 8 heads at a time (TPU tiling: the second-to-last block dim must be
+  # a multiple of 8), so a head count (per head-sharded kernel shard) that is
+  # not a multiple of 8 falls back to the head-first layout [B, N, H, C, D],
+  # which pays the transpose. The XLA paths always use head-first.
+  heads_per_shard = H
+  if mesh is not None:
+    head_mesh_axes = nn.logical_to_mesh_axes(("activation_kv_heads",))[0]
+    if head_mesh_axes is not None:
+      if not isinstance(head_mesh_axes, (tuple, list)):
+        head_mesh_axes = (head_mesh_axes,)
+      head_shards = math.prod(mesh.shape[a] for a in head_mesh_axes)
+      if head_shards > 0 and H % head_shards == 0:
+        heads_per_shard = H // head_shards
+  kernel_seq_major = use_kernel and heads_per_shard % 8 == 0
 
-  # Helper for scalars: (B, S, H) -> (B, N, H, C)
-  def to_chunk_scalar(x):
-    return x.reshape(B, num_chunks, chunk_size, H).transpose(0, 1, 3, 2)
+  if kernel_seq_major:
+    # Helper: (B, S, H, D) -> (B, N, C, H, D)
+    def to_chunk(x):
+      return x.reshape(B, num_chunks, chunk_size, H, -1)
+
+    # Helper for scalars: (B, S, H) -> (B, N, C, H)
+    def to_chunk_scalar(x):
+      return x.reshape(B, num_chunks, chunk_size, H)
+
+    chunk_axis = 2
+  else:
+    # Helper: (B, S, H, D) -> (B, N, H, C, D)
+    def to_chunk(x):
+      return x.reshape(B, num_chunks, chunk_size, H, -1).transpose(0, 1, 3, 2, 4)
+
+    # Helper for scalars: (B, S, H) -> (B, N, H, C)
+    def to_chunk_scalar(x):
+      return x.reshape(B, num_chunks, chunk_size, H).transpose(0, 1, 3, 2)
+
+    chunk_axis = -1
 
   q_c = to_chunk(query)
   k_c = to_chunk(key)
@@ -250,9 +281,9 @@ def jax_chunk_gated_delta_rule(
   # =========================================================================
 
   # Cumulative decay (Must be float32)
-  g_cumsum = jnp.cumsum(g_c, axis=-1)
+  g_cumsum = jnp.cumsum(g_c, axis=chunk_axis)
 
-  if use_pallas and initial_state is None:
+  if use_kernel:
     # Fused UT-transform kernel: computes the WY factors (w, u) directly
     # from (k, v, beta, g_cumsum) with the [C, C] float32 tensors S and
     # A = (I+S)^{-1} living only in VMEM, never materialized in HBM.
@@ -261,15 +292,19 @@ def jax_chunk_gated_delta_rule(
     ut_interpret = jax.default_backend() != "tpu"
 
     def _call_ut(k_, v_, beta_, g_):
-      return gdn_ut_transform(k_, v_, beta_, g_, ut_interpret, compute_dtype)
+      return gdn_ut_transform(k_, v_, beta_, g_, ut_interpret, compute_dtype, not kernel_seq_major)
 
     if mesh is not None:
       ut_batch_axes = nn.logical_to_mesh_axes(("activation_batch",))[0]
       ut_head_axes = nn.logical_to_mesh_axes(("activation_kv_heads",))[0]
       # GDN is fully independent per head, so the kernel shards cleanly over
       # both batch and heads (tensor parallelism included).
-      ut_spec5 = jax.sharding.PartitionSpec(ut_batch_axes, None, ut_head_axes, None, None)
-      ut_spec4 = jax.sharding.PartitionSpec(ut_batch_axes, None, ut_head_axes, None)
+      if kernel_seq_major:
+        ut_spec5 = jax.sharding.PartitionSpec(ut_batch_axes, None, None, ut_head_axes, None)
+        ut_spec4 = jax.sharding.PartitionSpec(ut_batch_axes, None, None, ut_head_axes)
+      else:
+        ut_spec5 = jax.sharding.PartitionSpec(ut_batch_axes, None, ut_head_axes, None, None)
+        ut_spec4 = jax.sharding.PartitionSpec(ut_batch_axes, None, ut_head_axes, None)
       _call_ut = jax.shard_map(
           _call_ut,
           mesh=mesh,
@@ -315,7 +350,7 @@ def jax_chunk_gated_delta_rule(
   # =========================================================================
   # STAGE 3: INTER-CHUNK RECURRENCE (Scan)
   # =========================================================================
-  if use_pallas and initial_state is None:
+  if use_kernel:
     # Pallas kernel for the sequential inter-chunk recurrence only. The
     # chunk-parallel stage-2 stays in XLA: TPU grid cells execute
     # sequentially per core, so fusing the batched-parallel WY math into
@@ -325,15 +360,19 @@ def jax_chunk_gated_delta_rule(
     interpret = jax.default_backend() != "tpu"
 
     def _call_kernel(w_, u_, q_, k_, g_, h0_):
-      return gdn_inter_chunk_scan(w_, u_, q_, k_, g_, h0_, interpret, compute_dtype)
+      return gdn_inter_chunk_scan(w_, u_, q_, k_, g_, h0_, interpret, compute_dtype, not kernel_seq_major)
 
     if mesh is not None:
       batch_axes = nn.logical_to_mesh_axes(("activation_batch",))[0]
       head_axes = nn.logical_to_mesh_axes(("activation_kv_heads",))[0]
       # GDN is fully independent per head, so the kernels shard cleanly over
       # both batch and heads (tensor parallelism included).
-      spec5 = jax.sharding.PartitionSpec(batch_axes, None, head_axes, None, None)
-      spec4c = jax.sharding.PartitionSpec(batch_axes, None, head_axes, None)
+      if kernel_seq_major:
+        spec5 = jax.sharding.PartitionSpec(batch_axes, None, None, head_axes, None)
+        spec4c = jax.sharding.PartitionSpec(batch_axes, None, None, head_axes)
+      else:
+        spec5 = jax.sharding.PartitionSpec(batch_axes, None, head_axes, None, None)
+        spec4c = jax.sharding.PartitionSpec(batch_axes, None, head_axes, None)
       spec4h = jax.sharding.PartitionSpec(batch_axes, head_axes, None, None)
       _call_kernel = jax.shard_map(
           _call_kernel,
@@ -351,7 +390,11 @@ def jax_chunk_gated_delta_rule(
         g_cumsum,
         jnp.zeros((B, H, K_dim, V_dim), dtype=jnp.float32),
     )
-    o = o_pallas.transpose(0, 1, 3, 2, 4).reshape(B, -1, H, V_dim)
+    if kernel_seq_major:
+      # [B, N, C, H, D_v] -> [B, S, H, D_v] is a free reshape.
+      o = o_pallas.reshape(B, -1, H, V_dim)
+    else:
+      o = o_pallas.transpose(0, 1, 3, 2, 4).reshape(B, -1, H, V_dim)
     if pad_len > 0:
       o = o[:, :seq_len, :, :]
     return o.astype(initial_dtype), None

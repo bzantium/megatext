@@ -59,11 +59,42 @@ def _tril_mask(chunk_size: int, include_diag: bool = True) -> jax.Array:
   return rows >= cols if include_diag else rows > cols
 
 
+# Chunked tensors reach the kernels in one of two HBM layouts:
+#   - head-first [B, N, H, C, D]: blocks (1, 1, TH, C, D) arrive as [TH, C, D].
+#   - seq-major  [B, N, C, H, D]: the natural (transpose-free) reshape of
+#     [B, S, H, D]. Blocks (1, 1, C, TH, D) arrive as [C, TH, D] and are
+#     swapped to the common [TH, C, D] kernel convention in VMEM (register
+#     shuffles, not HBM copies). TPU block tiling requires the last two block
+#     dims to be multiples of (8, 128) or equal to the array dims, so
+#     seq-major blocks are legal exactly when TH is a multiple of 8; per-chunk
+#     vectors ([B, N, C, H] g/beta) ride along with a trailing singleton
+#     ((TH, 1) trailing block dims: TH multiple of 8, 1 equals the array dim).
+_SEQ_MAJOR_HEAD_TILE = 8
+
+
+def _load_chunk(ref, head_first: bool):
+  x = ref[0, 0]
+  return x if head_first else jnp.swapaxes(x, 0, 1)
+
+
+def _load_vec(ref, head_first: bool):
+  x = ref[0, 0, :, :, 0]
+  return x if head_first else x.T
+
+
+def _store_chunk(ref, val, head_first: bool):
+  ref[0, 0] = (val if head_first else jnp.swapaxes(val, 0, 1)).astype(ref.dtype)
+
+
+def _store_vec(ref, val, head_first: bool):
+  ref[0, 0, :, :, 0] = (val if head_first else val.T).astype(ref.dtype)
+
+
 def _gdn_scan_fwd_kernel(
     w_ref, u_ref, q_ref, k_ref, g_ref, h0_ref,
     o_ref, h_saved_ref, h_final_ref,
     h_scratch,
-    *, chunk_size: int, num_chunks: int, compute_dtype: jnp.dtype,
+    *, chunk_size: int, num_chunks: int, compute_dtype: jnp.dtype, head_first: bool,
 ):
   """Forward inter-chunk recurrence for one (batch, head) program."""
   n = pl.program_id(2)
@@ -81,11 +112,11 @@ def _gdn_scan_fwd_kernel(
   def mxu_dot(a, b, contract=(2, 1)):
     return _bdot(a, b, contract, compute_dtype)
 
-  w = w_ref[0, 0]
-  u = u_ref[0, 0].astype(jnp.float32)
-  q = q_ref[0, 0]
-  k = k_ref[0, 0]
-  g = g_ref[0, 0, :, :, 0].astype(jnp.float32)  # [TH, C]
+  w = _load_chunk(w_ref, head_first)
+  u = _load_chunk(u_ref, head_first).astype(jnp.float32)
+  q = _load_chunk(q_ref, head_first)
+  k = _load_chunk(k_ref, head_first)
+  g = _load_vec(g_ref, head_first).astype(jnp.float32)  # [TH, C]
 
   exp_g = jnp.exp(g)
   q_g = q.astype(jnp.float32) * exp_g[..., None]
@@ -100,7 +131,7 @@ def _gdn_scan_fwd_kernel(
   decay = jnp.where(mask, jnp.exp(jnp.where(mask, g_diff, 0.0)), 0.0)
   s = p * decay
 
-  o_ref[0, 0] = (attn_inter + mxu_dot(s, v_new)).astype(o_ref.dtype)
+  _store_chunk(o_ref, attn_inter + mxu_dot(s, v_new), head_first)
 
   # State update.
   g_last = g[:, chunk_size - 1]
@@ -119,7 +150,7 @@ def _gdn_scan_bwd_kernel(
     w_ref, u_ref, q_ref, k_ref, g_ref, h_saved_ref, do_ref, dh_final_ref,
     dw_ref, du_ref, dq_ref, dk_ref, dg_ref, dh0_ref,
     dh_scratch,
-    *, chunk_size: int, num_chunks: int, compute_dtype: jnp.dtype,
+    *, chunk_size: int, num_chunks: int, compute_dtype: jnp.dtype, head_first: bool,
 ):
   """Reverse inter-chunk recurrence: walks chunks from last to first."""
   n = pl.program_id(2)
@@ -134,13 +165,13 @@ def _gdn_scan_bwd_kernel(
   def mxu_dot(a, b, contract=(2, 1)):
     return _bdot(a, b, contract, compute_dtype)
 
-  w = w_ref[0, 0].astype(jnp.float32)
-  u = u_ref[0, 0].astype(jnp.float32)
-  q = q_ref[0, 0].astype(jnp.float32)
-  k = k_ref[0, 0].astype(jnp.float32)
-  g = g_ref[0, 0, :, :, 0].astype(jnp.float32)  # [TH, C]
+  w = _load_chunk(w_ref, head_first).astype(jnp.float32)
+  u = _load_chunk(u_ref, head_first).astype(jnp.float32)
+  q = _load_chunk(q_ref, head_first).astype(jnp.float32)
+  k = _load_chunk(k_ref, head_first).astype(jnp.float32)
+  g = _load_vec(g_ref, head_first).astype(jnp.float32)  # [TH, C]
   h = h_saved_ref[0, 0].astype(jnp.float32)
-  do = do_ref[0, 0].astype(jnp.float32)
+  do = _load_chunk(do_ref, head_first).astype(jnp.float32)
 
   # --- Recompute forward intermediates for this chunk ---
   exp_g = jnp.exp(g)
@@ -197,11 +228,11 @@ def _gdn_scan_bwd_kernel(
   one_hot_last = (jax.lax.broadcasted_iota(jnp.int32, (chunk_size,), 0) == chunk_size - 1).astype(jnp.float32)
   dg = dg + dg_last[:, None] * one_hot_last[None, :]
 
-  dw_ref[0, 0] = dw.astype(dw_ref.dtype)
-  du_ref[0, 0] = du.astype(du_ref.dtype)
-  dq_ref[0, 0] = dq.astype(dq_ref.dtype)
-  dk_ref[0, 0] = dk.astype(dk_ref.dtype)
-  dg_ref[0, 0, :, :, 0] = dg.astype(dg_ref.dtype)
+  _store_chunk(dw_ref, dw, head_first)
+  _store_chunk(du_ref, du, head_first)
+  _store_chunk(dq_ref, dq, head_first)
+  _store_chunk(dk_ref, dk, head_first)
+  _store_vec(dg_ref, dg, head_first)
 
   dh_scratch[...] = dh
 
@@ -214,9 +245,10 @@ def _gdn_scan_bwd_kernel(
 def _head_tile(num_heads: int, max_tile: int = 8) -> int:
   """Heads per grid cell: independent heads batched to pipeline the MXU.
 
-  The cap is VMEM-driven: the backward kernel keeps 14 head-tiled blocks
-  resident (8 inputs + 6 outputs), which exceeds the 16MB scoped VMEM
-  limit at 8 heads, so it runs with 4.
+  Head-first layout only. The backward cap is VMEM-driven: with f32
+  gradient outputs the kernel keeps 14 head-tiled blocks resident
+  (8 inputs + 6 outputs), which exceeded the 16MB scoped VMEM limit at
+  8 heads, so the head-first backward runs with 4.
   """
   for cand in (max_tile, max_tile // 2, 2):
     if 1 < cand <= num_heads and num_heads % cand == 0:
@@ -224,29 +256,62 @@ def _head_tile(num_heads: int, max_tile: int = 8) -> int:
   return 1
 
 
-def _fwd_pallas(w, u, q, k, g, h0, *, compute_dtype=jnp.bfloat16, interpret=False):
-  """Runs the forward kernel. Inputs are [B, N, H, C, D] / g [B, N, H, C] / h0 [B, H, D_k, D_v]."""
-  batch, num_chunks, num_heads, chunk_size, d_k = q.shape
-  d_v = u.shape[-1]
-  th = _head_tile(num_heads)
+def _scan_layout(q_shape, head_first: bool, th: int):
+  """Grid/BlockSpec factory for both chunk layouts of the scan kernels.
 
+  Returns (dims, grid, chunk_spec, vec_spec) where dims unpacks q's shape as
+  (batch, num_chunks, num_heads, chunk_size, d_k) regardless of layout, and
+  chunk_spec/vec_spec take an optional reverse flag for the backward walk.
+  """
+  if head_first:
+    batch, num_chunks, num_heads, chunk_size, d_k = q_shape
+    block = lambda last: (1, 1, th, chunk_size, last)
+    index = lambda rev: (lambda b, h, n: (b, num_chunks - 1 - n if rev else n, h, 0, 0))
+  else:
+    batch, num_chunks, chunk_size, num_heads, d_k = q_shape
+    assert num_heads % th == 0, "seq-major GDN kernels require num_heads % 8 == 0"
+    block = lambda last: (1, 1, chunk_size, th, last)
+    index = lambda rev: (lambda b, h, n: (b, num_chunks - 1 - n if rev else n, 0, h, 0))
   grid = (batch, num_heads // th, num_chunks)
-  chunk_spec = lambda d: pl.BlockSpec((1, 1, th, chunk_size, d), lambda b, h, n: (b, n, h, 0, 0))
-  # TPU block tiling requires the last two dims to be (8k, 128k) or equal to
-  # the array dims; per-chunk vectors ride along with a trailing singleton.
-  g_spec = pl.BlockSpec((1, 1, th, chunk_size, 1), lambda b, h, n: (b, n, h, 0, 0))
+  chunk_spec = lambda d, rev=False: pl.BlockSpec(block(d), index(rev))
+  vec_spec = lambda rev=False: pl.BlockSpec(block(1), index(rev))
+  return (batch, num_chunks, num_heads, chunk_size, d_k), grid, chunk_spec, vec_spec
+
+
+def _chunk_shape(batch, num_chunks, num_heads, chunk_size, d, head_first: bool):
+  if head_first:
+    return (batch, num_chunks, num_heads, chunk_size, d)
+  return (batch, num_chunks, chunk_size, num_heads, d)
+
+
+def _fwd_pallas(w, u, q, k, g, h0, *, compute_dtype=jnp.bfloat16, head_first=True, interpret=False):
+  """Runs the forward kernel.
+
+  Inputs are [B, N, H, C, D] / g [B, N, H, C] when head_first, or the
+  transpose-free seq-major [B, N, C, H, D] / g [B, N, C, H] otherwise;
+  h0 is [B, H, D_k, D_v] in both layouts.
+  """
+  th = _head_tile(q.shape[2]) if head_first else _SEQ_MAJOR_HEAD_TILE
+  dims, grid, chunk_spec, vec_spec = _scan_layout(q.shape, head_first, th)
+  batch, num_chunks, num_heads, chunk_size, d_k = dims
+  d_v = u.shape[-1]
+  # The saved per-chunk states are kernel-private (only the backward kernel
+  # reads them), so they keep the head-first layout in both modes.
   state_spec = pl.BlockSpec((1, 1, th, d_k, d_v), lambda b, h, n: (b, n, h, 0, 0))
   bh_state_spec = pl.BlockSpec((1, th, d_k, d_v), lambda b, h, n: (b, h, 0, 0))
 
   g = g[..., None]
-  kernel = functools.partial(_gdn_scan_fwd_kernel, chunk_size=chunk_size, num_chunks=num_chunks, compute_dtype=compute_dtype)
+  kernel = functools.partial(
+      _gdn_scan_fwd_kernel, chunk_size=chunk_size, num_chunks=num_chunks,
+      compute_dtype=compute_dtype, head_first=head_first,
+  )
   o, h_saved, h_final = pl.pallas_call(
       kernel,
       grid=grid,
-      in_specs=[chunk_spec(d_k), chunk_spec(d_v), chunk_spec(d_k), chunk_spec(d_k), g_spec, bh_state_spec],
+      in_specs=[chunk_spec(d_k), chunk_spec(d_v), chunk_spec(d_k), chunk_spec(d_k), vec_spec(), bh_state_spec],
       out_specs=[chunk_spec(d_v), state_spec, bh_state_spec],
       out_shape=[
-          jax.ShapeDtypeStruct((batch, num_chunks, num_heads, chunk_size, d_v), compute_dtype),
+          jax.ShapeDtypeStruct(_chunk_shape(batch, num_chunks, num_heads, chunk_size, d_v, head_first), compute_dtype),
           jax.ShapeDtypeStruct((batch, num_chunks, num_heads, d_k, d_v), jnp.float32),
           jax.ShapeDtypeStruct((batch, num_heads, d_k, d_v), jnp.float32),
       ],
@@ -260,38 +325,57 @@ def _fwd_pallas(w, u, q, k, g, h0, *, compute_dtype=jnp.bfloat16, interpret=Fals
   return o, h_saved, h_final
 
 
-def _bwd_pallas(w, u, q, k, g, h_saved, do, dh_final, *, compute_dtype=jnp.bfloat16, interpret=False):
-  """Runs the backward kernel (reverse chunk walk via index remapping)."""
-  batch, num_chunks, num_heads, chunk_size, d_k = q.shape
-  d_v = u.shape[-1]
+def _bwd_pallas(w, u, q, k, g, h_saved, do, dh_final, *, compute_dtype=jnp.bfloat16, head_first=True, interpret=False):
+  """Runs the backward kernel (reverse chunk walk via index remapping).
 
-  th = _head_tile(num_heads, max_tile=4)
-  grid = (batch, num_heads // th, num_chunks)
+  Seq-major blocks are only legal at 8-head tiles (4 is not a multiple of
+  8), so the seq-major backward must fit TH=8 in scoped VMEM. It does so by
+  emitting dw/du/dq/dk directly in the primal dtypes (the VJP wrapper cast
+  the former f32 outputs to exactly these dtypes anyway, so the values are
+  bit-identical). Resident blocks at TH=8, C=64, D_k=D_v=128 (the shipped
+  GDN configs), bf16 primals:
+    inputs  w,u,q,k,do (bf16, 128KB each), g (f32 vec, 2KB),
+            h_saved (f32, 512KB), dh_final (f32, 512KB)
+    outputs dw,du,dq,dk (bf16, 128KB each), dg (f32 vec, 2KB),
+            dh0 (f32, 512KB)
+    scratch dh (f32, 512KB)
+  = 14 blocks + scratch, ~2.7MB single-buffered, ~4.8MB with the chunk-
+  stepped blocks double-buffered — comfortably inside scoped VMEM. The
+  vmem_limit_bytes bump below gives Mosaic headroom for its in-kernel f32
+  temporaries (the [TH, C, C] decay/ds tiles and [TH, C, D] upcasts),
+  which the block count above does not capture.
+  """
+  d_v = u.shape[-1]
+  th = _head_tile(q.shape[2], max_tile=4) if head_first else _SEQ_MAJOR_HEAD_TILE
+  dims, grid, chunk_spec, vec_spec = _scan_layout(q.shape, head_first, th)
+  batch, num_chunks, num_heads, chunk_size, d_k = dims
   # Reverse the chunk dimension: grid step n touches chunk (N-1-n).
-  rev = lambda b, h, n: (b, num_chunks - 1 - n, h, 0, 0)
-  chunk_spec = lambda d: pl.BlockSpec((1, 1, th, chunk_size, d), rev)
-  g_spec = pl.BlockSpec((1, 1, th, chunk_size, 1), rev)
-  state_spec = pl.BlockSpec((1, 1, th, d_k, d_v), rev)
+  state_spec = pl.BlockSpec((1, 1, th, d_k, d_v), lambda b, h, n: (b, num_chunks - 1 - n, h, 0, 0))
   bh_state_spec = pl.BlockSpec((1, th, d_k, d_v), lambda b, h, n: (b, h, 0, 0))
 
   g = g[..., None]
-  kernel = functools.partial(_gdn_scan_bwd_kernel, chunk_size=chunk_size, num_chunks=num_chunks, compute_dtype=compute_dtype)
+  kernel = functools.partial(
+      _gdn_scan_bwd_kernel, chunk_size=chunk_size, num_chunks=num_chunks,
+      compute_dtype=compute_dtype, head_first=head_first,
+  )
+  rev = True
   dw, du, dq, dk, dg, dh0 = pl.pallas_call(
       kernel,
       grid=grid,
-      in_specs=[chunk_spec(d_k), chunk_spec(d_v), chunk_spec(d_k), chunk_spec(d_k), g_spec, state_spec, chunk_spec(d_v), bh_state_spec],
-      out_specs=[chunk_spec(d_k), chunk_spec(d_v), chunk_spec(d_k), chunk_spec(d_k), g_spec, bh_state_spec],
+      in_specs=[chunk_spec(d_k, rev), chunk_spec(d_v, rev), chunk_spec(d_k, rev), chunk_spec(d_k, rev), vec_spec(rev), state_spec, chunk_spec(d_v, rev), bh_state_spec],
+      out_specs=[chunk_spec(d_k, rev), chunk_spec(d_v, rev), chunk_spec(d_k, rev), chunk_spec(d_k, rev), vec_spec(rev), bh_state_spec],
       out_shape=[
-          jax.ShapeDtypeStruct((batch, num_chunks, num_heads, chunk_size, d_k), jnp.float32),
-          jax.ShapeDtypeStruct((batch, num_chunks, num_heads, chunk_size, d_v), jnp.float32),
-          jax.ShapeDtypeStruct((batch, num_chunks, num_heads, chunk_size, d_k), jnp.float32),
-          jax.ShapeDtypeStruct((batch, num_chunks, num_heads, chunk_size, d_k), jnp.float32),
-          jax.ShapeDtypeStruct((batch, num_chunks, num_heads, chunk_size, 1), jnp.float32),
+          jax.ShapeDtypeStruct(w.shape, w.dtype),
+          jax.ShapeDtypeStruct(u.shape, u.dtype),
+          jax.ShapeDtypeStruct(q.shape, q.dtype),
+          jax.ShapeDtypeStruct(k.shape, k.dtype),
+          jax.ShapeDtypeStruct(g.shape, jnp.float32),
           jax.ShapeDtypeStruct((batch, num_heads, d_k, d_v), jnp.float32),
       ],
       scratch_shapes=[pltpu.VMEM((th, d_k, d_v), jnp.float32)],
       compiler_params=pltpu.CompilerParams(
           dimension_semantics=("parallel", "parallel", "arbitrary"),
+          vmem_limit_bytes=64 * 1024 * 1024,
       ),
       interpret=interpret,
       name="gdn_scan_bwd",
@@ -299,8 +383,8 @@ def _bwd_pallas(w, u, q, k, g, h_saved, do, dh_final, *, compute_dtype=jnp.bfloa
   return dw, du, dq, dk, dg[..., 0], dh0
 
 
-@functools.partial(jax.custom_vjp, nondiff_argnums=(6, 7))
-def gdn_inter_chunk_scan(w, u, q, k, g, h0, interpret=False, compute_dtype=jnp.bfloat16):
+@functools.partial(jax.custom_vjp, nondiff_argnums=(6, 7, 8))
+def gdn_inter_chunk_scan(w, u, q, k, g, h0, interpret=False, compute_dtype=jnp.bfloat16, head_first=True):
   """Fused inter-chunk gated-delta-rule scan.
 
   Args:
@@ -310,31 +394,34 @@ def gdn_inter_chunk_scan(w, u, q, k, g, h0, interpret=False, compute_dtype=jnp.b
     h0: initial recurrent state, [B, H, D_k, D_v] (float32).
     interpret: run the Pallas kernels in interpret mode (CPU testing).
     compute_dtype: operand dtype for the MXU matmuls (accumulation is f32).
+    head_first: chunked operands use [B, N, H, C, D] / [B, N, H, C]. With
+      head_first=False they instead use the transpose-free seq-major layout
+      [B, N, C, H, D] / [B, N, C, H] (requires num_heads % 8 == 0).
 
   Returns:
-    (o, h_final): chunk outputs [B, N, H, C, D_v] (float32) and the final
-    recurrent state [B, H, D_k, D_v] (float32).
+    (o, h_final): chunk outputs [B, N, H, C, D_v] ([B, N, C, H, D_v] when
+    seq-major) and the final recurrent state [B, H, D_k, D_v] (float32).
   """
-  o, _, h_final = _fwd_pallas(w, u, q, k, g, h0, compute_dtype=compute_dtype, interpret=interpret)
+  o, _, h_final = _fwd_pallas(w, u, q, k, g, h0, compute_dtype=compute_dtype, head_first=head_first, interpret=interpret)
   return o, h_final
 
 
-def _gdn_scan_vjp_fwd(w, u, q, k, g, h0, interpret, compute_dtype):
-  o, h_saved, h_final = _fwd_pallas(w, u, q, k, g, h0, compute_dtype=compute_dtype, interpret=interpret)
+def _gdn_scan_vjp_fwd(w, u, q, k, g, h0, interpret, compute_dtype, head_first):
+  o, h_saved, h_final = _fwd_pallas(w, u, q, k, g, h0, compute_dtype=compute_dtype, head_first=head_first, interpret=interpret)
   return (o, h_final), (w, u, q, k, g, h_saved)
 
 
-def _gdn_scan_vjp_bwd(interpret, compute_dtype, residuals, cotangents):
+def _gdn_scan_vjp_bwd(interpret, compute_dtype, head_first, residuals, cotangents):
   w, u, q, k, g, h_saved = residuals
   do, dh_final = cotangents
   # The backward kernel seeds the reverse walk with dh_final and emits dh0,
   # so the state chain is differentiated end-to-end inside the kernel.
+  # Gradients are accumulated in float32 inside the kernel and stored in the
+  # primal dtypes, so they come back ready to use as cotangents.
   dw, du, dq, dk, dg, dh0 = _bwd_pallas(
-      w, u, q, k, g, h_saved, do, dh_final, compute_dtype=compute_dtype, interpret=interpret
+      w, u, q, k, g, h_saved, do, dh_final, compute_dtype=compute_dtype, head_first=head_first, interpret=interpret
   )
-  # Gradients are accumulated in float32 inside the kernel; cotangents must
-  # match the primal dtypes (inputs may arrive in bf16).
-  return dw.astype(w.dtype), du.astype(u.dtype), dq.astype(q.dtype), dk.astype(k.dtype), dg.astype(g.dtype), dh0
+  return dw, du, dq, dk, dg.astype(g.dtype), dh0
 
 
 gdn_inter_chunk_scan.defvjp(_gdn_scan_vjp_fwd, _gdn_scan_vjp_bwd)
@@ -467,7 +554,7 @@ invert_unit_lower.defvjp(_invert_vjp_fwd, _invert_vjp_bwd)
 
 
 def _ut_head_tile(num_heads: int, max_tile: int = 4) -> int:
-  """Heads per grid cell for the UT-transform kernels.
+  """Heads per grid cell for the UT-transform kernels (head-first layout).
 
   VMEM arithmetic at the cap (TH=4, worst case C=128, D_k=D_v=256):
   - forward: 4 head-tiled [C, D] blocks (k, v in compute dtype; w, u out)
@@ -479,6 +566,12 @@ def _ut_head_tile(num_heads: int, max_tile: int = 4) -> int:
   Both sit comfortably under the 16MB scoped VMEM limit; 4 is kept
   conservative because the ladder's temporaries are not visible to this
   block-count estimate and Mosaic double-buffers the grid blocks.
+
+  The seq-major layout instead pins TH=8 (TPU tiling; see _SEQ_MAJOR_HEAD_
+  TILE). At the shipped GDN configs (C=64, D_k=D_v=128) the same counts at
+  TH=8 give ~1.5MB of blocks + ~2MB of [TH, C, C] intermediates in the
+  forward and ~3MB + ~2.5MB in the backward (dk/dv/dbeta emitted in the
+  primal dtypes) — still far under the limit.
   """
   for cand in (max_tile, max_tile // 2, 2):
     if 1 < cand <= num_heads and num_heads % cand == 0:
@@ -508,33 +601,33 @@ def _ut_stage2_core(k, v, beta, g, chunk_size, compute_dtype):
 def _gdn_ut_fwd_kernel(
     k_ref, v_ref, beta_ref, g_ref,
     w_ref, u_ref,
-    *, chunk_size: int, compute_dtype: jnp.dtype,
+    *, chunk_size: int, compute_dtype: jnp.dtype, head_first: bool,
 ):
-  k = k_ref[0, 0]  # [TH, C, D_k]
-  v = v_ref[0, 0]  # [TH, C, D_v]
-  beta = beta_ref[0, 0, :, :, 0].astype(jnp.float32)  # [TH, C]
-  g = g_ref[0, 0, :, :, 0].astype(jnp.float32)  # [TH, C]
+  k = _load_chunk(k_ref, head_first)  # [TH, C, D_k]
+  v = _load_chunk(v_ref, head_first)  # [TH, C, D_v]
+  beta = _load_vec(beta_ref, head_first).astype(jnp.float32)  # [TH, C]
+  g = _load_vec(g_ref, head_first).astype(jnp.float32)  # [TH, C]
 
   a, _, _, _, _, _, v_beta, k_beta_g = _ut_stage2_core(k, v, beta, g, chunk_size, compute_dtype)
   # Merged matmul: A @ [k_beta_g | v_beta] doubles the RHS width for the MXU.
   wu = _bdot(a, jnp.concatenate([k_beta_g, v_beta], axis=-1), (2, 1), compute_dtype)
   d_k = k.shape[-1]
-  w_ref[0, 0] = wu[..., :d_k].astype(w_ref.dtype)
-  u_ref[0, 0] = wu[..., d_k:].astype(u_ref.dtype)
+  _store_chunk(w_ref, wu[..., :d_k], head_first)
+  _store_chunk(u_ref, wu[..., d_k:], head_first)
 
 
 def _gdn_ut_bwd_kernel(
     k_ref, v_ref, beta_ref, g_ref, dw_ref, du_ref,
     dk_ref, dv_ref, dbeta_ref, dg_ref,
-    *, chunk_size: int, compute_dtype: jnp.dtype,
+    *, chunk_size: int, compute_dtype: jnp.dtype, head_first: bool,
 ):
   """Recomputes S and A from the primal inputs, then runs the chain rule."""
-  k = k_ref[0, 0].astype(jnp.float32)
-  v = v_ref[0, 0].astype(jnp.float32)
-  beta = beta_ref[0, 0, :, :, 0].astype(jnp.float32)
-  g = g_ref[0, 0, :, :, 0].astype(jnp.float32)
-  dw = dw_ref[0, 0].astype(jnp.float32)
-  du = du_ref[0, 0].astype(jnp.float32)
+  k = _load_chunk(k_ref, head_first).astype(jnp.float32)
+  v = _load_chunk(v_ref, head_first).astype(jnp.float32)
+  beta = _load_vec(beta_ref, head_first).astype(jnp.float32)
+  g = _load_vec(g_ref, head_first).astype(jnp.float32)
+  dw = _load_chunk(dw_ref, head_first).astype(jnp.float32)
+  du = _load_chunk(du_ref, head_first).astype(jnp.float32)
 
   (a, s, decay, mask_strict, exp_g, k_beta, v_beta, k_beta_g) = _ut_stage2_core(
       k, v, beta, g, chunk_size, compute_dtype
@@ -572,36 +665,45 @@ def _gdn_ut_bwd_kernel(
   dbeta = jnp.sum(dk_beta * k, axis=2) + jnp.sum(dv_beta * v, axis=2)
   dv = dv_beta * beta[..., None]
 
-  dk_ref[0, 0] = dk
-  dv_ref[0, 0] = dv
-  dbeta_ref[0, 0, :, :, 0] = dbeta
-  dg_ref[0, 0, :, :, 0] = dg
+  _store_chunk(dk_ref, dk, head_first)
+  _store_chunk(dv_ref, dv, head_first)
+  _store_vec(dbeta_ref, dbeta, head_first)
+  _store_vec(dg_ref, dg, head_first)
 
 
-def _ut_specs(shape_k, shape_v, th):
-  batch, num_chunks, num_heads, chunk_size, d_k = shape_k
+def _ut_specs(shape_k, shape_v, head_first):
+  if head_first:
+    batch, num_chunks, num_heads, chunk_size, d_k = shape_k
+    th = _ut_head_tile(num_heads)
+    block = lambda last: (1, 1, th, chunk_size, last)
+    index = lambda b, h, n: (b, n, h, 0, 0)
+  else:
+    batch, num_chunks, chunk_size, num_heads, d_k = shape_k
+    th = _SEQ_MAJOR_HEAD_TILE
+    assert num_heads % th == 0, "seq-major GDN kernels require num_heads % 8 == 0"
+    block = lambda last: (1, 1, chunk_size, th, last)
+    index = lambda b, h, n: (b, n, 0, h, 0)
   d_v = shape_v[-1]
   grid = (batch, num_heads // th, num_chunks)
-  chunk_spec = lambda d: pl.BlockSpec((1, 1, th, chunk_size, d), lambda b, h, n: (b, n, h, 0, 0))
+  chunk_spec = lambda d: pl.BlockSpec(block(d), index)
   # TPU block tiling requires the last two dims to be (8k, 128k) or equal to
   # the array dims; per-chunk vectors ride along with a trailing singleton.
-  vec_spec = pl.BlockSpec((1, 1, th, chunk_size, 1), lambda b, h, n: (b, n, h, 0, 0))
+  vec_spec = pl.BlockSpec(block(1), index)
   return grid, chunk_spec, vec_spec, d_k, d_v
 
 
-def _ut_fwd_pallas(k, v, beta, g, *, compute_dtype=jnp.bfloat16, interpret=False):
-  batch, num_chunks, num_heads, chunk_size, _ = k.shape
-  th = _ut_head_tile(num_heads)
-  grid, chunk_spec, vec_spec, d_k, d_v = _ut_specs(k.shape, v.shape, th)
-  kernel = functools.partial(_gdn_ut_fwd_kernel, chunk_size=chunk_size, compute_dtype=compute_dtype)
+def _ut_fwd_pallas(k, v, beta, g, *, compute_dtype=jnp.bfloat16, head_first=True, interpret=False):
+  chunk_size = k.shape[3] if head_first else k.shape[2]
+  grid, chunk_spec, vec_spec, d_k, d_v = _ut_specs(k.shape, v.shape, head_first)
+  kernel = functools.partial(_gdn_ut_fwd_kernel, chunk_size=chunk_size, compute_dtype=compute_dtype, head_first=head_first)
   return pl.pallas_call(
       kernel,
       grid=grid,
       in_specs=[chunk_spec(d_k), chunk_spec(d_v), vec_spec, vec_spec],
       out_specs=[chunk_spec(d_k), chunk_spec(d_v)],
       out_shape=[
-          jax.ShapeDtypeStruct((batch, num_chunks, num_heads, chunk_size, d_k), compute_dtype),
-          jax.ShapeDtypeStruct((batch, num_chunks, num_heads, chunk_size, d_v), compute_dtype),
+          jax.ShapeDtypeStruct(k.shape, compute_dtype),
+          jax.ShapeDtypeStruct(v.shape, compute_dtype),
       ],
       compiler_params=pltpu.CompilerParams(
           dimension_semantics=("parallel", "parallel", "parallel"),
@@ -611,21 +713,23 @@ def _ut_fwd_pallas(k, v, beta, g, *, compute_dtype=jnp.bfloat16, interpret=False
   )(k, v, beta[..., None], g[..., None])
 
 
-def _ut_bwd_pallas(k, v, beta, g, dw, du, *, compute_dtype=jnp.bfloat16, interpret=False):
-  batch, num_chunks, num_heads, chunk_size, _ = k.shape
-  th = _ut_head_tile(num_heads)
-  grid, chunk_spec, vec_spec, d_k, d_v = _ut_specs(k.shape, v.shape, th)
-  kernel = functools.partial(_gdn_ut_bwd_kernel, chunk_size=chunk_size, compute_dtype=compute_dtype)
+def _ut_bwd_pallas(k, v, beta, g, dw, du, *, compute_dtype=jnp.bfloat16, head_first=True, interpret=False):
+  chunk_size = k.shape[3] if head_first else k.shape[2]
+  grid, chunk_spec, vec_spec, d_k, d_v = _ut_specs(k.shape, v.shape, head_first)
+  kernel = functools.partial(_gdn_ut_bwd_kernel, chunk_size=chunk_size, compute_dtype=compute_dtype, head_first=head_first)
+  # Gradients are accumulated in f32 in-kernel and stored in the primal
+  # dtypes (identical to the former post-kernel casts, at half the VMEM
+  # and HBM for the bf16 primals); dg stays f32 like g.
   dk, dv, dbeta, dg = pl.pallas_call(
       kernel,
       grid=grid,
       in_specs=[chunk_spec(d_k), chunk_spec(d_v), vec_spec, vec_spec, chunk_spec(d_k), chunk_spec(d_v)],
       out_specs=[chunk_spec(d_k), chunk_spec(d_v), vec_spec, vec_spec],
       out_shape=[
-          jax.ShapeDtypeStruct((batch, num_chunks, num_heads, chunk_size, d_k), jnp.float32),
-          jax.ShapeDtypeStruct((batch, num_chunks, num_heads, chunk_size, d_v), jnp.float32),
-          jax.ShapeDtypeStruct((batch, num_chunks, num_heads, chunk_size, 1), jnp.float32),
-          jax.ShapeDtypeStruct((batch, num_chunks, num_heads, chunk_size, 1), jnp.float32),
+          jax.ShapeDtypeStruct(k.shape, k.dtype),
+          jax.ShapeDtypeStruct(v.shape, v.dtype),
+          jax.ShapeDtypeStruct(beta[..., None].shape, beta.dtype),
+          jax.ShapeDtypeStruct(g[..., None].shape, jnp.float32),
       ],
       compiler_params=pltpu.CompilerParams(
           dimension_semantics=("parallel", "parallel", "parallel"),
@@ -636,8 +740,8 @@ def _ut_bwd_pallas(k, v, beta, g, dw, du, *, compute_dtype=jnp.bfloat16, interpr
   return dk, dv, dbeta[..., 0], dg[..., 0]
 
 
-@functools.partial(jax.custom_vjp, nondiff_argnums=(4, 5))
-def gdn_ut_transform(k, v, beta, g, interpret=False, compute_dtype=jnp.bfloat16):
+@functools.partial(jax.custom_vjp, nondiff_argnums=(4, 5, 6))
+def gdn_ut_transform(k, v, beta, g, interpret=False, compute_dtype=jnp.bfloat16, head_first=True):
   """Fused UT transform: WY factors (w, u) from the chunked GDN inputs.
 
   Computes, per (batch, chunk, head):
@@ -655,29 +759,32 @@ def gdn_ut_transform(k, v, beta, g, interpret=False, compute_dtype=jnp.bfloat16)
     interpret: run the Pallas kernels in interpret mode (CPU testing).
     compute_dtype: operand dtype for the MXU matmuls (accumulation is f32;
       the inversion ladder always runs f32-grade via bf16x3).
+    head_first: chunked operands use [B, N, H, C, D] / [B, N, H, C]. With
+      head_first=False they instead use the transpose-free seq-major layout
+      [B, N, C, H, D] / [B, N, C, H] (requires num_heads % 8 == 0).
 
   Returns:
-    (w, u): [B, N, H, C, D_k] / [B, N, H, C, D_v] in compute_dtype.
+    (w, u): shaped like k / v, in compute_dtype.
   """
-  return _ut_fwd_pallas(k, v, beta, g, compute_dtype=compute_dtype, interpret=interpret)
+  return _ut_fwd_pallas(k, v, beta, g, compute_dtype=compute_dtype, head_first=head_first, interpret=interpret)
 
 
-def _gdn_ut_vjp_fwd(k, v, beta, g, interpret, compute_dtype):
-  w, u = _ut_fwd_pallas(k, v, beta, g, compute_dtype=compute_dtype, interpret=interpret)
+def _gdn_ut_vjp_fwd(k, v, beta, g, interpret, compute_dtype, head_first):
+  w, u = _ut_fwd_pallas(k, v, beta, g, compute_dtype=compute_dtype, head_first=head_first, interpret=interpret)
   # Residuals are just the (small) primal inputs: the backward kernel
   # recomputes S and A in VMEM instead of saving [C, C] tensors.
   return (w, u), (k, v, beta, g)
 
 
-def _gdn_ut_vjp_bwd(interpret, compute_dtype, residuals, cotangents):
+def _gdn_ut_vjp_bwd(interpret, compute_dtype, head_first, residuals, cotangents):
   k, v, beta, g = residuals
   dw, du = cotangents
+  # Gradients are accumulated in float32 inside the kernel and stored in
+  # the primal dtypes, so they come back ready to use as cotangents.
   dk, dv, dbeta, dg = _ut_bwd_pallas(
-      k, v, beta, g, dw, du, compute_dtype=compute_dtype, interpret=interpret
+      k, v, beta, g, dw, du, compute_dtype=compute_dtype, head_first=head_first, interpret=interpret
   )
-  # Gradients are accumulated in float32 inside the kernel; cotangents must
-  # match the primal dtypes (inputs may arrive in bf16).
-  return dk.astype(k.dtype), dv.astype(v.dtype), dbeta.astype(beta.dtype), dg.astype(g.dtype)
+  return dk, dv, dbeta, dg.astype(g.dtype)
 
 
 gdn_ut_transform.defvjp(_gdn_ut_vjp_fwd, _gdn_ut_vjp_bwd)
