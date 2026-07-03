@@ -297,8 +297,8 @@ def jax_chunk_gated_delta_rule(
 
     interpret = jax.default_backend() != "tpu"
 
-    def _call_kernel(w_, u_, q_, k_, g_):
-      return gdn_inter_chunk_scan(w_, u_, q_, k_, g_, interpret, compute_dtype)
+    def _call_kernel(w_, u_, q_, k_, g_, h0_):
+      return gdn_inter_chunk_scan(w_, u_, q_, k_, g_, h0_, interpret, compute_dtype)
 
     if mesh is not None:
       batch_axes = nn.logical_to_mesh_axes(("activation_batch",))[0]
@@ -307,7 +307,7 @@ def jax_chunk_gated_delta_rule(
       _call_kernel = jax.shard_map(
           _call_kernel,
           mesh=mesh,
-          in_specs=(spec5, spec5, spec5, spec5, spec4),
+          in_specs=(spec5, spec5, spec5, spec5, spec4, spec4),
           out_specs=(spec5, spec4),
           check_vma=False,
       )
@@ -318,6 +318,7 @@ def jax_chunk_gated_delta_rule(
         q_c.astype(jnp.float32),
         k_c.astype(jnp.float32),
         g_cumsum.astype(jnp.float32),
+        jnp.zeros((B, H, K_dim, V_dim), dtype=jnp.float32),
     )
     o = o_pallas.transpose(0, 1, 3, 2, 4).reshape(B, -1, H, V_dim)
     if pad_len > 0:
