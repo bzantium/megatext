@@ -2188,6 +2188,12 @@ class MegaTextConfig(
             f"Engram vocab size mismatch: expected {self.engram_max_ngram_size - 1} (max_ngram_size - 1), "
             f"but got {self.engram_vocab_bases}."
         )
+    if self.decoder_block == DecoderBlockType.QWEN3_NEXT and self.num_experts == 1:
+      # Dense qwen3-next: the FFN block (routed + shared expert) reads
+      # moe_mlp_dim even in the single-expert case; mirror the dense mlp_dim
+      # so dense configs only need base_mlp_dim.
+      self.base_moe_mlp_dim = self.base_mlp_dim
+      self.moe_mlp_dim = self.mlp_dim
     if self.num_experts > 1:
       is_fully_moe = (
           self.interleave_moe_layer_step == 1
