@@ -256,13 +256,29 @@ def _apply_config_overrides(job: dict, overrides: list[str] | None) -> dict:
 
 
 
-def _submit_autotune_workload(args, infra: dict, job: dict, workload_name: str) -> None:
-    if args.force:
+def _build_job_command(infra: dict, job: dict, python_cmd: str) -> str:
+    """Assemble the workload bash command: preflight, optional gcsfuse mount, then the trainer."""
+    parts = ["set -euo pipefail", "bash gke/setup/preflight.sh"]
+    if job.get("bucket"):
+        parts.append(f"bash gke/setup/setup_gcsfuse.sh BUCKET={job['bucket']} MOUNT_PATH={job['mount_path']}")
+    parts.append(python_cmd)
+    return _wrap_with_libtpu(infra["tpu_type"], " && ".join(parts), job.get("libtpu_extra_args", ""))
+
+
+def _submit_workload(args, infra: dict, workload_name: str, command: str) -> None:
+    """Force-delete (if requested) then submit an xpk workload with the shared infra kwargs."""
+    if getattr(args, "force", False):
         _force_delete(project=infra["project"], zone=infra["zone"],
                       cluster=infra["cluster"], workload_name=workload_name, dry_run=args.dry_run)
+    _xpk_submit(
+        project=infra["project"], zone=infra["zone"], cluster=infra["cluster"],
+        workload_name=workload_name, image=infra["image"], tpu_type=infra["tpu_type"],
+        num_slices=args.num_slices, priority=infra["priority"],
+        project_number=infra["project_number"], command=command, dry_run=args.dry_run,
+    )
 
-    parts = ["set -euo pipefail", "bash gke/setup/preflight.sh"]
 
+def _submit_autotune_workload(args, infra: dict, job: dict, workload_name: str) -> None:
     autotune_flags = [
         "--scope", args.scope,
         "--max-batch-size", str(args.max_batch_size),
@@ -274,19 +290,13 @@ def _submit_autotune_workload(args, infra: dict, job: dict, workload_name: str) 
     if args.refine_sa_backward:
         autotune_flags.append("--refine-sa-backward")
 
-    parts.append(
+    command = _build_job_command(
+        infra, job,
         "python -m megatext.autotune.search "
         + " ".join(_config_to_args(job["config"]))
-        + " " + " ".join(autotune_flags)
+        + " " + " ".join(autotune_flags),
     )
-    command = _wrap_with_libtpu(infra["tpu_type"], " && ".join(parts), job.get("libtpu_extra_args", ""))
-
-    _xpk_submit(
-        project=infra["project"], zone=infra["zone"], cluster=infra["cluster"],
-        workload_name=workload_name, image=infra["image"], tpu_type=infra["tpu_type"],
-        num_slices=args.num_slices, priority=infra["priority"],
-        project_number=infra["project_number"], command=command, dry_run=args.dry_run,
-    )
+    _submit_workload(args, infra, workload_name, command)
 
 # ── Subcommand: pretrain ─────────────────────────────────────────────────────
 
@@ -308,23 +318,10 @@ def cmd_pretrain(args) -> None:
 
     if args.build:
         _docker_build(infra["image"], args.dockerfile, args.dry_run)
-    if args.force:
-        _force_delete(project=infra["project"], zone=infra["zone"],
-                      cluster=infra["cluster"], workload_name=workload_name, dry_run=args.dry_run)
 
-    # Build bash command
-    parts = ["set -euo pipefail", "bash gke/setup/preflight.sh"]
-    if job.get("bucket"):
-        parts.append(f"bash gke/setup/setup_gcsfuse.sh BUCKET={job['bucket']} MOUNT_PATH={job['mount_path']}")
-    parts.append("python -m megatext.trainers.pretrain " + " ".join(_config_to_args(job["config"])))
-    command = _wrap_with_libtpu(infra["tpu_type"], " && ".join(parts), job.get("libtpu_extra_args", ""))
-
-    _xpk_submit(
-        project=infra["project"], zone=infra["zone"], cluster=infra["cluster"],
-        workload_name=workload_name, image=infra["image"], tpu_type=infra["tpu_type"],
-        num_slices=args.num_slices, priority=infra["priority"],
-        project_number=infra["project_number"], command=command, dry_run=args.dry_run,
-    )
+    command = _build_job_command(
+        infra, job, "python -m megatext.trainers.pretrain " + " ".join(_config_to_args(job["config"])))
+    _submit_workload(args, infra, workload_name, command)
 
 
 def cmd_profile(args) -> None:
@@ -344,22 +341,10 @@ def cmd_profile(args) -> None:
 
     if args.build:
         _docker_build(infra["image"], args.dockerfile, args.dry_run)
-    if args.force:
-        _force_delete(project=infra["project"], zone=infra["zone"],
-                      cluster=infra["cluster"], workload_name=workload_name, dry_run=args.dry_run)
 
-    parts = ["set -euo pipefail", "bash gke/setup/preflight.sh"]
-    if job.get("bucket"):
-        parts.append(f"bash gke/setup/setup_gcsfuse.sh BUCKET={job['bucket']} MOUNT_PATH={job['mount_path']}")
-    parts.append("python -m megatext.trainers.profile " + " ".join(_config_to_args(job["config"])))
-    command = _wrap_with_libtpu(infra["tpu_type"], " && ".join(parts), job.get("libtpu_extra_args", ""))
-
-    _xpk_submit(
-        project=infra["project"], zone=infra["zone"], cluster=infra["cluster"],
-        workload_name=workload_name, image=infra["image"], tpu_type=infra["tpu_type"],
-        num_slices=args.num_slices, priority=infra["priority"],
-        project_number=infra["project_number"], command=command, dry_run=args.dry_run,
-    )
+    command = _build_job_command(
+        infra, job, "python -m megatext.trainers.profile " + " ".join(_config_to_args(job["config"])))
+    _submit_workload(args, infra, workload_name, command)
 
 
 # ── Subcommand: autotune ────────────────────────────────────────────────────
@@ -387,18 +372,9 @@ def cmd_run(args) -> None:
 
     if args.build:
         _docker_build(infra["image"], args.dockerfile, args.dry_run)
-    if args.force:
-        _force_delete(project=infra["project"], zone=infra["zone"],
-                      cluster=infra["cluster"], workload_name=workload_name, dry_run=args.dry_run)
 
     command = _wrap_with_libtpu(infra["tpu_type"], f"bash {args.job}")
-
-    _xpk_submit(
-        project=infra["project"], zone=infra["zone"], cluster=infra["cluster"],
-        workload_name=workload_name, image=infra["image"], tpu_type=infra["tpu_type"],
-        num_slices=args.num_slices, priority=infra["priority"],
-        project_number=infra["project_number"], command=command, dry_run=args.dry_run,
-    )
+    _submit_workload(args, infra, workload_name, command)
 
 
 # ── Subcommand: delete ──────────────────────────────────────────────────────
