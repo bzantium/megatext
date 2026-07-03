@@ -48,14 +48,6 @@ config:
   wsd_decay_steps: 24000
   final_learning_rate: 1e-4
   remat_policy: save_dot_except_mlpwi
-  sa_block_q: 1024
-  sa_block_kv: 1024
-  sa_block_kv_compute: 1024
-  sa_block_q_dkv: 1024
-  sa_block_kv_dkv: 1024
-  sa_block_kv_dkv_compute: 1024
-  sa_block_q_dq: 1024
-  sa_block_kv_dq: 1024
   gdn_chunk_size: 128
   dtype: bfloat16
   weight_dtype: bfloat16
