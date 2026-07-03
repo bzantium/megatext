@@ -178,37 +178,6 @@ def naive_jax_chunk_gated_delta_rule(
   return core_attn_out, final_state if output_final_state else None
 
 
-def _invert_unit_lower_triangular(s: Array, base_block: int = 16) -> Array:
-  """Inverts (I + s) for strictly lower-triangular s via blockwise recursion.
-
-  Args:
-    s: [..., C, C] strictly lower-triangular blocks (float32).
-    base_block: size at which to switch to the exact Neumann series.
-
-  Returns:
-    (I + s)^{-1} with the same shape, float32.
-  """
-  size = s.shape[-1]
-  prec = jax.lax.Precision.HIGHEST
-  if size <= base_block:
-    # Exact Neumann series in Horner form: (I + s)^{-1} = I - s(I - s(I - ...)).
-    identity = jnp.eye(size, dtype=jnp.float32)
-    x = identity
-    for _ in range(size - 1):
-      x = identity - jnp.matmul(s, x, precision=prec)
-    return x
-  half = size // 2
-  a = s[..., :half, :half]
-  c = s[..., half:, :half]
-  b = s[..., half:, half:]
-  a_inv = _invert_unit_lower_triangular(a, base_block)
-  b_inv = _invert_unit_lower_triangular(b, base_block)
-  off = -jnp.matmul(b_inv, jnp.matmul(c, a_inv, precision=prec), precision=prec)
-  top = jnp.concatenate([a_inv, jnp.zeros_like(off.swapaxes(-1, -2))], axis=-1)
-  bottom = jnp.concatenate([off, b_inv], axis=-1)
-  return jnp.concatenate([top, bottom], axis=-2)
-
-
 def jax_chunk_gated_delta_rule(
     query: Array,
     key: Array,
@@ -296,16 +265,11 @@ def jax_chunk_gated_delta_rule(
   S = S * jnp.exp(g_diff)
   S = jnp.where(mask, S, 0.0)
 
-  # Inversion (A) — hierarchical blockwise inversion instead of
-  # solve_triangular, which lowers to a row-sequential loop on TPU and
-  # measures ~19% of total device time. 16x16 diagonal blocks are inverted
-  # exactly with a Horner-form Neumann series (nilpotent: S16^16 = 0, path
-  # counts stay far below float32 range), then combined hierarchically via
-  # [[A,0],[C,B]]^-1 = [[A^-1,0],[-B^-1 C A^-1, B^-1]]. Every intermediate is
-  # a sub-block of the true inverse (bounded like solve_triangular's output),
-  # unlike truncated Newton iterates which overflow for C=128. All batched
-  # matmuls; kept strictly float32.
-  A = _invert_unit_lower_triangular(S)
+  # Inversion (A) - Strictly float32
+  identity = jnp.eye(chunk_size, dtype=jnp.float32)
+  identity_broadcasted = jnp.broadcast_to(identity, S.shape)
+
+  A = jax.scipy.linalg.solve_triangular(identity + S, identity_broadcasted, lower=True, unit_diagonal=True)
 
   # 5. WY Factors — the triangular inverse A stays float32; matmul operands are
   # downcast to compute_dtype with float32 accumulation (MXU fast path).
