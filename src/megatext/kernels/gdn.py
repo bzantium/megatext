@@ -719,3 +719,57 @@ def _gdn_fused_vjp_bwd(interpret, compute_dtype, residuals, cotangents):
 
 
 gdn_chunked_delta.defvjp(_gdn_fused_vjp_fwd, _gdn_fused_vjp_bwd)
+
+
+def gdn_inter_chunk_assoc_scan(w, u, q, k, g, compute_dtype=jnp.bfloat16):
+  """Inter-chunk recurrence via associative scan (matrix-coefficient form).
+
+  Expands v_new's dependence on the running state into an affine recurrence
+  h_{n+1} = M_n h_n + b_n with M_n = gamma_n I - K_n^T w_n, then resolves all
+  chunk states in log2(N) rounds of (batch, head)-batched matmuls. Trades
+  ~3-4x extra FLOPs in the recurrence for full parallelism.
+  """
+  batch, num_chunks, num_heads, chunk_size, d_k = q.shape
+  d_v = u.shape[-1]
+
+  def mxu(a, b):
+    return jnp.einsum(
+        "...ij,...jk->...ik", a.astype(compute_dtype), b.astype(compute_dtype),
+        preferred_element_type=jnp.float32,
+    )
+
+  exp_g = jnp.exp(g)
+  g_last = g[..., -1]
+  gamma = jnp.exp(g_last)                                  # [B,N,H]
+  dvec = jnp.exp(g_last[..., None] - g)                    # [B,N,H,C]
+  kd = k * dvec[..., None]                                 # [B,N,H,C,Dk]
+
+  # M_n = gamma I - kd^T @ w   [B,N,H,Dk,Dk];  b_n = kd^T @ u
+  eye = jnp.eye(d_k, dtype=jnp.float32)
+  m_mat = gamma[..., None, None] * eye - mxu(kd.swapaxes(-1, -2), w)
+  b_vec = mxu(kd.swapaxes(-1, -2), u)                      # [B,N,H,Dk,Dv]
+
+  def combine(left, right):
+    m1, b1 = left
+    m2, b2 = right
+    return mxu(m2, m1), mxu(m2, b1) + b2
+
+  m_pref, b_pref = jax.lax.associative_scan(combine, (m_mat, b_vec), axis=1)
+  # h at the INPUT of chunk n = prefix over chunks < n: shift right by one.
+  h_states = jnp.concatenate(
+      [jnp.zeros_like(b_pref[:, :1]), b_pref[:, :-1]], axis=1
+  )                                                        # [B,N,H,Dk,Dv]
+
+  # Output path per chunk (fully parallel given h_states).
+  q_g = q * exp_g[..., None]
+  attn_inter = mxu(q_g, h_states)
+  v_new = u - mxu(w, h_states)
+  rows = jax.lax.broadcasted_iota(jnp.int32, (chunk_size, chunk_size), 0)
+  cols = jax.lax.broadcasted_iota(jnp.int32, (chunk_size, chunk_size), 1)
+  mask_incl = rows >= cols
+  g_diff = g[..., :, None] - g[..., None, :]
+  decay_incl = jnp.where(mask_incl, jnp.exp(jnp.where(mask_incl, g_diff, 0.0)), 0.0)
+  attn = mxu(q, k.swapaxes(-1, -2)) * decay_incl
+  o = attn_inter + mxu(attn, v_new)
+  h_final = b_pref[:, -1]
+  return o, h_final

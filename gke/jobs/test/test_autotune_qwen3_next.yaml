@@ -3,7 +3,6 @@ workload_name: autotune-qwen3-next
 bucket: lmt-tpu-datasets
 mount_path: /mnt/bucket
 
-libtpu_extra_args: "--xla_tpu_enable_latency_hiding_scheduler=false"
 
 config:
   model: qwen3-next
