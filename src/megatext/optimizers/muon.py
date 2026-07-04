@@ -75,7 +75,7 @@ def orthogonalize_via_newton_schulz(
             x = jax.lax.fori_loop(
                 0, ns_steps,
                 lambda i, x: _ns_iterator(i, x, ns_coeffs_),
-                x, unroll=True,
+                x, unroll=False,
             )
         else:
             def _scan_body(carry, coeffs_step):
