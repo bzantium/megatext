@@ -87,6 +87,7 @@ def get_optimizer(config, learning_rate_schedule, model=None):
           megatext_muon.scale_by_muon_batched,
           mesh=model.mesh if model is not None else None,
           ns_compute_dtype=getattr(config, "muon_ns_compute_dtype", "") or None,
+          batch_reshard=getattr(config, "muon_ns_batch_reshard", False),
       )
     else:
       _muon.scale_by_muon = megatext_muon.OPTAX_SCALE_BY_MUON

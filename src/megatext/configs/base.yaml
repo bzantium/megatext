@@ -774,6 +774,7 @@ muon_beta: 0.95 # Decay rate for the exponentially weighted average of grads.
 muon_weight_decay: 0 # Strength of the weight decay regularization. This is multiplied with the learning rate.
 muon_consistent_rms: null # If null, apply width scaling to updates. If float, apply consistent rms scaling (recommend 0.2).
 muon_batched_ns: True # Bucket Muon params by reshaped matrix shape and run one batched Newton-Schulz per bucket (speed only; math-identical to per-param NS).
+muon_ns_batch_reshard: False # Reshard stacked NS buckets onto their batch axis for collective-free NS matmuls (layout only). Off by default: the post-backward layout change can stop XLA overlapping the cross-slice (DCN) grad all-reduce with backward compute on multi-slice runs.
 muon_ns_compute_dtype: "" # If set (e.g. "bfloat16"), run Newton-Schulz in this dtype like Keller Jordan's original. CHANGES NUMERICS vs the f32 baseline; leave empty for baseline-comparable runs.
 
 # Stack trace parameters

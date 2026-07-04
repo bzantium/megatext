@@ -15,11 +15,27 @@ Two pieces:
    sequential per-leaf NS chains into ~15 fused batched ones, letting XLA
    overlap the small matmuls and issue far fewer collectives.
 
-   Optionally (when a ``mesh`` is provided), each stacked bucket is
-   resharded ONCE onto the leading batch axis across the mesh so that every
-   NS iteration's gram matmuls run fully locally on each device (no
-   per-iteration collectives under FSDP); the result is resharded back by
-   the consumer. This changes layout only, not math.
+   Optionally (when a ``mesh`` is provided and ``batch_reshard=True``), each
+   stacked bucket is resharded ONCE onto the leading batch axis across the
+   mesh so that every NS iteration's gram matmuls run fully locally on each
+   device (no per-iteration collectives under FSDP); the result is resharded
+   back by the consumer. This changes layout only, not math.
+
+   ``batch_reshard`` defaults to OFF: the layout change right after the
+   backward pass gives XLA's SPMD partitioner a second sharding "opinion" on
+   gradient-derived tensors and inserts resharding collectives between the
+   gradient all-reduce and its consumers, which can defeat the TPU
+   data-parallel all-reduce optimization (LIBTPU
+   xla_tpu_enable_data_parallel_all_reduce_opt) that overlaps the cross-slice
+   (DCN) gradient reduce with backward compute on multi-slice runs. With it
+   off, the NS matmuls simply run on whatever sharding the momentum tensors
+   already have (per-iteration ICI collectives, like the pre-bucketed code).
+
+   In BOTH modes, the nesterov momentum tensors feeding NS are pinned to the
+   momentum state's own sharding (``jax.experimental.shard_alike``) before any
+   reshape/concat, so the bucketing machinery can never back-propagate a
+   different layout into the gradient all-reduce -> elementwise-update chain
+   that XLA pattern-matches for DP overlap.
 
 The per-matrix math is byte-for-byte the same computation as optax's
 implementation (same frobenius preconditioning, same NS-5 iteration, same
@@ -33,6 +49,7 @@ from typing import Literal
 
 import jax
 import jax.numpy as jnp
+from jax.experimental.shard_alike import shard_alike
 
 import optax.tree
 from optax._src import base
@@ -170,6 +187,30 @@ def _ns_batch_sharding(mesh) -> jax.sharding.NamedSharding | None:
     return jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec(axes))
 
 
+def _pin_tree_sharding(x_tree, anchor_tree):
+    """Pin every array leaf of `x_tree` to the sharding of `anchor_tree`.
+
+    Identity on values (shard_alike only adds sharding annotations). Used to
+    anchor the nesterov momentum tensors feeding Newton-Schulz to the momentum
+    state's fixed (params-like) sharding, so that whatever layout the NS
+    bucketing downstream prefers cannot back-propagate through the elementwise
+    momentum/nesterov ops into the gradient all-reduce's consumer chain.
+    Returns the pinned (x_tree, anchor_tree) pair; use BOTH returned trees.
+    """
+    xs, tdef = jax.tree.flatten(x_tree)
+    anchors = tdef.flatten_up_to(anchor_tree)
+    out_x, out_a = [], []
+    for x, a in zip(xs, anchors):
+        if (
+            hasattr(x, "shape") and hasattr(a, "shape")
+            and getattr(x, "shape", None) == getattr(a, "shape", None)
+        ):
+            x, a = shard_alike(x, a)
+        out_x.append(x)
+        out_a.append(a)
+    return jax.tree.unflatten(tdef, out_x), jax.tree.unflatten(tdef, out_a)
+
+
 def _orthogonalize_tree_batched(
     mu_hat,
     dim_nums_tree,
@@ -179,6 +220,7 @@ def _orthogonalize_tree_batched(
     eps: jax.typing.ArrayLike,
     mesh=None,
     ns_compute_dtype=None,
+    batch_reshard: bool = False,
 ):
     """Shape-bucketed batched Newton-Schulz over a whole parameter tree.
 
@@ -202,7 +244,7 @@ def _orthogonalize_tree_batched(
         _collect, mu_hat, dim_nums_tree, is_leaf=_is_weight_dim_nums
     )
 
-    sharding = _ns_batch_sharding(mesh)
+    sharding = _ns_batch_sharding(mesh) if batch_reshard else None
 
     # Bucket leaves by their post-transpose 2D matrix shape (and dtype).
     buckets: dict = {}  # key -> list of (B_i, rows, cols) arrays
@@ -272,6 +314,7 @@ def scale_by_muon_batched(
     weight_dimension_numbers=None,
     mesh=None,
     ns_compute_dtype=None,
+    batch_reshard: bool = False,
 ) -> base.GradientTransformation:
     """`optax.contrib._muon.scale_by_muon` with shape-bucketed batched NS.
 
@@ -280,10 +323,16 @@ def scale_by_muon_batched(
     `_orthogonalize_tree_batched` (same math, fused execution).
 
     Extra args vs optax:
-      mesh: optional `jax.sharding.Mesh`; if given, stacked NS buckets are
-        resharded once onto their batch axis so NS matmuls are local.
+      mesh: optional `jax.sharding.Mesh`; if given, the nesterov momentum
+        tensors feeding NS are pinned to the momentum state's sharding
+        (identity on values) so NS layout choices cannot back-propagate into
+        the gradient all-reduce's consumer chain.
       ns_compute_dtype: optional dtype (e.g. jnp.bfloat16) to run NS in.
         None keeps the update dtype (matches baseline numerics).
+      batch_reshard: if True (and mesh given), reshard each stacked NS bucket
+        onto its batch axis so NS matmuls are collective-free. Off by
+        default; see module docstring (can defeat the multi-slice DCN
+        gradient all-reduce/backward overlap).
     """
     mu_dtype = utils.canonicalize_dtype(mu_dtype)
 
@@ -321,6 +370,14 @@ def scale_by_muon_batched(
         else:
             mu_hat = optax.tree.bias_correction(mu, beta, count_inc)
 
+        if mesh is not None:
+            # Anchor the NS inputs to the momentum state's (params-like)
+            # sharding so the bucketed reshape/concat below cannot
+            # back-propagate a different layout onto gradient-derived
+            # tensors (which would break XLA's data-parallel all-reduce
+            # overlap pattern on multi-slice runs). Value identity.
+            mu_hat, mu = _pin_tree_sharding(mu_hat, mu)
+
         # Apply Newton-Schulz orthogonalization (bucketed + batched).
         new_updates = _orthogonalize_tree_batched(
             mu_hat,
@@ -331,6 +388,7 @@ def scale_by_muon_batched(
             eps,
             mesh=mesh,
             ns_compute_dtype=ns_compute_dtype,
+            batch_reshard=batch_reshard,
         )
         if adaptive:
             # Scale the orthogonalized updates by the dual norm of the

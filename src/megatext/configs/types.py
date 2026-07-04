@@ -1141,6 +1141,16 @@ class Muon(BaseModel):
           "(speed only; math-identical to per-param NS)."
       ),
   )
+  muon_ns_batch_reshard: bool = Field(
+      False,
+      description=(
+          "With muon_batched_ns: reshard each stacked Newton-Schulz bucket onto its batch axis so NS "
+          "matmuls run collective-free (layout only; math-identical). Off by default: the layout change "
+          "on gradient-derived tensors right after backward can stop XLA from overlapping the cross-slice "
+          "(DCN) gradient all-reduce with backward compute on multi-slice runs, serializing the reduce at "
+          "the end of the step."
+      ),
+  )
   muon_ns_compute_dtype: str = Field(
       "",
       description=(
