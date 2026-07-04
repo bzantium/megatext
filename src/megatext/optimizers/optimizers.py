@@ -89,7 +89,8 @@ def get_optimizer(config, learning_rate_schedule, model=None):
         "learning_rate": learning_rate_schedule,
         "eps": config.adam_eps,
         "mu_dtype": config.mu_dtype,
-        # Muon-specific parameters: "ns_coeffs", "ns_steps", "weight_decay_mask", "adaptive" uses default
+        # Muon-specific parameters: "ns_coeffs", "weight_decay_mask", "adaptive" uses default
+        "ns_steps": config.muon_ns_steps,
         "beta": config.muon_beta,
         "weight_decay": config.muon_weight_decay,
         "muon_weight_dimension_numbers": muon_weight_dimension_numbers,
