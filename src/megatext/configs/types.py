@@ -1138,6 +1138,23 @@ class Muon(BaseModel):
       5,
       description="Number of Newton-Schulz iterations for orthogonalization. 5 matches the optax/Keller Jordan default.",
   )
+  muon_batched_ns: bool = Field(
+      True,
+      description=(
+          "Bucket Muon params by reshaped matrix shape and run one batched Newton-Schulz per bucket "
+          "instead of one per leaf (same math). False falls back to optax's per-leaf scale_by_muon."
+      ),
+  )
+  muon_ns_batch_reshard: bool = Field(
+      False,
+      description=(
+          "With muon_batched_ns: reshard each stacked Newton-Schulz bucket onto its batch axis so the "
+          "gram matmuls run collective-free (layout only; math-identical). Big speedup on 1 slice (the "
+          "NS reduction axis is otherwise FSDP-sharded -> per-iteration all-gather). Off by default: on "
+          ">1 slice the in-update reshard can break the DCN grad-all-reduce/backward overlap until that "
+          "reshard is isolated (optimization_barrier/shard_map)."
+      ),
+  )
 
 
 class PositionalEmbedding(BaseModel):
