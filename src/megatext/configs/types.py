@@ -1134,6 +1134,20 @@ class Muon(BaseModel):
       None,
       description="If None, apply width scaling to updates. If float, apply consistent rms scaling (recommend 0.2).",
   )
+  muon_batched_ns: bool = Field(
+      True,
+      description=(
+          "Bucket Muon params by reshaped matrix shape and run one batched Newton-Schulz per bucket "
+          "(speed only; math-identical to per-param NS)."
+      ),
+  )
+  muon_ns_compute_dtype: str = Field(
+      "",
+      description=(
+          "If set (e.g. 'bfloat16'), run Newton-Schulz in this dtype like Keller Jordan's original. "
+          "CHANGES NUMERICS vs the f32 baseline; leave empty for baseline-comparable runs."
+      ),
+  )
 
 
 class PositionalEmbedding(BaseModel):
