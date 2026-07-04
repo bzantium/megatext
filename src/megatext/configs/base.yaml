@@ -774,8 +774,6 @@ muon_beta: 0.95 # Decay rate for the exponentially weighted average of grads.
 muon_weight_decay: 0 # Strength of the weight decay regularization. This is multiplied with the learning rate.
 muon_consistent_rms: null # If null, apply width scaling to updates. If float, apply consistent rms scaling (recommend 0.2).
 muon_ns_steps: 5 # Number of Newton-Schulz iterations. 5 matches the optax/Keller Jordan default.
-muon_batched_ns: True # Bucket Muon params by reshaped matrix shape and run one batched Newton-Schulz per bucket instead of one per leaf (same math).
-muon_ns_batch_reshard: False # With muon_batched_ns: reshard stacked NS buckets onto their batch axis for collective-free gram matmuls (layout only; big 1-slice win). Off by default: the in-update reshard can break the multi-slice DCN grad-all-reduce overlap until isolated.
 
 # Stack trace parameters
 collect_stack_trace: False

@@ -78,21 +78,15 @@ def get_optimizer(config, learning_rate_schedule, model=None):
   elif config.opt_type == "muon":
     from optax.contrib import _muon
     from megatext.optimizers import muon as megatext_muon
-    # Patch optax's per-leaf Newton-Schulz to use unroll=False (lower compile-time
-    # HBM); used by the muon_batched_ns=False fallback.
-    _muon.orthogonalize_via_newton_schulz = megatext_muon.orthogonalize_via_newton_schulz
-    if getattr(config, "muon_batched_ns", True):
-      # Shape-bucketed batched Newton-Schulz. With muon_ns_batch_reshard the
-      # stacked buckets are resharded onto their batch axis so the NS gram
-      # matmuls run collective-free (the reduction axis is FSDP-sharded
-      # otherwise -> per-iteration all-gather; see muon.py). Same math.
-      _muon.scale_by_muon = functools.partial(
-          megatext_muon.scale_by_muon_batched,
-          mesh=model.mesh if model is not None else None,
-          batch_reshard=getattr(config, "muon_ns_batch_reshard", False),
-      )
-    else:
-      _muon.scale_by_muon = megatext_muon.OPTAX_SCALE_BY_MUON
+    # Patch optax's per-leaf Newton-Schulz: unroll=False (lower compile-time HBM)
+    # plus a single all-gather of the FSDP-sharded reduction axis before the NS
+    # sweep, so all iterations run on replicated matrices (gather-once, à la
+    # Moonlight) instead of paying a collective every iteration. Passing the
+    # mesh enables the gather; math is unchanged (exact iterates).
+    _muon.orthogonalize_via_newton_schulz = functools.partial(
+        megatext_muon.orthogonalize_via_newton_schulz,
+        mesh=model.mesh if model is not None else None,
+    )
     # extract muon dimension number from model structure
     if model is not None:
       muon_weight_dimension_numbers = get_muon_weight_dimension_numbers(model, config)
