@@ -15,7 +15,6 @@
 # pylint: disable=bare-except, consider-using-generator, too-many-positional-arguments
 """ Utils that are only interesting to Megatext. """
 
-import functools
 import re
 import jax
 import jax.numpy as jnp
@@ -76,17 +75,10 @@ def get_optimizer(config, learning_rate_schedule, model=None):
   elif config.opt_type == "sgd":
     base_opt = optax.sgd(learning_rate_schedule)
   elif config.opt_type == "muon":
+    # Patch optax's Newton-Schulz to use unroll=False for reduced compile-time HBM
     from optax.contrib import _muon
-    from megatext.optimizers import muon as megatext_muon
-    # Patch optax's per-leaf Newton-Schulz: unroll=False (lower compile-time HBM)
-    # plus a single all-gather of the FSDP-sharded reduction axis before the NS
-    # sweep, so all iterations run on replicated matrices (gather-once, à la
-    # Moonlight) instead of paying a collective every iteration. Passing the
-    # mesh enables the gather; math is unchanged (exact iterates).
-    _muon.orthogonalize_via_newton_schulz = functools.partial(
-        megatext_muon.orthogonalize_via_newton_schulz,
-        mesh=model.mesh if model is not None else None,
-    )
+    from megatext.optimizers.muon import orthogonalize_via_newton_schulz
+    _muon.orthogonalize_via_newton_schulz = orthogonalize_via_newton_schulz
     # extract muon dimension number from model structure
     if model is not None:
       muon_weight_dimension_numbers = get_muon_weight_dimension_numbers(model, config)

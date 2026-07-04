@@ -1,24 +1,8 @@
-"""Newton-Schulz orthogonalization tuned for TPU/FSDP, math-identical to optax.
+"""Newton-Schulz orthogonalization with unroll=False for reduced compile-time HBM.
 
-Two deviations from optax's ``orthogonalize_via_newton_schulz``, both pure
-execution changes (same iterates, same coefficients, same dtypes):
-
-1. ``fori_loop(unroll=False)``: optax unrolls, forcing XLA to keep every NS
-   iteration's intermediates alive at once (~5.8GB for a 1.7B model);
-   unroll=False lets XLA reuse buffers across iterations (-> 3.3GB, ~AdamW).
-
-2. Gather-once (Moonlight-style, https://arxiv.org/abs/2502.16982). The Muon
-   momentum inherits the parameter sharding ``embed -> fsdp``, which for these
-   weights is exactly the NS *reduction* axis. NS converges to the polar factor
-   ``(XX^T)^{-1/2} X``, whose every output row depends on every input row, so
-   the sharded reduction axis MUST be mixed by a collective -- it cannot be
-   removed algebraically. Left alone, optax pays that collective on the two
-   tail matmuls (``A@A`` and ``B@X``) EVERY iteration (~2 all-gathers x 5 steps
-   per leaf). Instead we all-gather the reshaped matrix ONCE (via a replicated
-   ``with_sharding_constraint``) before the 5-step loop, run all matmuls on the
-   now-local matrix, and let the consumer scatter the result back -- one
-   gather + one scatter per leaf instead of ten. When no mesh is given (single
-   device / CPU tests) the constraint is skipped and this is a no-op.
+optax's Muon uses unroll=True in fori_loop, forcing XLA to keep all NS iteration
+intermediates alive simultaneously (~5.8GB for 1.7B model). Using unroll=False
+lets XLA reuse buffers across iterations (-> 3.3GB, matching AdamW).
 """
 
 from __future__ import annotations
@@ -46,14 +30,11 @@ def orthogonalize_via_newton_schulz(
     ] = "frobenius",
     eps: jax.typing.ArrayLike = 1e-8,
     dimension_numbers: MuonDimensionNumbers | None = None,
-    mesh: jax.sharding.Mesh | None = None,
 ) -> jax.Array:
-    """Orthogonalize via Newton-Schulz iteration (unroll=False, gather-once).
+    """Orthogonalize via Newton-Schulz iteration (unroll=False).
 
-    Drop-in replacement for optax's version. Differences are execution-only
-    (same math): ``fori_loop(unroll=False)`` and, when ``mesh`` is provided, a
-    single all-gather of the NS input's sharded reduction axis before the loop
-    so the iterations run collective-free (see module docstring).
+    Drop-in replacement for optax's version. Only difference:
+    fori_loop(unroll=False) instead of unroll=True.
     """
     if x.ndim != 2 and not isinstance(dimension_numbers, MuonDimensionNumbers):
         raise ValueError(
@@ -109,17 +90,4 @@ def orthogonalize_via_newton_schulz(
         return x
 
     reshape_fn, inverse_fn = _compute_muon_reshape(x, dimension_numbers)
-    x3 = reshape_fn(x)  # (batch, reduction, output)
-
-    if mesh is not None:
-        # Gather-once: replicate the matrix (reduction, output) axes so every NS
-        # matmul runs locally. Keep the leading batch/leaf axis free so XLA is
-        # free to keep the per-leaf parallelism it already has. This forces a
-        # single all-gather here; the consumer of `inverse_fn(...)` (the
-        # elementwise param update, params-sharded) scatters the result back.
-        replicated = jax.sharding.NamedSharding(
-            mesh, jax.sharding.PartitionSpec(None, None, None)
-        )
-        x3 = jax.lax.with_sharding_constraint(x3, replicated)
-
-    return inverse_fn(jax.vmap(_orthogonalize)(x3))
+    return inverse_fn(jax.vmap(_orthogonalize)(reshape_fn(x)))
