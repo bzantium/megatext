@@ -2316,6 +2316,7 @@ class MegaTextConfig(
         DecoderBlockType.DEEPSEEK,
         DecoderBlockType.QWEN3,
         DecoderBlockType.QWEN3_SWA,
+        DecoderBlockType.QWEN3_NEXT,
         DecoderBlockType.GEMMA4,
         DecoderBlockType.LLAMA2,
     ]:
