@@ -75,8 +75,8 @@ def transform_logic(path: Tuple[str, ...]) -> Optional[mdn]:
   # 1 Exclude parameters not suitable for Muon (scalar, embeddings, unembedding).
   # qwen3-next additions: A_log/dt_bias are per-head gating vectors, the
   # depthwise conv kernel is a bank of length-4 filters (not a matmul weight),
-  # and shared_expert_gate projects to a single logit — orthogonalizing a
-  # vector just renormalizes it.
+  # and shared_expert_gate projects to a single logit (emb x 1) — orthogonalizing
+  # a vector just renormalizes it.
   if _is_path_contain_any(
       ("scale", "bias", "embedding", "logits_dense", "A_log", "dt_bias", "conv1d", "shared_expert_gate"), path
   ):
@@ -90,8 +90,9 @@ def transform_logic(path: Tuple[str, ...]) -> Optional[mdn]:
   if _is_path_contain_any(("MoeBlock_0", "routed_experts"), path):
     if _is_path_contain_any(("wi_0", "wi_1", "wo"), path):
       return mdn((-2,), (-1,))
-    # qwen3-next single-expert router gate: [emb, L, 1] — a vector, not a
-    # matrix (and unused under the E=1 dense fast path); leave it to AdamW.
+    # Router gate produces routing logits ([emb, L, num_experts]); like the
+    # embedding / unembedding projections it is left to AdamW rather than
+    # orthogonalized, regardless of the expert count.
     if "routed_experts" in path and "gate" in path:
       return None
 
