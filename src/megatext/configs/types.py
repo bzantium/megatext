@@ -560,7 +560,10 @@ class PagedAttention(BaseModel):
 class MoEGeneral(BaseModel):
   """General configuration for Mixture of Experts (MoE) layers."""
 
-  num_experts: PositiveInt = Field(1, description="The total number of experts in each MoE layer.")
+  num_experts: NonNegativeInt = Field(
+      1,
+      description="The total number of experts in each MoE layer. 0 selects a plain dense MLP.",
+  )
   num_experts_per_tok: PositiveInt = Field(1, description="The number of experts to route each token to.")
   capacity_factor: float = Field(-1.0, description="Expert capacity factor. If < 0, no token dropping.")
   load_balance_loss_weight: NonNegativeFloat = Field(0.0, description="Weight for the load balancing auxiliary loss.")
@@ -2188,12 +2191,11 @@ class MegaTextConfig(
             f"Engram vocab size mismatch: expected {self.engram_max_ngram_size - 1} (max_ngram_size - 1), "
             f"but got {self.engram_vocab_bases}."
         )
-    if self.decoder_block == DecoderBlockType.QWEN3_NEXT and self.num_experts == 1:
-      # Dense qwen3-next: the FFN block (routed + shared expert) reads
-      # moe_mlp_dim even in the single-expert case; mirror the dense mlp_dim
-      # so dense configs only need base_mlp_dim.
-      self.base_moe_mlp_dim = self.base_mlp_dim
-      self.moe_mlp_dim = self.mlp_dim
+    if self.num_experts == 0 and self.decoder_block != DecoderBlockType.QWEN3_NEXT:
+      raise ValueError(
+          "num_experts=0 (dense MLP) is only supported for the qwen3-next decoder block; "
+          f"got decoder_block={self.decoder_block}."
+      )
     if self.num_experts > 1:
       is_fully_moe = (
           self.interleave_moe_layer_step == 1
