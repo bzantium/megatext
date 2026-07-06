@@ -96,14 +96,16 @@ def transform_logic(path: Tuple[str, ...]) -> Optional[mdn]:
       return None
 
   # 2.2 Special weights: Self attention (including the full-attention
-  # sublayer of qwen3-next, whose path components are attention/attention)
+  # sublayer of qwen3-next, whose path components are attention/attention).
   elif _is_path_contain_any(("self_attention", "attention"), path):
-    # Attention output projection: [0, L, -2, -1]. qwen3-next's out kernels
-    # are already flat 3D [in, L, out] and fall through to the standard rule.
+    # 3D output projection [in, L, heads, kv] -> mdn((0,-2),(-1,)). Only the
+    # non-qwen3-next self_attention "out" kernel is 3D; qwen3-next fuses heads
+    # into a flat 2D out kernel [in, L, out], so it deliberately falls through
+    # to the standard rule mdn((0,),(-1,)) below.
     if "out" in path and "self_attention" in path:
       return mdn((0, -2), (-1,))
-    # Attention qkv projection: [0, L, -2, -1]
-    # MLA, exclude wq_a / wkv_a
+    # QKV projections [in, L, heads, head_dim] -> mdn((0,),(-2,-1)).
+    # MLA: exclude wq_a / wkv_a (down-projections), keep wq_b / wkv_b.
     elif _is_path_contain_any(("query", "key", "value", "wq_b", "wkv_b"), path):
       return mdn((0,), (-2, -1))
 
