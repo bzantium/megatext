@@ -1,6 +1,7 @@
 # model config for qwen3-next (dense)
 
 decoder_block: "qwen3_next"
+num_experts: 0  # 0 = dense MLP (no routed/shared experts); >0 uses the sparse MoE block
 mlp_activations: ["silu", "linear"]
 normalization_layer_epsilon: 1.0e-6
 enable_dropout: false

@@ -356,8 +356,12 @@ def get_dense_moe_layers(config):
     num_moe_layers = config.num_decoder_layers
     num_dense_layers = 0
   elif config.decoder_block == DecoderBlockType.QWEN3_NEXT:
-    num_moe_layers = config.num_decoder_layers
-    num_dense_layers = 0
+    if config.num_experts == 0:
+      num_moe_layers = 0
+      num_dense_layers = config.num_decoder_layers
+    else:
+      num_moe_layers = config.num_decoder_layers
+      num_dense_layers = 0
   else:
     raise ValueError("Currently we only support DeepSeek, Llama4, Gemma4, and Qwen3-Next calculation.")
 
@@ -585,10 +589,15 @@ def calculate_tflops_training_per_device(config, log=True):
   """Calculate training TFLOP"""
   # MLP flops
   if config.decoder_block == DecoderBlockType.QWEN3_NEXT:
-    # Qwen3-Next always uses the routed + shared expert MoE block, even with
-    # num_experts=1 (dense). The helper already multiplies by the number of
-    # layers, matching what the QWEN3_NEXT combination branch below expects.
-    total_ffn_flops = calculate_routed_and_shared_ffn_tflops_per_device(config)
+    if config.num_experts == 0:
+      # Dense qwen3-next: plain MLP per layer.
+      total_ffn_flops = (
+          calculate_ffn_mamtul_tflops_per_device(config, config.mlp_dim) * config.num_decoder_layers
+      )
+    else:
+      # Routed + shared expert MoE block. The helper already multiplies by the
+      # number of layers, matching what the QWEN3_NEXT combination branch below expects.
+      total_ffn_flops = calculate_routed_and_shared_ffn_tflops_per_device(config)
   elif config.num_experts > 1:
     # calculation based on dropless implementation
     if config.decoder_block in (DecoderBlockType.DEEPSEEK, DecoderBlockType.LLAMA4) or (
