@@ -276,7 +276,6 @@ class MetricLogger:
       full_log = step % self.config.log_period == 0
 
       if full_log and jax.process_index() == 0:
-        max_logging.log(f"To see full metrics 'tensorboard --logdir={self.config.tensorboard_dir}'")
         self.writer.flush()
 
   def write_metrics_to_managed_mldiagnostics(self, metrics, step):
