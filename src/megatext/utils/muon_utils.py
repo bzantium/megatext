@@ -72,25 +72,40 @@ def transform_logic(path: Tuple[str, ...]) -> Optional[mdn]:
     `None` for excluded parameters, or a default `mdn` for standard weights.
   """
 
-  # 1 Exclude parameters not suitable for Muon (scalar, embeddings, unembedding)
-  if _is_path_contain_any(("scale", "bias", "embedding", "logits_dense"), path):
+  # 1 Exclude parameters not suitable for Muon (scalar, embeddings, unembedding).
+  # qwen3-next additions: A_log/dt_bias are per-head gating vectors, the
+  # depthwise conv kernel is a bank of length-4 filters (not a matmul weight),
+  # and shared_expert_gate projects to a single logit — orthogonalizing a
+  # vector just renormalizes it.
+  if _is_path_contain_any(
+      ("scale", "bias", "embedding", "logits_dense", "A_log", "dt_bias", "conv1d", "shared_expert_gate"), path
+  ):
     return None
 
   # 2 Special weights
   # 2.1 Special weights: MoE, [0, L, -2, -1]
   # L (optional) stands for layer when scan_layers=True
-  if "MoeBlock_0" in path:
-    # exclude gate
+  # routed_experts is the qwen3-next MoE block; its expert weights are
+  # [E, L, in, out] so the matrix dims are the trailing two.
+  if _is_path_contain_any(("MoeBlock_0", "routed_experts"), path):
     if _is_path_contain_any(("wi_0", "wi_1", "wo"), path):
       return mdn((-2,), (-1,))
+    # qwen3-next single-expert router gate: [emb, L, 1] — a vector, not a
+    # matrix (and unused under the E=1 dense fast path); leave it to AdamW.
+    if "routed_experts" in path and "gate" in path:
+      return None
 
-  # 2.2 Special weights: Self attention
-  elif "self_attention" in path:
-    # Attention output projection: [0, L, -2, -1]
-    if "out" in path:
+  # 2.2 Special weights: Self attention (including the full-attention
+  # sublayer of qwen3-next, whose path components are attention/attention).
+  elif _is_path_contain_any(("self_attention", "attention"), path):
+    # 3D output projection [in, L, heads, kv] -> mdn((0,-2),(-1,)). Only the
+    # non-qwen3-next self_attention "out" kernel is 3D; qwen3-next fuses heads
+    # into a flat 2D out kernel [in, L, out], so it deliberately falls through
+    # to the standard rule mdn((0,),(-1,)) below.
+    if "out" in path and "self_attention" in path:
       return mdn((0, -2), (-1,))
-    # Attention qkv projection: [0, L, -2, -1]
-    # MLA, exclude wq_a / wkv_a
+    # QKV projections [in, L, heads, head_dim] -> mdn((0,),(-2,-1)).
+    # MLA: exclude wq_a / wkv_a (down-projections), keep wq_b / wkv_b.
     elif _is_path_contain_any(("query", "key", "value", "wq_b", "wkv_b"), path):
       return mdn((0,), (-2, -1))
 

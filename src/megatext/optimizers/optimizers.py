@@ -85,16 +85,14 @@ def get_optimizer(config, learning_rate_schedule, model=None):
     else:
       raise ValueError("Please specify model to extract muon dimension number.")
     muon_kwargs = {
-        # Shared parameters: "nesterov" uses default
         "learning_rate": learning_rate_schedule,
         "eps": config.adam_eps,
         "mu_dtype": config.mu_dtype,
-        # Muon-specific parameters: "ns_coeffs", "ns_steps", "weight_decay_mask", "adaptive" uses default
+        "ns_steps": config.muon_ns_steps,
         "beta": config.muon_beta,
         "weight_decay": config.muon_weight_decay,
         "muon_weight_dimension_numbers": muon_weight_dimension_numbers,
         "consistent_rms": config.muon_consistent_rms,
-        # AdamW-specific parameters
         "adam_b1": config.adam_b1,
         "adam_b2": config.adam_b2,
         "adam_eps_root": config.adam_eps_root,

@@ -1134,6 +1134,10 @@ class Muon(BaseModel):
       None,
       description="If None, apply width scaling to updates. If float, apply consistent rms scaling (recommend 0.2).",
   )
+  muon_ns_steps: int = Field(
+      5,
+      description="Number of Newton-Schulz iterations for orthogonalization. 5 matches the optax/Keller Jordan default.",
+  )
 
 
 class PositionalEmbedding(BaseModel):
@@ -2316,6 +2320,7 @@ class MegaTextConfig(
         DecoderBlockType.DEEPSEEK,
         DecoderBlockType.QWEN3,
         DecoderBlockType.QWEN3_SWA,
+        DecoderBlockType.QWEN3_NEXT,
         DecoderBlockType.GEMMA4,
         DecoderBlockType.LLAMA2,
     ]:
