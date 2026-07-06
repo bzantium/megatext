@@ -33,7 +33,7 @@ def build_qwen3_next(arch: ArchSpec, hf_config: Any, scan_layers: bool) -> Mappi
     for b in range(cycle):
         is_full_attn = (b + 1) % cycle == 0
         hf_indices = list(range(b, n_layers, cycle))
-        block_prefix = f"params-decoder-layers-layer_{b}"
+        block_prefix = f"params-decoder-layers-layers_{b}"
 
         comps: list[tuple[str, str]] = [
             ("input_layernorm-scale", "input_layernorm.weight"),
@@ -177,7 +177,7 @@ def compute_qwen3_next_shapes(
         is_full = (b + 1) % cycle == 0
         n_stacked = len(range(b, n_layers, cycle))
         lp = (n_stacked,)
-        bp = f"params-decoder-layers-layer_{b}"
+        bp = f"params-decoder-layers-layers_{b}"
 
         # Norms
         shapes[f"{bp}-input_layernorm-scale"] = (*lp, emb)
@@ -188,7 +188,9 @@ def compute_qwen3_next_shapes(
             shapes[f"{bp}-attention-attention-query-kernel"] = (*lp, emb, nq, 2 * hd)
             shapes[f"{bp}-attention-attention-key-kernel"] = (*lp, emb, nkv, hd)
             shapes[f"{bp}-attention-attention-value-kernel"] = (*lp, emb, nkv, hd)
-            shapes[f"{bp}-attention-attention-out-kernel"] = (*lp, nq, hd, emb)
+            # qwen3-next fuses heads for the output projection: flat 2D kernel
+            # (num_query_heads*head_dim, emb), not the (heads, kv, emb) 3D form.
+            shapes[f"{bp}-attention-attention-out-kernel"] = (*lp, nq * hd, emb)
             shapes[f"{bp}-attention-attention-query_norm-scale"] = (*lp, hd)
             shapes[f"{bp}-attention-attention-key_norm-scale"] = (*lp, hd)
         else:
@@ -200,7 +202,7 @@ def compute_qwen3_next_shapes(
             ba_dim = 2 * gdn_vh
             shapes[f"{bp}-attention-in_proj_qkvz-kernel"] = (*lp, emb, qkvz_dim)
             shapes[f"{bp}-attention-in_proj_ba-kernel"] = (*lp, emb, ba_dim)
-            shapes[f"{bp}-attention-conv1d-kernel"] = (*lp, conv_dim, 1, gdn_conv_k)
+            shapes[f"{bp}-attention-conv1d-kernel"] = (*lp, gdn_conv_k, 1, conv_dim)
             shapes[f"{bp}-attention-A_log"] = (*lp, gdn_vh)
             shapes[f"{bp}-attention-dt_bias"] = (*lp, gdn_vh)
             shapes[f"{bp}-attention-norm-rms_norm-scale"] = (*lp, gdn_vhd)
