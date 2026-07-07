@@ -1141,7 +1141,7 @@ class Muon(BaseModel):
       5,
       description="Number of Newton-Schulz iterations for orthogonalization. 5 matches the optax/Keller Jordan default.",
   )
-  muon_polar_express_lower_bound: float = Field(
+  muon_polar_express_lower_bound: NonNegativeFloat = Field(
       0.0,
       description=(
           "If 0 (default), use the fixed Keller Jordan Newton-Schulz coeffs (baseline). If > 0, use "

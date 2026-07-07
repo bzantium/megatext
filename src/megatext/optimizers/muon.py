@@ -34,12 +34,18 @@ from optax.contrib._muon import (
 def _pe_optimal_quintic(l: float, u: float) -> tuple[float, float, float]:
     """Minimax odd quintic p(x)=a x + b x^3 + c x^5 approximating 1 on [l, u]."""
     assert 0 <= l <= u
+    # Degree-5 Newton-Schulz coeffs (scaled to u); also the l -> u limit of the
+    # Remez solution. Used directly for a near-degenerate interval and as the
+    # fallback if the Remez iteration below hits a numerical edge case.
+    ns5 = ((15 / 8) / u, (-10 / 8) / (u**3), (3 / 8) / (u**5))
     if 1 - 5e-6 <= l / u:
-        return (15 / 8) / u, (-10 / 8) / (u**3), (3 / 8) / (u**5)
+        return ns5
     q = (3 * l + u) / 4
     r = (l + 3 * u) / 4
     E, old_E = inf, None
-    while old_E is None or abs(old_E - E) > 1e-15:
+    for _ in range(100):  # Remez fixed-point; converges in a handful of iters
+        if old_E is not None and abs(old_E - E) <= 1e-15:
+            break
         old_E = E
         lhs = np.array([
             [l, l**3, l**5, 1],
@@ -47,8 +53,19 @@ def _pe_optimal_quintic(l: float, u: float) -> tuple[float, float, float]:
             [r, r**3, r**5, 1],
             [u, u**3, u**5, -1],
         ])
-        a, b, c, E = np.linalg.solve(lhs, np.ones(4))
-        q, r = np.sqrt((-3 * b + np.array([-1, 1]) * sqrt(9 * b**2 - 20 * a * c)) / (10 * c))
+        try:
+            a, b, c, E = np.linalg.solve(lhs, np.ones(4))
+            disc = 9 * b**2 - 20 * a * c
+            if c == 0 or disc < 0:
+                return ns5  # degenerate node update; NS-5 coeffs are a safe minimax
+            roots = (-3 * b + np.array([-1, 1]) * sqrt(disc)) / (10 * c)
+            if np.any(roots < 0):  # sqrt of a negative node -> not a valid interior node set
+                return ns5
+            q, r = np.sqrt(roots)
+        except (np.linalg.LinAlgError, ValueError, FloatingPointError):
+            return ns5
+    if not np.all(np.isfinite([a, b, c])):
+        return ns5
     return float(a), float(b), float(c)
 
 
