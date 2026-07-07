@@ -1141,6 +1141,16 @@ class Muon(BaseModel):
       5,
       description="Number of Newton-Schulz iterations for orthogonalization. 5 matches the optax/Keller Jordan default.",
   )
+  muon_polar_express_lower_bound: NonNegativeFloat = Field(
+      3e-3,
+      description=(
+          "If 0, use the fixed Keller Jordan Newton-Schulz coeffs (baseline). If > 0 (default 3e-3), use "
+          "Polar Express (Amsel et al. 2025, arXiv:2505.16932): per-iteration minimax-optimal coeffs "
+          "with this value as the minimax lower bound l on the (Frobenius-normalized) singular values "
+          "— same polar-factor target, faster convergence, but different iterates (not bitwise-"
+          "comparable to the baseline)."
+      ),
+  )
 
 
 class PositionalEmbedding(BaseModel):
