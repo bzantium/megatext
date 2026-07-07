@@ -161,3 +161,10 @@ maxtext.code-workspace
 checkpoints/
 logs/
 personal/
+
+# Production GKE job configs (bucket names, dataset paths, run names).
+# Keep only the sanitized example.yaml in each jobs subdirectory.
+gke/jobs/train/*.yaml
+gke/jobs/test/*.yaml
+gke/jobs/convert/*.yaml
+!gke/jobs/*/example.yaml

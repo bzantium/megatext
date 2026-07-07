@@ -1,0 +1,26 @@
+# Example smoke-test job (synthetic data, a handful of steps). Copy and submit with:
+#   python gke/submit.py pretrain --infra gke/infra/v5e.yaml gke/jobs/test/<your_test>.yaml
+# Real test job YAMLs are gitignored (see .gitignore) — keep bucket names and
+# run names out of version control.
+workload_name: test-pretrain-example
+
+bucket: <your-gcs-bucket>
+mount_path: /mnt/bucket
+
+config:
+  model: qwen3
+  dataset_type: synthetic
+  steps: 10
+  max_target_length: 4096
+  per_device_batch_size: 4
+  learning_rate: 3e-4
+  scan_layers: true
+  remat_policy: full
+  ici_fsdp_parallelism: -1
+  enable_checkpointing: false
+  log_period: 1
+  opt_type: muon
+  muon_weight_decay: 0.1
+  muon_consistent_rms: 0.2
+  run_name: test-pretrain-example
+  base_output_directory: gs://<your-gcs-bucket>/experiments/<your-user>

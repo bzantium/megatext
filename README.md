@@ -54,7 +54,7 @@ python -m megatext.trainers.pretrain \
 python gke/submit.py pretrain \
   --infra gke/infra/v5e.yaml \
   --build \
-  gke/jobs/train/pretrain_qwen3_swa_8b_stage1.yaml
+  gke/jobs/train/example.yaml
 ```
 
 ### Export a Megatext checkpoint to HF
