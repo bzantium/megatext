@@ -7,10 +7,12 @@ lets XLA reuse buffers across iterations (-> 3.3GB, matching AdamW).
 
 from __future__ import annotations
 
+from math import inf, sqrt
 from typing import Literal
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from optax.contrib._muon import (
     MuonDimensionNumbers,
@@ -19,6 +21,57 @@ from optax.contrib._muon import (
     _aol_ns_iterator,
     _schatten_ns_iterator,
 )
+
+
+# ── Polar Express coefficient schedule (Amsel et al. 2025, arXiv:2505.16932) ──
+# Per-iteration minimax-optimal odd-quintic coefficients for approximating the
+# constant 1 on [l, u] (== approximating sign(x)); the composition converges to
+# the polar factor faster than the fixed Newton-Schulz coeffs. Computed offline
+# (once, at optimizer build) via the paper's closed-form Remez for degree 5,
+# then fed to the same NS iteration as a (T, 3) coefficient array.
+
+
+def _pe_optimal_quintic(l: float, u: float) -> tuple[float, float, float]:
+    """Minimax odd quintic p(x)=a x + b x^3 + c x^5 approximating 1 on [l, u]."""
+    assert 0 <= l <= u
+    if 1 - 5e-6 <= l / u:
+        return (15 / 8) / u, (-10 / 8) / (u**3), (3 / 8) / (u**5)
+    q = (3 * l + u) / 4
+    r = (l + 3 * u) / 4
+    E, old_E = inf, None
+    while old_E is None or abs(old_E - E) > 1e-15:
+        old_E = E
+        lhs = np.array([
+            [l, l**3, l**5, 1],
+            [q, q**3, q**5, -1],
+            [r, r**3, r**5, 1],
+            [u, u**3, u**5, -1],
+        ])
+        a, b, c, E = np.linalg.solve(lhs, np.ones(4))
+        q, r = np.sqrt((-3 * b + np.array([-1, 1]) * sqrt(9 * b**2 - 20 * a * c)) / (10 * c))
+    return float(a), float(b), float(c)
+
+
+def polar_express_coeffs(
+    num_iters: int, lower_bound: float = 1e-3, safety_eps: float = 1e-2, cushion: float = 0.02
+) -> np.ndarray:
+    """(num_iters, 3) minimax-optimal quintic coeffs, greedily composed per Thm 3.1."""
+    l, u = float(lower_bound), 1.0
+    coeffs = []
+    for it in range(num_iters):
+        a, b, c = _pe_optimal_quintic(max(l, cushion * u), u)
+        if cushion * u > l:
+            pl = a * l + b * l**3 + c * l**5
+            pu = a * u + b * u**3 + c * u**5
+            rescale = 2 / (pl + pu)
+            a, b, c = a * rescale, b * rescale, c * rescale
+        if it < num_iters - 1:  # safety factor keeps intermediates < basin edge
+            sf = 1 + safety_eps
+            a, b, c = a / sf, b / sf**3, c / sf**5
+        coeffs.append((a, b, c))
+        l = a * l + b * l**3 + c * l**5
+        u = 2 - l
+    return np.asarray(coeffs, dtype=np.float32)
 
 
 def orthogonalize_via_newton_schulz(

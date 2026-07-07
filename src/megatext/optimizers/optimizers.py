@@ -77,7 +77,7 @@ def get_optimizer(config, learning_rate_schedule, model=None):
   elif config.opt_type == "muon":
     # Patch optax's Newton-Schulz to use unroll=False for reduced compile-time HBM
     from optax.contrib import _muon
-    from megatext.optimizers.muon import orthogonalize_via_newton_schulz
+    from megatext.optimizers.muon import orthogonalize_via_newton_schulz, polar_express_coeffs
     _muon.orthogonalize_via_newton_schulz = orthogonalize_via_newton_schulz
     # extract muon dimension number from model structure
     if model is not None:
@@ -98,6 +98,12 @@ def get_optimizer(config, learning_rate_schedule, model=None):
         "adam_eps_root": config.adam_eps_root,
         "adam_weight_decay": config.adam_weight_decay,
     }
+    # Polar Express: muon_polar_express_lower_bound>0 swaps the fixed NS coeffs for
+    # per-iteration minimax-optimal ones (same target, faster convergence).
+    if config.muon_polar_express_lower_bound > 0:
+      muon_kwargs["ns_coeffs"] = polar_express_coeffs(
+          config.muon_ns_steps, lower_bound=config.muon_polar_express_lower_bound
+      )
     base_opt = muon(**muon_kwargs)
   else:
     raise ValueError(f"{config.opt_type=} is not a supported.")
